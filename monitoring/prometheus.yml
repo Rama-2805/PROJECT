@@ -1,0 +1,59 @@
+# SmartCampus AI — Prometheus Configuration
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+rule_files:
+  - "alerts.yml"
+
+scrape_configs:
+  - job_name: "smartcampus-api"
+    metrics_path: "/api/metrics"
+    static_configs:
+      - targets: ["api:4000"]
+        labels:
+          service: "api"
+          environment: "production"
+
+  - job_name: "smartcampus-web"
+    metrics_path: "/api/metrics"
+    static_configs:
+      - targets: ["web:3000"]
+        labels:
+          service: "web"
+          environment: "production"
+
+  - job_name: "smartcampus-ai-engine"
+    metrics_path: "/metrics"
+    static_configs:
+      - targets: ["ai-engine:8000"]
+        labels:
+          service: "ai-engine"
+          environment: "production"
+
+  - job_name: "smartcampus-postgres"
+    static_configs:
+      - targets: ["postgres:9187"]
+        labels:
+          service: "postgres"
+          environment: "production"
+
+  - job_name: "smartcampus-redis"
+    static_configs:
+      - targets: ["redis:9121"]
+        labels:
+          service: "redis"
+          environment: "production"
+
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"]
+        labels:
+          service: "node"
+          environment: "production"

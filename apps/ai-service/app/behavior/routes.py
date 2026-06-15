@@ -1,0 +1,139 @@
+"""SmartCampus AI — Behavioral Analytics API Routes."""
+
+import time
+import uuid
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+
+from ..config.settings import settings
+from .models import BehaviorEvent, AlertSeverity
+from .classifier.behavior_classifier import behavior_classifier
+from .scoring.engagement_scorer import engagement_scorer
+from .tracker.student_tracker import student_tracker
+from .alerts.alert_engine import alert_engine
+from .analytics.behavior_analytics import behavior_analytics
+
+router = APIRouter(prefix=f"{settings.api_prefix}/behavior", tags=["Behavior"])
+
+# WebSocket connections for live behavior updates
+live_connections: dict[str, list[WebSocket]] = {}
+
+
+@router.post("/ingest")
+async def ingest_behavior(event: BehaviorEvent):
+    """Receive a behavior event from the AI service."""
+    behavior_analytics.record_behavior(event)
+    alert = alert_engine.process_behavior(event)
+
+    return {
+        "message": "Behavior ingested",
+        "event_id": str(uuid.uuid4()),
+        "alert_generated": alert is not None,
+        "alert": alert.model_dump() if alert else None,
+    }
+
+
+@router.get("/events")
+async def get_behavior_events(
+    student_id: Optional[str] = None,
+    behavior_type: Optional[str] = None,
+    limit: int = 50,
+):
+    """Get recent behavior events with optional filtering."""
+    events = behavior_analytics._behavior_log
+
+    if student_id:
+        events = [e for e in events if e.student_id == student_id]
+    if behavior_type:
+        events = [e for e in events if e.behavior_type.value == behavior_type]
+
+    events = events[-limit:]
+    return {"total": len(events), "events": [e.model_dump() for e in events]}
+
+
+@router.get("/student/{student_id}")
+async def get_student_behavior(student_id: str):
+    """Get behavior analytics for a specific student."""
+    events = [e for e in behavior_analytics._behavior_log if e.student_id == student_id]
+    engagement = [r for r in behavior_analytics._engagement_log if r.student_id == student_id]
+
+    recent_events = [e.model_dump() for e in events[-20:]]
+    recent_engagement = [r.model_dump() for r in engagement[-20:]]
+
+    return {
+        "student_id": student_id,
+        "total_events": len(events),
+        "recent_events": recent_events,
+        "engagement_trend": recent_engagement,
+    }
+
+
+@router.get("/analytics")
+async def get_behavior_analytics():
+    """Get comprehensive behavior analytics."""
+    return behavior_analytics.get_classroom_comparison()
+
+
+@router.get("/engagement/trend")
+async def get_engagement_trend(minutes: int = 30):
+    """Get engagement score trend."""
+    return {"trend": behavior_analytics.get_engagement_trend(minutes)}
+
+
+@router.get("/engagement/summary")
+async def get_engagement_summary():
+    """Get current engagement summary."""
+    return behavior_analytics.get_engagement_summary()
+
+
+@router.get("/alerts")
+async def get_alerts(severity: Optional[str] = None):
+    """Get active alerts, optionally filtered by severity."""
+    sev = AlertSeverity(severity) if severity else None
+    alerts = alert_engine.get_active_alerts(sev)
+    return {
+        "total": len(alerts),
+        "alerts": [a.model_dump() for a in alerts],
+        "stats": alert_engine.get_stats(),
+    }
+
+
+@router.patch("/alerts/{alert_id}/acknowledge")
+async def acknowledge_alert(alert_id: str, by: str = "teacher"):
+    """Acknowledge an alert."""
+    alert = alert_engine.acknowledge(alert_id, by)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {"message": "Alert acknowledged", "alert": alert.model_dump()}
+
+
+@router.patch("/alerts/{alert_id}/dismiss")
+async def dismiss_alert(alert_id: str):
+    """Dismiss an alert."""
+    alert = alert_engine.dismiss(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {"message": "Alert dismissed", "alert": alert.model_dump()}
+
+
+@router.get("/distribution")
+async def get_behavior_distribution(minutes: int = 60):
+    """Get behavior type distribution."""
+    return {"distribution": behavior_analytics.get_behavior_distribution(minutes)}
+
+
+@router.websocket("/live")
+async def behavior_websocket(websocket: WebSocket):
+    """WebSocket for real-time behavior updates."""
+    await websocket.accept()
+    connection_id = str(uuid.uuid4())
+    live_connections[connection_id] = [websocket]
+
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        live_connections.pop(connection_id, None)

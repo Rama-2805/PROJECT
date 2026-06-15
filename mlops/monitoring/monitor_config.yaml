@@ -1,0 +1,121 @@
+# ─── SmartCampus AI — MLOps Monitoring Config ───────────────
+# Controls AI monitoring, alerting, and observability
+
+monitoring:
+  name: "smartcampus-ai-monitoring"
+  version: "1.0.0"
+  collection_interval_seconds: 30
+
+face_recognition:
+  metrics:
+    - name: "accuracy"
+      type: "gauge"
+      unit: "percent"
+      alert_threshold: 95.0
+      critical_threshold: 90.0
+    - name: "latency_ms"
+      type: "histogram"
+      unit: "ms"
+      p95_threshold: 200
+      p99_threshold: 500
+    - name: "false_positive_rate"
+      type: "gauge"
+      unit: "percent"
+      alert_threshold: 2.0
+      critical_threshold: 5.0
+    - name: "false_negative_rate"
+      type: "gauge"
+      unit: "percent"
+      alert_threshold: 2.0
+      critical_threshold: 5.0
+    - name: "throughput"
+      type: "counter"
+      unit: "recognitions/sec"
+
+behavior_ai:
+  metrics:
+    - name: "detection_rate"
+      type: "gauge"
+      unit: "percent"
+      alert_threshold: 90.0
+      critical_threshold: 85.0
+    - name: "false_alert_rate"
+      type: "gauge"
+      unit: "percent"
+      alert_threshold: 5.0
+      critical_threshold: 10.0
+    - name: "processing_latency"
+      type: "histogram"
+      unit: "ms"
+      p95_threshold: 150
+    - name: "events_per_minute"
+      type: "gauge"
+      unit: "events/min"
+
+system:
+  metrics:
+    - name: "gpu_utilization"
+      type: "gauge"
+      unit: "percent"
+      warning_min: 10
+      warning_max: 95
+    - name: "gpu_memory_used"
+      type: "gauge"
+      unit: "gb"
+      warning_threshold: 6.0
+    - name: "inference_latency"
+      type: "histogram"
+      unit: "ms/frame"
+    - name: "model_load_time"
+      type: "gauge"
+      unit: "ms"
+
+alerts:
+  channels:
+    - type: "dashboard"
+      enabled: true
+    - type: "email"
+      enabled: true
+      recipients:
+        - "mlops-team@smartcampus-ai.com"
+    - type: "webhook"
+      enabled: true
+      url: "https://hooks.slack.com/services/T00/B00/xxx"
+
+  rules:
+    - name: "accuracy_drop_warning"
+      condition: "accuracy < 95.0"
+      severity: "warning"
+      cooldown_minutes: 10
+    - name: "accuracy_drop_critical"
+      condition: "accuracy < 90.0"
+      severity: "critical"
+      cooldown_minutes: 5
+    - name: "latency_spike"
+      condition: "p95_latency > 300"
+      severity: "warning"
+      cooldown_minutes: 5
+    - name: "high_false_positive"
+      condition: "false_positive_rate > 5"
+      severity: "warning"
+      cooldown_minutes: 15
+    - name: "gpu_high_temperature"
+      condition: "gpu_temp > 85"
+      severity: "critical"
+      cooldown_minutes: 2
+
+dashboards:
+  faces:
+    title: "Face Recognition AI"
+    refresh_interval_seconds: 15
+  behavior:
+    title: "Behavior AI"
+    refresh_interval_seconds: 15
+  system:
+    title: "AI System Health"
+    refresh_interval_seconds: 30
+
+data_retention:
+  raw_metrics_days: 30
+  aggregated_metrics_days: 90
+  alerts_days: 365

@@ -1,0 +1,183 @@
+# SmartCampus AI — CI/CD Pipeline
+# PR: lint + typecheck + test + security scan
+# Main: build containers + staging deploy
+# Production: manual approval + rolling deploy
+
+name: SmartCampus AI CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  NODE_VERSION: 20
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ─── PR Checks ──────────────────────────────────────────────────
+  lint-and-typecheck:
+    name: Lint & TypeCheck
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: |
+            api/package-lock.json
+            web/package-lock.json
+
+      - name: Install API dependencies
+        working-directory: ./api
+        run: npm ci
+      - name: TypeCheck API
+        working-directory: ./api
+        run: npx tsc --noEmit
+      - name: Lint API
+        working-directory: ./api
+        run: npm run lint
+
+      - name: Install Web dependencies
+        working-directory: ./web
+        run: npm ci
+      - name: TypeCheck Web
+        working-directory: ./web
+        run: npx tsc --noEmit
+      - name: Lint Web
+        working-directory: ./web
+        run: npm run lint
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./api
+        run: npm ci
+      - name: Run tests
+        working-directory: ./api
+        run: npm test
+      - name: Upload coverage
+        uses: codecov/codecov-action@v3
+        with:
+          directory: ./api/coverage
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'HIGH,CRITICAL'
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+      - name: Run npm audit on API
+        working-directory: ./api
+        run: npm audit --audit-level=high || true
+
+  # ─── Main Branch — Staging Deploy ──────────────────────────────
+  build-and-deploy-staging:
+    name: Build & Deploy (Staging)
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [lint-and-typecheck, unit-tests, security-scan]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push API image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./api
+          push: true
+          tags: ghcr.io/${{ github.repository }}/api:staging,ghcr.io/${{ github.repository }}/api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push Web image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./web
+          push: true
+          tags: ghcr.io/${{ github.repository }}/web:staging,ghcr.io/${{ github.repository }}/web:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push AI Engine image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./apps/ai-service
+          push: true
+          tags: ghcr.io/${{ github.repository }}/ai-engine:staging
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ─── Production Deploy (Manual Approval) ───────────────────────
+  deploy-production:
+    name: Deploy Production
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    needs: [build-and-deploy-staging]
+    environment:
+      name: production
+      url: https://app.smartcampus.ai
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag images as production
+        run: |
+          docker pull ghcr.io/${{ github.repository }}/api:${{ github.sha }}
+          docker tag ghcr.io/${{ github.repository }}/api:${{ github.sha }} ghcr.io/${{ github.repository }}/api:production
+          docker push ghcr.io/${{ github.repository }}/api:production
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_HOST }}
+          username: ${{ secrets.PROD_USER }}
+          key: ${{ secrets.PROD_SSH_KEY }}
+          script: |
+            cd /opt/smartcampus
+            docker compose pull api web ai-engine
+            docker compose up -d --no-deps api web ai-engine
+            echo "Deployment completed at $(date)"

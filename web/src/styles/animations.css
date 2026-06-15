@@ -1,0 +1,109 @@
+/* ─── SmartCampus AI — Animation Keyframes ─────────────────────────────── */
+
+/* Floating animation — gentle levitation effect for cards & elements */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
+/* Glow pulse — for accent elements and CTA highlights */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.3),
+                0 0 16px rgba(59, 130, 246, 0.1);
+  }
+  50% {
+    box-shadow: 0 0 16px rgba(59, 130, 246, 0.5),
+                0 0 32px rgba(139, 92, 246, 0.2);
+  }
+}
+
+/* Gradient shift — for animated gradient borders and backgrounds */
+@keyframes gradient-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Shimmer — loading skeleton effect */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Glow spread — for hover glow effects on interactive elements */
+@keyframes glow-spread {
+  0% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Spin slow — for loading spinners */
+@keyframes spin-slow {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* Scale pulse — subtle breathing effect */
+@keyframes scale-pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+/* Fade in up — used by Framer Motion but available as CSS too */
+@keyframes fade-in-up {
+  0% {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Aurora drift — for hero background effects */
+@keyframes aurora-drift {
+  0% {
+    transform: translate(0%, 0%) scale(1);
+  }
+  25% {
+    transform: translate(5%, -5%) scale(1.05);
+  }
+  50% {
+    transform: translate(-3%, 3%) scale(0.95);
+  }
+  75% {
+    transform: translate(7%, 2%) scale(1.02);
+  }
+  100% {
+    transform: translate(0%, 0%) scale(1);
+  }
+}

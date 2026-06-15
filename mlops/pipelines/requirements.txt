@@ -1,0 +1,2 @@
+# SmartCampus AI — MLOps Pipeline Dependencies
+pyyaml>=6.0

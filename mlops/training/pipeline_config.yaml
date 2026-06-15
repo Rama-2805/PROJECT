@@ -1,0 +1,88 @@
+# ─── SmartCampus AI — MLOps Training Pipeline Config ──────────
+# Controls training job defaults, resource allocation, and scheduling
+
+pipeline:
+  name: "smartcampus-ai-training"
+  version: "1.0.0"
+  max_concurrent_jobs: 2
+  default_output_dir: "/data/models"
+
+models:
+  face_recognition:
+    framework: "pytorch"
+    backbone: "resnet50"
+    embedding_size: 512
+    default_epochs: 50
+    default_batch_size: 64
+    learning_rate:
+      initial: 0.0001
+      scheduler: "cosine_annealing"
+      min_lr: 1e-6
+    optimizer: "adamw"
+    weight_decay: 0.01
+    mixed_precision: true
+    gpu_required: true
+    gpu_memory_gb: 8
+    augmentations:
+      - "random_flip"
+      - "random_rotate_10"
+      - "brightness_contrast"
+      - "gaussian_blur"
+      - "random_occlusion"
+
+  behavior:
+    framework: "pytorch"
+    backbone: "yolov8n"
+    default_epochs: 100
+    default_batch_size: 32
+    learning_rate:
+      initial: 0.001
+      scheduler: "step_lr"
+      step_size: 30
+      gamma: 0.1
+    optimizer: "sgd"
+    momentum: 0.937
+    mixed_precision: true
+    gpu_required: true
+    gpu_memory_gb: 6
+    augmentations:
+      - "mosaic"
+      - "mixup"
+      - "hsv_augment"
+      - "random_perspective"
+
+  pose:
+    framework: "pytorch"
+    backbone: "mobilenetv3"
+    keypoints: 17
+    default_epochs: 75
+    default_batch_size: 128
+    learning_rate:
+      initial: 0.0005
+      scheduler: "cosine_annealing"
+    optimizer: "adam"
+    mixed_precision: true
+    gpu_required: false
+
+data:
+  validation_split: 0.1
+  test_split: 0.1
+  cache_dataset: true
+  prefetch_factor: 2
+  num_workers: 4
+
+early_stopping:
+  enabled: true
+  patience: 10
+  min_delta: 0.001
+  monitor: "val_accuracy"
+
+checkpoint:
+  save_every_n_epochs: 5
+  keep_last_n: 3
+  save_best_only: false
+
+logging:
+  log_interval: 10
+  use_tensorboard: true
+  save_metrics_csv: true

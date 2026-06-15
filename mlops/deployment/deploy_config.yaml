@@ -1,0 +1,83 @@
+# ─── SmartCampus AI — MLOps Deployment Pipeline Config ───────
+# Controls model deployment stages, A/B testing, and rollback
+
+pipeline:
+  name: "smartcampus-ai-deployment"
+  version: "1.0.0"
+  environments:
+    - "development"
+    - "staging"
+    - "production"
+
+deployment_stages:
+  validation:
+    required_checks:
+      - accuracy_threshold: true
+      - latency_threshold: true
+      - robustness_threshold: true
+      - vulnerability_scan: true
+    auto_approve: false
+
+  staging:
+    deployment_strategy: "blue_green"
+    traffic_percent: 100
+    observation_period_hours: 24
+    rollback_conditions:
+      accuracy_drop_percent: 2.0
+      error_rate_increase: 0.5
+      latency_increase_ms: 50
+
+  ab_testing:
+    enabled: true
+    canary_percent: 10
+    ramp_up_steps:
+      - percent: 10
+        duration_hours: 4
+      - percent: 25
+        duration_hours: 8
+      - percent: 50
+        duration_hours: 12
+      - percent: 100
+        duration_hours: 24
+    metrics_to_compare:
+      - "accuracy"
+      - "latency_p95"
+      - "error_rate"
+      - "user_feedback_score"
+
+  production:
+    deployment_strategy: "rolling"
+    max_surge: 1
+    max_unavailable: 0
+    min_ready_seconds: 30
+    health_check_interval_seconds: 10
+
+rollback:
+  automatic:
+    enabled: true
+    triggers:
+      - error_rate > 5%
+      - accuracy_drop > 3%
+      - latency_p95 > 500ms
+  manual:
+    approval_required: true
+    notifiers:
+      - "mlops-team@smartcampus-ai.com"
+
+edge_deployment:
+  update_strategy: "phased"
+  max_devices_at_once: 10
+  update_window_start: "02:00"
+  update_window_end: "05:00"
+  require_checksum_verification: true
+  require_digital_signature: true
+  rollback_on_failure: true
+  max_retries: 3
+
+model_registry:
+  max_versions_per_model: 10
+  auto_archive_after_days: 180
+  required_approvals:
+    - "ai-researcher"
+    - "qa-engineer"
+    - "mlops-engineer"

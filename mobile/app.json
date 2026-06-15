@@ -1,0 +1,77 @@
+{
+  "expo": {
+    "name": "SmartCampus AI",
+    "slug": "smartcampus-ai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icons/app-icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0F"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.smartcampus.ai",
+      "buildNumber": "1.0.0",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Camera is used for QR code scanning and face recognition attendance.",
+        "NSFaceIDUsageDescription": "Face ID is used for secure biometric authentication.",
+        "NSNotificationUsageDescription": "Notifications provide real-time attendance updates and AI alerts.",
+        "NSLocationWhenInUseUsageDescription": "Location is used for campus navigation features.",
+        "NSPhotoLibraryUsageDescription": "Photo library access is used for profile picture updates."
+      },
+      "appStoreUrl": "https://apps.apple.com/app/smartcampus-ai/id1234567890",
+      "config": {
+        "usesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.smartcampus.ai",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/icons/adaptive-icon.png",
+        "backgroundColor": "#0A0A0F"
+      },
+      "permissions": [
+        "CAMERA",
+        "USE_BIOMETRIC",
+        "POST_NOTIFICATIONS",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "VIBRATE",
+        "RECEIVE_BOOT_COMPLETED"
+      ],
+      "playStoreUrl": "https://play.google.com/store/apps/details?id=com.smartcampus.ai"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-local-authentication",
+      "expo-camera",
+      "expo-notifications",
+      "expo-haptics",
+      "expo-splash-screen"
+    ],
+    "extra": {
+      "apiUrl": "https://api.smartcampus-ai.com",
+      "wsUrl": "wss://api.smartcampus-ai.com/ws",
+      "appVersion": "1.0.0",
+      "environment": "production",
+      "enableAnalytics": true,
+      "enableCrashReporting": true
+    },
+    "privacy": {
+      "hasPrivacyPolicy": true,
+      "privacyPolicyUrl": "https://smartcampus-ai.com/privacy",
+      "hasTermsOfService": true,
+      "termsOfServiceUrl": "https://smartcampus-ai.com/terms",
+      "dataCollection": {
+        "requiredData": ["Camera", "Face ID / Biometrics", "Push Notifications"],
+        "optionalData": ["Location", "Photo Library"],
+        "dataUsage": "Attendance tracking, AI insights, notifications, campus navigation"
+      }
+    }
+  }
+}

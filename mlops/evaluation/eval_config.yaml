@@ -1,0 +1,91 @@
+# ─── SmartCampus AI — MLOps Evaluation Pipeline Config ───────
+# Controls evaluation thresholds, test datasets, and reporting
+
+pipeline:
+  name: "smartcampus-ai-evaluation"
+  version: "1.0.0"
+  min_test_samples: 1000
+  latency_test_iterations: 1000
+
+thresholds:
+  face_recognition:
+    accuracy:
+      pass: 95.0
+      warning: 90.0
+    precision:
+      pass: 0.93
+      warning: 0.88
+    recall:
+      pass: 0.92
+      warning: 0.85
+    f1_score:
+      pass: 0.92
+      warning: 0.86
+    max_latency_ms: 200
+    robustness:
+      pass: 0.85
+      warning: 0.75
+
+  behavior:
+    accuracy:
+      pass: 90.0
+      warning: 85.0
+    precision:
+      pass: 0.88
+      warning: 0.82
+    recall:
+      pass: 0.85
+      warning: 0.78
+    f1_score:
+      pass: 0.86
+      warning: 0.80
+    max_latency_ms: 150
+    robustness:
+      pass: 0.80
+      warning: 0.70
+
+  pose:
+    accuracy:
+      pass: 85.0
+      warning: 78.0
+    precision:
+      pass: 0.82
+      warning: 0.75
+    recall:
+      pass: 0.80
+      warning: 0.72
+    max_latency_ms: 100
+    robustness:
+      pass: 0.75
+      warning: 0.65
+
+reporting:
+  format: "json"
+  include_confusion_matrix: true
+  include_latency_distribution: true
+  output_dir: "/data/evaluations/reports"
+
+robustness_tests:
+  - name: "low_light"
+    description: "Test under 50 lux lighting"
+    min_score: 0.70
+  - name: "occlusion"
+    description: "Test with 30% face occlusion"
+    min_score: 0.65
+  - name: "rotation"
+    description: "Test with +/- 30 degree rotation"
+    min_score: 0.75
+  - name: "noise"
+    description: "Test with gaussian noise (sigma=15)"
+    min_score: 0.70
+  - name: "blur"
+    description: "Test with motion blur"
+    min_score: 0.65
+
+notifications:
+  on_failure:
+    - email: "mlops-team@smartcampus-ai.com"
+    - slack: "#mlops-alerts"
+  on_regression:
+    threshold_drop_percent: 2.0
+    notify: true
