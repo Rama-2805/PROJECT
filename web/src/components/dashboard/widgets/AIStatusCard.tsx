@@ -29,13 +29,15 @@ function NeuralDot({ delay = 0 }: { delay?: number }) {
 
 export function AIStatusCard({ models }: AIStatusCardProps) {
   return (
-    <GlassCard className="relative p-5 sm:p-6 overflow-hidden w-full h-full border-white/[0.07] bg-[#060814]/70" glowColor="rgba(59, 130, 246, 0.25)">
+    <GlassCard className="relative p-5 sm:p-6 overflow-hidden w-full h-full border-white/10 bg-[#111111]/80" glowColor="rgba(255, 255, 255, 0.08)">
+      {/* subtle top glow */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-white opacity-20 blur-sm" />
       {/* Cyber Grid Overlay inside card */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.01)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.01)_1px,transparent_1px)] bg-[size:14px_14px] pointer-events-none opacity-30" />
 
       {/* Sweeping Scanner Line */}
       <motion.div
-        className="absolute left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-blue-500/50 to-transparent pointer-events-none z-10"
+        className="absolute left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-white/30 to-transparent pointer-events-none z-10"
         initial={{ top: "0%" }}
         animate={{ top: ["0%", "100%", "0%"] }}
         transition={{
@@ -55,8 +57,8 @@ export function AIStatusCard({ models }: AIStatusCardProps) {
             [60, 160], [140, 170], [220, 150], [300, 165], [370, 155],
           ].map(([x, y], i) => (
             <g key={i}>
-              <circle cx={x} cy={y} r="2.5" fill="#60A5FA" opacity="0.8" />
-              <circle cx={x} cy={y} r="6" fill="#3B82F6" className="animate-ping" opacity="0.1" />
+              <circle cx={x} cy={y} r="2.5" fill="#FFFFFF" opacity="0.8" />
+              <circle cx={x} cy={y} r="6" fill="#FFFFFF" className="animate-ping" opacity="0.1" />
             </g>
           ))}
           {/* Base Connection Lines */}
@@ -76,7 +78,7 @@ export function AIStatusCard({ models }: AIStatusCardProps) {
                 y1={nodes[src][1]}
                 x2={nodes[dst][0]}
                 y2={nodes[dst][1]}
-                stroke="#3B82F6"
+                stroke="#FFFFFF"
                 strokeWidth="0.5"
                 opacity="0.15"
               />
@@ -99,7 +101,7 @@ export function AIStatusCard({ models }: AIStatusCardProps) {
                 y1={nodes[src][1]}
                 x2={nodes[dst][0]}
                 y2={nodes[dst][1]}
-                stroke="#60A5FA"
+                stroke="#FFFFFF"
                 strokeWidth="1"
                 strokeDasharray="6 25"
                 opacity="0.5"
@@ -140,7 +142,7 @@ export function AIStatusCard({ models }: AIStatusCardProps) {
           {models.map((model) => (
             <div
               key={model.name}
-              className="flex items-center justify-between p-3.5 rounded-xl bg-[#090b16]/70 border border-white/[0.05] hover:bg-[#0c0e22] hover:border-blue-500/20 transition-all duration-300 shadow-sm"
+              className="flex items-center justify-between p-3.5 rounded-xl bg-black/40 border border-white/5 hover:bg-white/[0.03] hover:border-white/20 transition-all duration-300 shadow-sm"
             >
               <div className="min-w-0 mr-2">
                 <p className="text-xs font-bold text-gray-200 truncate group-hover:text-white">{model.name}</p>

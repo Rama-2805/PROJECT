@@ -10,7 +10,7 @@ interface GlassCardProps {
   tilt?: boolean;
 }
 
-export const GlassCard = React.forwardRef<HTMLDivElement, GlassCardProps & React.HTMLAttributes<HTMLDivElement>>(({ children, className, glowColor = "rgba(59, 130, 246, 0.4)", tilt = true, ...props }, ref) => {
+export const GlassCard = React.forwardRef<HTMLDivElement, GlassCardProps & React.HTMLAttributes<HTMLDivElement>>(({ children, className, glowColor = "rgba(255, 255, 255, 0.08)", tilt = true, ...props }, ref) => {
   const glowRef = useMouseGlow();
   
   // 3D Tilt Logic
@@ -48,18 +48,18 @@ export const GlassCard = React.forwardRef<HTMLDivElement, GlassCardProps & React
       onMouseLeave={handleMouseLeave}
       style={tilt ? { rotateX, rotateY, transformStyle: "preserve-3d" } : {}}
       className={cn(
-        "relative rounded-[2rem] overflow-hidden group transition-all duration-300",
-        "bg-white/5 backdrop-blur-[40px] saturate-200",
-        "border border-white/20 shadow-[0_20px_60px_rgba(0,0,0,0.35)]",
+        "relative rounded-2xl overflow-hidden group transition-all duration-300",
+        "bg-[#111111] backdrop-blur-[40px] saturate-200",
+        "border border-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.35)]",
         className
       )}
     >
       {/* Inner Highlight Edge */}
-      <div className="absolute inset-0 rounded-[2rem] shadow-[inset_0_1px_2px_rgba(255,255,255,0.8)] pointer-events-none" />
+      <div className="absolute inset-0 rounded-2xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] pointer-events-none" />
 
       {/* Mouse Glow Effect */}
       <div 
-        className="pointer-events-none absolute -inset-px opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-[2rem]"
+        className="pointer-events-none absolute -inset-px opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl"
         style={{
           background: `radial-gradient(600px circle at var(--mouse-x) var(--mouse-y), ${glowColor}, transparent 40%)`
         }}

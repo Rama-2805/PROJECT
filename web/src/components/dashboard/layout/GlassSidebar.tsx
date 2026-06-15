@@ -17,7 +17,8 @@ import {
   FileText, 
   Settings,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Cloud
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
@@ -48,25 +49,19 @@ export function GlassSidebar() {
         width: sidebarOpen ? 280 : 80,
       }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
-      className="fixed left-0 top-0 h-full z-50 flex flex-col border-r border-white/10 bg-[#060814]/85 backdrop-blur-[40px] shadow-[4px_0_24px_rgba(0,0,0,0.5)]"
+      className="fixed left-0 top-0 h-full z-50 flex flex-col border-r border-white/10 bg-[#050505]/90 backdrop-blur-[40px] shadow-[4px_0_24px_rgba(0,0,0,0.5)]"
     >
       {/* Header Logo */}
       <div className="flex h-20 items-center justify-between px-6 border-b border-white/10">
-        <div className="flex items-center gap-3 overflow-hidden whitespace-nowrap">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-blue-400 border border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.2)]">
-            <BrainCircuit className="h-5 w-5" />
-          </div>
+        <Link href="/" className="flex items-center gap-3 overflow-hidden whitespace-nowrap">
+          <Cloud className="w-8 h-8 text-white fill-white shrink-0" />
           {sidebarOpen && (
-            <motion.span 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="text-lg font-semibold tracking-wider bg-gradient-to-r from-white via-white to-gray-400 bg-clip-text text-transparent"
-            >
-              SmartCampus AI
-            </motion.span>
+            <div className="flex flex-col">
+              <span className="text-[1.15rem] font-medium text-white leading-none tracking-tight">SMARTCAMPUS</span>
+              <span className="text-[0.55rem] font-semibold text-gray-500 uppercase tracking-widest mt-0.5">Intelligent Education</span>
+            </div>
           )}
-        </div>
+        </Link>
       </div>
 
       {/* Navigation */}
@@ -88,7 +83,7 @@ export function GlassSidebar() {
                 {isActive && (
                   <motion.div
                     layoutId="activeNavCapsule"
-                    className="absolute inset-0 rounded-xl bg-gradient-to-r from-blue-600/15 via-blue-500/5 to-transparent border border-blue-500/25 shadow-[0_0_25px_rgba(59,130,246,0.15),inset_0_1px_1px_rgba(255,255,255,0.1)] pointer-events-none"
+                    className="absolute inset-0 rounded-xl bg-gradient-to-r from-white/10 via-white/5 to-transparent border border-white/20 shadow-[0_0_25px_rgba(255,255,255,0.05),inset_0_1px_1px_rgba(255,255,255,0.1)] pointer-events-none"
                     transition={{ type: "spring", stiffness: 380, damping: 30 }}
                   />
                 )}
@@ -102,8 +97,8 @@ export function GlassSidebar() {
                   className={cn(
                     "h-5 w-5 shrink-0 transition-all duration-350", 
                     isActive 
-                      ? "text-blue-400 filter drop-shadow-[0_0_8px_rgba(96,165,250,0.6)]" 
-                      : "group-hover:text-blue-300 group-hover:scale-110"
+                      ? "text-white filter drop-shadow-[0_0_8px_rgba(255,255,255,0.4)]" 
+                      : "group-hover:text-white group-hover:scale-110"
                   )} 
                 />
                 
@@ -122,7 +117,7 @@ export function GlassSidebar() {
 
                 {/* Hover Tooltip when collapsed */}
                 {!sidebarOpen && (
-                  <div className="absolute left-full ml-4 rounded-lg bg-[#0d0f1a] border border-white/10 px-3 py-1.5 text-xs text-white opacity-0 shadow-xl scale-95 origin-left transition-all duration-300 group-hover:opacity-100 group-hover:scale-100 pointer-events-none whitespace-nowrap z-50">
+                  <div className="absolute left-full ml-4 rounded-lg bg-[#111111] border border-white/10 px-3 py-1.5 text-xs text-white opacity-0 shadow-xl scale-95 origin-left transition-all duration-300 group-hover:opacity-100 group-hover:scale-100 pointer-events-none whitespace-nowrap z-50">
                     {item.label}
                   </div>
                 )}

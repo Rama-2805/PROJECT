@@ -91,41 +91,22 @@ export function MetricCard({ label, value, suffix = "", icon, trend, accent = "f
   const { display } = useCountUp(value, 1.5, suffix);
 
   // Map accents to high-fidelity glow and text colors
-  let glowColor = "rgba(59, 130, 246, 0.25)";
-  let sparklineColor = "text-blue-400";
-  let hoverShadow = "hover:shadow-[0_20px_50px_rgba(59,130,246,0.15)]";
-
-  if (accent.includes("blue") || accent.includes("indigo")) {
-    glowColor = "rgba(59, 130, 246, 0.3)";
-    sparklineColor = "text-blue-400";
-    hoverShadow = "hover:shadow-[0_20px_50px_rgba(59,130,246,0.15)]";
-  } else if (accent.includes("purple") || accent.includes("pink")) {
-    glowColor = "rgba(168, 85, 247, 0.3)";
-    sparklineColor = "text-purple-400";
-    hoverShadow = "hover:shadow-[0_20px_50px_rgba(168,85,247,0.15)]";
-  } else if (accent.includes("emerald") || accent.includes("success")) {
-    glowColor = "rgba(16, 185, 129, 0.3)";
-    sparklineColor = "text-emerald-400";
-    hoverShadow = "hover:shadow-[0_20px_50px_rgba(16,185,129,0.15)]";
-  } else if (accent.includes("cyan")) {
-    glowColor = "rgba(6, 182, 212, 0.3)";
-    sparklineColor = "text-cyan-400";
-    hoverShadow = "hover:shadow-[0_20px_50px_rgba(6,182,212,0.15)]";
-  } else if (accent.includes("amber") || accent.includes("yellow")) {
-    glowColor = "rgba(245, 158, 11, 0.3)";
-    sparklineColor = "text-amber-400";
-    hoverShadow = "hover:shadow-[0_20px_50px_rgba(245,158,11,0.15)]";
-  }
+  const glowColor = "rgba(255, 255, 255, 0.08)";
+  const sparklineColor = "text-white/40";
+  const hoverShadow = "hover:shadow-[0_20px_50px_rgba(255,255,255,0.05)]";
 
   return (
     <GlassCard 
       className={cn(
-        "relative p-5 sm:p-6 flex flex-col justify-between group overflow-hidden border-white/[0.07] bg-[#060814]/70",
+        "relative p-5 sm:p-6 flex flex-col justify-between group overflow-hidden border-white/10 bg-[#111111]/80",
         hoverShadow
       )}
       glowColor={glowColor}
       tilt={true}
     >
+      {/* subtle top glow */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-16 h-1 bg-white opacity-20 blur-sm" />
+      
       {/* Cyber Grid Overlay inside card */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none opacity-40 group-hover:opacity-75 transition-opacity duration-500" />
       
@@ -134,11 +115,7 @@ export function MetricCard({ label, value, suffix = "", icon, trend, accent = "f
 
       {/* Top row: Icon & Trend */}
       <div className="flex items-start justify-between mb-4 relative z-10">
-        <div className={cn(
-          "flex h-11 w-11 items-center justify-center rounded-xl bg-gradient-to-br",
-          accent,
-          "text-white shadow-lg border border-white/10 group-hover:scale-105 transition-transform duration-300",
-        )}>
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10 text-white shadow-lg border border-white/20 group-hover:scale-105 transition-transform duration-300">
           {icon}
         </div>
         {trend && (

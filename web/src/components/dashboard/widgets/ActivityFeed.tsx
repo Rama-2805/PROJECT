@@ -38,14 +38,16 @@ export function ActivityFeed({ events }: ActivityFeedProps) {
   const filtered = filter === "all" ? events : events.filter((e) => e.type === filter);
 
   return (
-    <GlassCard className="p-5 sm:p-6 border-white/[0.07] bg-[#060814]/70" glowColor="rgba(6, 182, 212, 0.25)">
+    <GlassCard className="p-5 sm:p-6 border-white/10 bg-[#111111]/80" glowColor="rgba(255, 255, 255, 0.08)">
+      {/* subtle top glow */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-white opacity-20 blur-sm" />
       {/* Cyber Grid Overlay inside card */}
       <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.01)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.01)_1px,transparent_1px)] bg-[size:14px_14px] pointer-events-none opacity-30" />
 
       {/* Header */}
       <div className="flex items-center justify-between mb-4 border-b border-white/5 pb-3 relative z-10">
         <div className="flex items-center gap-2">
-          <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" style={{ filter: "drop-shadow(0 0 3px #22D3EE)" }} />
+          <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" style={{ filter: "drop-shadow(0 0 3px #FFFFFF)" }} />
           <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-300">TELEMETRY FEED</h3>
         </div>
         <div className="flex gap-1.5">
@@ -56,7 +58,7 @@ export function ActivityFeed({ events }: ActivityFeedProps) {
               className={cn(
                 "px-2.5 py-1 rounded-md text-[9px] font-bold uppercase tracking-wider transition-all duration-300",
                 filter === f
-                  ? "bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 shadow-[0_0_10px_rgba(6,182,212,0.1)]"
+                  ? "bg-white/10 text-white border border-white/20 shadow-[0_0_10px_rgba(255,255,255,0.05)]"
                   : "text-gray-500 hover:text-gray-300 border border-transparent",
               )}
             >
@@ -80,7 +82,7 @@ export function ActivityFeed({ events }: ActivityFeedProps) {
               key={event.id}
               variants={fadeInUp}
               className={cn(
-                "flex gap-3 p-3 rounded-lg border bg-black/40 hover:bg-[#0c0e22]/60 hover:border-blue-500/25 transition-all duration-300 font-mono text-[10px]",
+                "flex gap-3 p-3 rounded-lg border bg-black/40 hover:bg-white/[0.03] hover:border-white/20 transition-all duration-300 font-mono text-[10px]",
                 sev.border,
               )}
             >

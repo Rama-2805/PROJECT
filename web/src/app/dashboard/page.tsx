@@ -31,7 +31,7 @@ const chartData = [
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload && payload.length) {
     return (
-      <div className="bg-[#060814]/95 border border-white/10 rounded-xl p-3 shadow-2xl backdrop-blur-md font-mono text-xs">
+      <div className="bg-[#111111]/95 border border-white/10 rounded-xl p-3 shadow-2xl backdrop-blur-md font-mono text-xs">
         <p className="font-bold text-gray-200 mb-1.5 uppercase tracking-wider">{label} Telemetry</p>
         {payload.map((entry: any) => (
           <div key={entry.name} className="flex items-center gap-2 mt-1.5">
@@ -164,7 +164,9 @@ export default function DashboardPage() {
 
         {/* Attendance Overview Chart */}
         <motion.div variants={fadeInUp}>
-          <div className="relative overflow-hidden rounded-[2rem] border border-white/[0.07] bg-[#060814]/70 p-5 sm:p-6 shadow-[0_20px_50px_rgba(0,0,0,0.3)]">
+          <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#111111] p-5 sm:p-6 shadow-[0_20px_50px_rgba(0,0,0,0.3)]">
+            {/* subtle top glow */}
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-white opacity-20 blur-sm" />
             {/* Cyber Grid Overlay inside chart container */}
             <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none opacity-40" />
 
