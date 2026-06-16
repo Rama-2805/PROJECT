@@ -20,7 +20,7 @@ const buttonVariants = cva(
     variants: {
       variant: {
         primary: [
-          "bg-gradient-to-r from-ai-blue to-ai-purple text-white",
+          "bg-gradient-to-r from-ai-blue to-ai-purple text-black font-semibold",
           "shadow-lg shadow-ai-blue/20",
           "hover:shadow-xl hover:shadow-ai-purple/30",
           "hover:brightness-110",

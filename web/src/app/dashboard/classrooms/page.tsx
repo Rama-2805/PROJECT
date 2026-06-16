@@ -71,7 +71,7 @@ export default function ClassroomsPage() {
           onClick={() => setFilterBuilding("")}
           className={cn(
             "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
-            !filterBuilding ? "bg-ai-blue text-white" : "glass text-text-dim hover:text-text-primary",
+            !filterBuilding ? "bg-ai-blue text-black font-semibold" : "glass text-text-dim hover:text-text-primary",
           )}
         >
           All Buildings
@@ -82,7 +82,7 @@ export default function ClassroomsPage() {
             onClick={() => setFilterBuilding(b)}
             className={cn(
               "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
-              filterBuilding === b ? "bg-ai-blue text-white" : "glass text-text-dim hover:text-text-primary",
+              filterBuilding === b ? "bg-ai-blue text-black font-semibold" : "glass text-text-dim hover:text-text-primary",
             )}
           >
             {b}

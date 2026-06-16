@@ -122,7 +122,7 @@ export default function AIDatasetsPage() {
         {[{ id: "all", label: "All Types" }, { id: "FACE", label: "Face" }, { id: "BEHAVIOR", label: "Behavior" }, { id: "CLASSROOM_ACTIVITY", label: "Classroom" }, { id: "SYNTHETIC", label: "Synthetic" }].map(f => (
           <button key={f.id} onClick={() => setActiveType(f.id)} className={cn(
             "px-3 py-1.5 rounded-lg text-[10px] font-medium transition-all",
-            activeType === f.id ? "bg-ai-blue text-white" : "text-text-dim hover:text-text-primary",
+            activeType === f.id ? "bg-ai-blue text-black font-semibold" : "text-text-dim hover:text-text-primary",
           )}>{f.label}</button>
         ))}
       </div>

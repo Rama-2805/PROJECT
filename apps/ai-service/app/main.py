@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config.settings import settings
 from .api.routes import router as enrollment_router
 from .attendance.routes import router as attendance_router
+from .behavior.routes import router as behavior_router
+from .grounding.routes import router as grounding_router
 
 
 @asynccontextmanager
@@ -57,6 +59,8 @@ app.add_middleware(
 # Register routers
 app.include_router(enrollment_router)
 app.include_router(attendance_router)
+app.include_router(behavior_router)
+app.include_router(grounding_router)
 
 
 @app.get("/health")

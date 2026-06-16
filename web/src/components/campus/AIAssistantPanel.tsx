@@ -60,7 +60,7 @@ export function AIAssistantPanel() {
       {/* Toggle button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="absolute bottom-4 left-4 z-20 w-10 h-10 rounded-2xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center hover:bg-cyan-500/30 transition-all"
+        className="absolute bottom-4 left-4 z-20 w-10 h-10 rounded-2xl bg-[#111111]/85 border border-white/10 flex items-center justify-center hover:bg-white/10 hover:border-white/20 transition-all shadow-xl"
       >
         <span className="text-lg">{isOpen ? '✕' : '🤖'}</span>
       </button>
@@ -73,9 +73,9 @@ export function AIAssistantPanel() {
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             className="absolute bottom-16 left-4 z-20 w-80"
           >
-            <div className="backdrop-blur-xl bg-slate-900/90 rounded-2xl border border-slate-700/50 shadow-2xl overflow-hidden">
+            <div className="backdrop-blur-xl bg-[#111111]/95 rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
               {/* Header */}
-              <div className="px-4 py-3 border-b border-slate-700/50">
+              <div className="px-4 py-3 border-b border-white/5">
                 <div className="flex items-center gap-2">
                   <span className="text-sm">🤖</span>
                   <div>
@@ -86,7 +86,7 @@ export function AIAssistantPanel() {
               </div>
 
               {/* Messages */}
-              <div ref={scrollRef} className="h-56 overflow-y-auto p-3 space-y-2 scrollbar-thin scrollbar-thumb-slate-700">
+              <div ref={scrollRef} className="h-56 overflow-y-auto p-3 space-y-2 scrollbar-thin scrollbar-thumb-white/10">
                 {messages.map((msg, i) => (
                   <motion.div
                     key={i}
@@ -96,10 +96,10 @@ export function AIAssistantPanel() {
                     className={`flex ${msg.isUser ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[85%] px-3 py-2 rounded-2xl text-xs leading-relaxed ${
+                      className={`max-w-[85%] px-3 py-2 rounded-2xl text-xs leading-relaxed border ${
                         msg.isUser
-                          ? 'bg-cyan-500/20 text-cyan-200 rounded-br-md'
-                          : 'bg-slate-800/50 text-slate-300 rounded-bl-md'
+                          ? 'bg-white/10 border-white/10 text-white rounded-br-md'
+                          : 'bg-white/[0.03] border-white/5 text-gray-300 rounded-bl-md'
                       }`}
                     >
                       {msg.text}
@@ -109,12 +109,12 @@ export function AIAssistantPanel() {
               </div>
 
               {/* Suggestions */}
-              <div className="px-3 py-2 border-t border-slate-700/50 flex flex-wrap gap-1.5">
+              <div className="px-3 py-2 border-t border-white/5 flex flex-wrap gap-1.5">
                 {SUGGESTIONS.map((s) => (
                   <button
                     key={s}
                     onClick={() => handleSend(s)}
-                    className="px-2 py-1 rounded-lg bg-slate-800/50 text-[10px] text-slate-400 hover:text-cyan-300 hover:bg-slate-700/50 transition-colors"
+                    className="px-2 py-1 rounded-lg bg-white/[0.03] border border-white/5 text-[10px] text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
                   >
                     {s}
                   </button>
@@ -122,18 +122,18 @@ export function AIAssistantPanel() {
               </div>
 
               {/* Input */}
-              <div className="px-3 py-2 border-t border-slate-700/50">
+              <div className="px-3 py-2 border-t border-white/5">
                 <div className="flex gap-2">
                   <input
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter' && input.trim()) { handleSend(input.trim()); setInput(''); } }}
                     placeholder="Ask about campus..."
-                    className="flex-1 px-3 py-1.5 rounded-xl bg-slate-800/50 border border-slate-700/50 text-xs text-white placeholder:text-slate-600 focus:outline-none focus:border-cyan-500/50"
+                    className="flex-1 px-3 py-1.5 rounded-xl bg-black border border-white/10 text-xs text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30"
                   />
                   <button
                     onClick={() => { if (input.trim()) { handleSend(input.trim()); setInput(''); } }}
-                    className="px-3 py-1.5 rounded-xl bg-cyan-500/20 text-cyan-300 text-xs font-medium hover:bg-cyan-500/30 transition-colors"
+                    className="px-3 py-1.5 rounded-xl bg-white text-black text-xs font-semibold hover:bg-gray-200 transition-colors"
                   >
                     Send
                   </button>

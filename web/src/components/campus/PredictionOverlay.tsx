@@ -32,16 +32,16 @@ export function PredictionOverlay() {
           exit={{ opacity: 0, y: 20 }}
           className="absolute bottom-4 left-4 z-20 w-96"
         >
-          <div className="backdrop-blur-xl bg-slate-900/80 rounded-2xl border border-slate-700/50 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-slate-700/50">
+          <div className="backdrop-blur-xl bg-[#111111]/90 rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/5">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-white">AI Predictions</span>
-                <span className="px-1.5 py-0.5 rounded text-[10px] bg-violet-500/20 text-violet-300 font-medium">LIVE</span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] bg-white/10 text-white border border-white/20 font-medium">LIVE</span>
               </div>
-              <span className="text-[10px] text-slate-500">{predictions.length} active</span>
+              <span className="text-[10px] text-gray-400">{predictions.length} active</span>
             </div>
 
-            <div className="divide-y divide-slate-800/50 max-h-60 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
+            <div className="divide-y divide-white/5 max-h-60 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
               {predictions.map((p, i) => {
                 const impact = IMPACT_LABELS[p.impact];
                 return (
@@ -50,28 +50,28 @@ export function PredictionOverlay() {
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.1 }}
-                    className={`p-3 border-l-2 ${CATEGORY_COLORS[p.category] || 'border-slate-700/50'} hover:bg-slate-800/30 transition-colors cursor-pointer`}
+                    className={`p-3 border-l-2 ${CATEGORY_COLORS[p.category] || 'border-white/10'} hover:bg-white/5 transition-colors cursor-pointer`}
                   >
                     <div className="flex items-start justify-between gap-2 mb-1">
                       <h4 className="text-xs font-semibold text-white">{p.title}</h4>
                       <span className={`text-[10px] font-medium whitespace-nowrap ${impact.color}`}>{impact.label}</span>
                     </div>
-                    <p className="text-[11px] text-slate-400 leading-relaxed mb-1.5">{p.description}</p>
+                    <p className="text-[11px] text-gray-400 leading-relaxed mb-1.5">{p.description}</p>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5">
-                        <span className="text-[10px] text-slate-500">Confidence:</span>
+                        <span className="text-[10px] text-gray-500">Confidence:</span>
                         <div className="flex items-center gap-1">
-                          <div className="w-12 h-1 bg-slate-800 rounded-full overflow-hidden">
+                          <div className="w-12 h-1 bg-black/40 rounded-full overflow-hidden">
                             <motion.div
                               initial={{ width: 0 }}
                               animate={{ width: `${p.confidence}%` }}
-                              className="h-full rounded-full bg-gradient-to-r from-cyan-500 to-blue-500"
+                              className="h-full rounded-full bg-gradient-to-r from-white to-gray-400"
                             />
                           </div>
-                          <span className="text-[10px] font-mono text-cyan-300">{p.confidence}%</span>
+                          <span className="text-[10px] font-mono text-white">{p.confidence}%</span>
                         </div>
                       </div>
-                      <span className="text-[10px] text-slate-600">{p.targetTime}</span>
+                      <span className="text-[10px] text-gray-500">{p.targetTime}</span>
                     </div>
                   </motion.div>
                 );

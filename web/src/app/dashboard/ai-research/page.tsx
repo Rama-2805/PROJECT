@@ -55,7 +55,7 @@ export default function AIResearchPage() {
         {[{ id: "overview" as const, label: "Experiments" }, { id: "compare" as const, label: "Compare" }, { id: "trends" as const, label: "Trends" }].map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id)} className={cn(
             "px-4 py-1.5 rounded-lg text-[11px] font-medium transition-all",
-            activeTab === t.id ? "bg-ai-blue text-white" : "text-text-dim hover:text-text-primary",
+            activeTab === t.id ? "bg-ai-blue text-black font-semibold" : "text-text-dim hover:text-text-primary",
           )}>{t.label}</button>
         ))}
       </div>
@@ -67,7 +67,7 @@ export default function AIResearchPage() {
             {[{ id: "all", label: "All" }, { id: "FACE_RECOGNITION", label: "Face" }, { id: "BEHAVIOR", label: "Behavior" }, { id: "POSE", label: "Pose" }].map(f => (
               <button key={f.id} onClick={() => setModelFilter(f.id)} className={cn(
                 "px-3 py-1 rounded-lg text-[9px] font-medium transition-all",
-                modelFilter === f.id ? "bg-ai-blue text-white" : "text-text-dim hover:text-text-primary",
+                modelFilter === f.id ? "bg-ai-blue text-black font-semibold" : "text-text-dim hover:text-text-primary",
               )}>{f.label}</button>
             ))}
           </div>

@@ -243,7 +243,7 @@ export function StudentTable({
                 className={cn(
                   "flex items-center justify-center h-7 w-7 rounded-lg text-xs font-medium transition-all",
                   p === page
-                    ? "bg-ai-blue text-white"
+                    ? "bg-ai-blue text-black font-semibold"
                     : "text-text-dim hover:text-text-primary hover:bg-glass-light",
                 )}
               >

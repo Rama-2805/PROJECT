@@ -78,7 +78,7 @@ export default function AIEdgeModelsPage() {
         {[{ id: "all", label: "All Models" }, { id: "ArcFace", label: "ArcFace" }, { id: "Behavior YOLO", label: "Behavior YOLO" }].map(f => (
           <button key={f.id} onClick={() => setModelFilter(f.id)} className={cn(
             "px-3 py-1.5 rounded-lg text-[10px] font-medium transition-all",
-            modelFilter === f.id ? "bg-ai-blue text-white" : "text-text-dim hover:text-text-primary",
+            modelFilter === f.id ? "bg-ai-blue text-black font-semibold" : "text-text-dim hover:text-text-primary",
           )}>{f.label}</button>
         ))}
       </div>

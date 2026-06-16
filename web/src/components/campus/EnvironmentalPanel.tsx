@@ -58,13 +58,13 @@ function MeterBar({ label, value, unit, max, icon, status }: {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
           <span className="text-xs">{icon}</span>
-          <span className="text-[10px] text-slate-400">{label}</span>
+          <span className="text-[10px] text-gray-400">{label}</span>
         </div>
         <span className={`text-xs font-mono font-medium ${colors.text}`}>
           {value}{unit}
         </span>
       </div>
-      <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden">
+      <div className="h-1.5 bg-black/40 rounded-full overflow-hidden">
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${pct}%` }}
@@ -97,7 +97,7 @@ export function EnvironmentalPanel() {
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
           exit={{ opacity: 0, height: 0 }}
-          className="overflow-hidden border-t border-slate-700/50"
+          className="overflow-hidden border-t border-white/5"
         >
           <div className="p-4 space-y-4">
             <div className="flex items-center gap-2">
@@ -108,37 +108,37 @@ export function EnvironmentalPanel() {
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <div className="p-2.5 rounded-xl bg-slate-800/50 border border-slate-700/30">
+              <div className="p-2.5 rounded-xl bg-[#18181B] border border-white/5">
                 <MeterBar label="Temperature" value={envData.temperature} unit="°C" max={35} icon={METER_ICONS.temperature}
                   status={envData.temperature > 27 ? 'critical' : envData.temperature > 25 ? 'warning' : 'good'} />
               </div>
-              <div className="p-2.5 rounded-xl bg-slate-800/50 border border-slate-700/30">
+              <div className="p-2.5 rounded-xl bg-[#18181B] border border-white/5">
                 <MeterBar label="Humidity" value={envData.humidity} unit="%" max={80} icon={METER_ICONS.humidity}
                   status={envData.humidity > 65 ? 'warning' : envData.humidity > 75 ? 'critical' : 'good'} />
               </div>
-              <div className="p-2.5 rounded-xl bg-slate-800/50 border border-slate-700/30">
+              <div className="p-2.5 rounded-xl bg-[#18181B] border border-white/5">
                 <MeterBar label="CO₂ Level" value={envData.co2} unit="ppm" max={1000} icon={METER_ICONS.co2}
                   status={envData.co2 > 800 ? 'critical' : envData.co2 > 600 ? 'warning' : 'good'} />
               </div>
-              <div className="p-2.5 rounded-xl bg-slate-800/50 border border-slate-700/30">
+              <div className="p-2.5 rounded-xl bg-[#18181B] border border-white/5">
                 <MeterBar label="Noise" value={envData.noise} unit="dB" max={80} icon={METER_ICONS.noise}
                   status={envData.noise > 70 ? 'critical' : envData.noise > 55 ? 'warning' : 'good'} />
               </div>
-              <div className="col-span-2 p-2.5 rounded-xl bg-slate-800/50 border border-slate-700/30">
+              <div className="col-span-2 p-2.5 rounded-xl bg-[#18181B] border border-white/5">
                 <MeterBar label="Electricity Usage" value={envData.electricity} unit="%" max={100} icon={METER_ICONS.electricity}
                   status={envData.electricity > 90 ? 'critical' : envData.electricity > 75 ? 'warning' : 'good'} />
               </div>
             </div>
 
             {/* Smart Energy Insights */}
-            <div className="space-y-1 border-t border-slate-700/30 pt-3">
-              <span className="text-[10px] text-slate-500 uppercase tracking-wider font-medium">Energy Insights</span>
+            <div className="space-y-1 border-t border-white/5 pt-3">
+              <span className="text-[10px] text-gray-400 uppercase tracking-wider font-medium">Energy Insights</span>
               {insights.slice(0, 2).map((insight, i) => (
                 <div key={i} className={`flex items-start gap-1.5 p-2 rounded-lg text-[10px] ${
                   insight.severity === 'critical' ? 'bg-red-500/5 text-red-300' :
                   insight.severity === 'warning' ? 'bg-yellow-500/5 text-yellow-300' :
                   insight.severity === 'good' ? 'bg-emerald-500/5 text-emerald-300' :
-                  'bg-slate-800/50 text-slate-400'
+                  'bg-[#18181B] border border-white/5 text-gray-400'
                 }`}>
                   <span className="shrink-0 mt-0.5">
                     {insight.severity === 'critical' ? '🔴' : insight.severity === 'warning' ? '🟡' : insight.severity === 'good' ? '🟢' : '💡'}

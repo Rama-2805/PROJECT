@@ -18,7 +18,8 @@ import {
   Settings,
   ChevronLeft,
   ChevronRight,
-  Cloud
+  Cloud,
+  Eye
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
@@ -31,6 +32,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/devices", label: "Devices", icon: Cpu },
   { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/dashboard/ai-brain", label: "AI Brain", icon: BrainCircuit },
+  { href: "/dashboard/ai-vision", label: "AI Vision", icon: Eye },
   { href: "/dashboard/digital-twin", label: "Digital Twin", icon: Box },
   { href: "/dashboard/reports", label: "Reports", icon: FileText },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },

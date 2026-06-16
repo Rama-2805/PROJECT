@@ -143,7 +143,7 @@ export default function AIEvaluationPage() {
           {[{ id: "all", label: "All" }, { id: "FACE_RECOGNITION", label: "Face" }, { id: "BEHAVIOR", label: "Behavior" }, { id: "POSE", label: "Pose" }].map(f => (
             <button key={f.id} onClick={() => setTypeFilter(f.id)} className={cn(
               "px-2.5 py-1 rounded-lg text-[9px] font-medium transition-all",
-              typeFilter === f.id ? "bg-ai-blue text-white" : "text-text-dim hover:text-text-primary",
+              typeFilter === f.id ? "bg-ai-blue text-black font-semibold" : "text-text-dim hover:text-text-primary",
             )}>{f.label}</button>
           ))}
         </div>
@@ -152,7 +152,7 @@ export default function AIEvaluationPage() {
           {[{ id: "all", label: "All" }, { id: "PASSED", label: "✅ Passed" }, { id: "WARNING", label: "⚠️ Warning" }, { id: "FAILED", label: "❌ Failed" }].map(f => (
             <button key={f.id} onClick={() => setStatusFilter(f.id)} className={cn(
               "px-2.5 py-1 rounded-lg text-[9px] font-medium transition-all",
-              statusFilter === f.id ? "bg-ai-blue text-white" : "text-text-dim hover:text-text-primary",
+              statusFilter === f.id ? "bg-ai-blue text-black font-semibold" : "text-text-dim hover:text-text-primary",
             )}>{f.label}</button>
           ))}
         </div>

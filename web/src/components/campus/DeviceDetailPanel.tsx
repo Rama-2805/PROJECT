@@ -32,9 +32,9 @@ export function DeviceDetailPanel() {
           transition={{ type: 'spring', damping: 25, stiffness: 300 }}
           className="absolute right-4 top-20 bottom-4 z-20 w-80"
         >
-          <div className="h-full backdrop-blur-xl bg-slate-900/80 rounded-2xl border border-slate-700/50 shadow-2xl overflow-hidden">
+          <div className="h-full backdrop-blur-xl bg-[#111111]/90 rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
             {/* Header */}
-            <div className="p-4 border-b border-slate-700/50">
+            <div className="p-4 border-b border-white/5">
               <div className="flex items-start justify-between">
                 <div>
                   <div className="flex items-center gap-2 mb-1">
@@ -48,21 +48,21 @@ export function DeviceDetailPanel() {
                 </div>
                 <button
                   onClick={() => setSelectedDevice(null)}
-                  className="p-1 rounded-lg hover:bg-slate-700/50 text-slate-400 hover:text-white transition-colors"
+                  className="p-1 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
                 >
                   <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
-              <p className="text-xs text-slate-500 mt-1">ID: {selectedDevice.deviceId}</p>
+              <p className="text-xs text-text-muted mt-1">ID: {selectedDevice.deviceId}</p>
             </div>
 
             {/* Metrics */}
             <div className="p-4 space-y-4">
               <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-xl bg-slate-800/50 border border-slate-700/30">
-                  <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">CPU Usage</div>
+                <div className="p-3 rounded-xl bg-[#18181B] border border-white/5">
+                  <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">CPU Usage</div>
                   <div className="text-lg font-bold text-white">{selectedDevice.cpuUsage}%</div>
-                  <div className="mt-1 h-1 bg-slate-800 rounded-full overflow-hidden">
+                  <div className="mt-1 h-1 bg-black/40 rounded-full overflow-hidden">
                     <motion.div
                       initial={{ width: 0 }}
                       animate={{ width: `${selectedDevice.cpuUsage}%` }}
@@ -70,10 +70,10 @@ export function DeviceDetailPanel() {
                     />
                   </div>
                 </div>
-                <div className="p-3 rounded-xl bg-slate-800/50 border border-slate-700/30">
-                  <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-0.5">Memory</div>
+                <div className="p-3 rounded-xl bg-[#18181B] border border-white/5">
+                  <div className="text-[10px] text-gray-400 uppercase tracking-wider mb-0.5">Memory</div>
                   <div className="text-lg font-bold text-white">{selectedDevice.memoryUsage}%</div>
-                  <div className="mt-1 h-1 bg-slate-800 rounded-full overflow-hidden">
+                  <div className="mt-1 h-1 bg-black/40 rounded-full overflow-hidden">
                     <motion.div
                       initial={{ width: 0 }}
                       animate={{ width: `${selectedDevice.memoryUsage}%` }}
@@ -99,8 +99,8 @@ export function DeviceDetailPanel() {
 
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-800/50">
-      <span className="text-xs text-slate-400">{label}</span>
+    <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#18181B] border border-white/5">
+      <span className="text-xs text-gray-400">{label}</span>
       <span className="text-sm font-medium text-white font-mono">{value}</span>
     </div>
   );

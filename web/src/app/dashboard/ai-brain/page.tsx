@@ -191,7 +191,7 @@ export default function AIBrainPage() {
             onClick={() => setActiveTab(tab.id)}
             className={cn(
               "px-3 py-1.5 rounded-lg text-[10px] font-medium transition-all flex items-center gap-1.5",
-              activeTab === tab.id ? "bg-ai-blue text-white" : "text-text-dim hover:text-text-primary",
+              activeTab === tab.id ? "bg-ai-blue text-black font-semibold" : "text-text-dim hover:text-text-primary",
             )}
           >
             {tab.label}

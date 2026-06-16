@@ -108,7 +108,7 @@ export default function AISyntheticPage() {
         {[{ id: "generate" as const, label: "Generate Data" }, { id: "history" as const, label: "Generation History" }].map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id)} className={cn(
             "px-4 py-1.5 rounded-lg text-[11px] font-medium transition-all",
-            activeTab === t.id ? "bg-ai-blue text-white" : "text-text-dim hover:text-text-primary",
+            activeTab === t.id ? "bg-ai-blue text-black font-semibold" : "text-text-dim hover:text-text-primary",
           )}>{t.label}</button>
         ))}
       </div>

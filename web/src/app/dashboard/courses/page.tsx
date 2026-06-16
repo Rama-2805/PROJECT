@@ -66,7 +66,7 @@ export default function CoursesPage() {
           onClick={() => setSelectedDept("")}
           className={cn(
             "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
-            !selectedDept ? "bg-ai-blue text-white" : "glass text-text-dim hover:text-text-primary",
+            !selectedDept ? "bg-ai-blue text-black font-semibold" : "glass text-text-dim hover:text-text-primary",
           )}
         >
           All Departments
@@ -77,7 +77,7 @@ export default function CoursesPage() {
             onClick={() => setSelectedDept(d.id)}
             className={cn(
               "px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
-              selectedDept === d.id ? "bg-ai-blue text-white" : "glass text-text-dim hover:text-text-primary",
+              selectedDept === d.id ? "bg-ai-blue text-black font-semibold" : "glass text-text-dim hover:text-text-primary",
             )}
           >
             {d.code}

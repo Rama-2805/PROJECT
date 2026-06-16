@@ -72,7 +72,7 @@ export default function StudentImportPage() {
               <div className={cn(
                 "flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
                 step === s.id
-                  ? "bg-ai-blue text-white"
+                  ? "bg-ai-blue text-black"
                   : ["upload", "preview", "complete"].indexOf(step) >= i
                     ? "bg-success/10 text-success"
                     : "bg-glass-light text-text-muted",

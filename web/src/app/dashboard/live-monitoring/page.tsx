@@ -243,7 +243,7 @@ export default function LiveMonitoringPage() {
                 className={cn(
                   "flex-1 px-2 py-1.5 rounded-lg text-[10px] font-medium transition-all",
                   eventFilter === f.id
-                    ? "bg-ai-blue text-white"
+                    ? "bg-ai-blue text-black font-semibold"
                     : "text-text-dim hover:text-text-primary",
                 )}
               >

@@ -73,7 +73,7 @@ export default function AIFeedbackPage() {
         {FEEDBACK_TYPES.map(t => (
           <button key={t} onClick={() => setTypeFilter(t)} className={cn(
             "px-2.5 py-1 rounded-lg text-[9px] font-medium transition-all whitespace-nowrap",
-            typeFilter === t ? "bg-ai-blue text-white" : "text-text-dim hover:text-text-primary",
+            typeFilter === t ? "bg-ai-blue text-black font-semibold" : "text-text-dim hover:text-text-primary",
           )}>{FEEDBACK_LABELS[t]}</button>
         ))}
       </div>

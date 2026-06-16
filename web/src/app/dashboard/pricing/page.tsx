@@ -143,12 +143,12 @@ export default function PricingPage() {
             onClick={() => setAnnual(!annual)}
             className={cn(
               "relative h-5 w-10 rounded-full transition-colors",
-              annual ? "bg-ai-blue" : "bg-glass-light border border-glass-border",
+              annual ? "bg-white" : "bg-glass-light border border-glass-border",
             )}
           >
             <span className={cn(
-              "absolute top-0.5 h-4 w-4 rounded-full bg-white transition-transform shadow-sm",
-              annual ? "translate-x-5" : "translate-x-0.5",
+              "absolute top-0.5 h-4 w-4 rounded-full transition-transform shadow-sm",
+              annual ? "translate-x-5 bg-black" : "translate-x-0.5 bg-white",
             )} />
           </button>
           <span className={cn("text-xs font-medium", annual ? "text-text-primary" : "text-text-muted")}>

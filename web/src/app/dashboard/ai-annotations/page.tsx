@@ -46,7 +46,7 @@ export default function AIAnnotationsPage() {
             {["annotator", "reviewer"].map(r => (
               <button key={r} onClick={() => setRoleView(r as any)} className={cn(
                 "px-3 py-1.5 rounded-lg text-[10px] font-medium capitalize transition-all",
-                roleView === r ? "bg-ai-blue text-white" : "text-text-dim hover:text-text-primary",
+                roleView === r ? "bg-ai-blue text-black font-semibold" : "text-text-dim hover:text-text-primary",
               )}>{r}</button>
             ))}
           </div>
@@ -67,7 +67,7 @@ export default function AIAnnotationsPage() {
         {ANNOTATION_TYPES.map(f => (
           <button key={f.id} onClick={() => setActiveFilter(f.id)} className={cn(
             "px-3 py-1.5 rounded-lg text-[10px] font-medium transition-all",
-            activeFilter === f.id ? "bg-ai-blue text-white" : "text-text-dim hover:text-text-primary",
+            activeFilter === f.id ? "bg-ai-blue text-black font-semibold" : "text-text-dim hover:text-text-primary",
           )}>{f.label}</button>
         ))}
       </div>

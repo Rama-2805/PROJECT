@@ -28,16 +28,16 @@ export default function CampusTwinPage() {
   const showDevices = useCampusStore((s) => s.showDevices);
 
   return (
-    <div className="relative w-full h-[calc(100vh-4rem)] overflow-hidden bg-[#0a1628]">
+    <div className="relative w-full h-[calc(100vh-4rem)] overflow-hidden bg-[#050505]">
       {/* Global Status Bar */}
       <GlobalStatusBar />
 
       {/* 3D Campus Scene */}
       <Suspense fallback={
-        <div className="absolute inset-0 flex items-center justify-center bg-[#0a1628]">
+        <div className="absolute inset-0 flex items-center justify-center bg-[#050505]">
           <div className="flex flex-col items-center gap-4">
-            <div className="w-12 h-12 border-2 border-cyan-500/30 border-t-cyan-400 rounded-full animate-spin" />
-            <span className="text-sm text-slate-500 font-medium">Loading Campus Digital Twin...</span>
+            <div className="w-12 h-12 border-2 border-white/15 border-t-white rounded-full animate-spin" />
+            <span className="text-sm text-text-muted font-medium">Loading Campus Digital Twin...</span>
           </div>
         </div>
       }>
@@ -71,7 +71,7 @@ export default function CampusTwinPage() {
             className={`px-3 py-2 rounded-xl text-xs font-medium transition-all flex items-center gap-2 ${
               xrState.isSessionActive
                 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                : 'bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:border-cyan-500/30 hover:text-cyan-300'
+                : 'bg-white/10 text-white border border-white/20 hover:border-white/40 hover:bg-white/15'
             }`}
           >
             <span className="text-sm">{xrState.isSessionActive ? '🟢' : '🥽'}</span>
@@ -86,12 +86,12 @@ export default function CampusTwinPage() {
         animate={{ opacity: 1 }}
         className="absolute bottom-4 left-1/2 translate-x-8 z-20"
       >
-        <div className="backdrop-blur-xl bg-slate-900/60 rounded-xl border border-slate-700/30 px-3 py-1.5">
-          <div className="flex items-center gap-2 text-[10px] text-slate-600">
+        <div className="backdrop-blur-xl bg-[#111111]/85 rounded-xl border border-white/10 px-3 py-1.5 shadow-xl">
+          <div className="flex items-center gap-2 text-[10px] text-gray-400">
             <span>🖱 Orbit</span>
             <span>🔄 Scroll to zoom</span>
             <span>👆 Click buildings</span>
-            {!showDevices && <span className="text-yellow-500">🔸 Devices hidden</span>}
+            {!showDevices && <span className="text-yellow-500 font-semibold">🔸 Devices hidden</span>}
           </div>
         </div>
       </motion.div>

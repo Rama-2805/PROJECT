@@ -17,7 +17,7 @@ export default function NotFound() {
           <div className="flex items-center justify-center gap-3">
             <a
               href="/dashboard"
-              className="px-4 py-2 rounded-lg bg-ai-blue text-white text-xs font-medium hover:bg-ai-cyan transition-colors"
+              className="px-4 py-2 rounded-lg bg-ai-blue text-black font-semibold text-xs hover:bg-ai-cyan transition-colors"
             >
               Go to Dashboard
             </a>
