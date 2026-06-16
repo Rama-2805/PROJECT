@@ -69,7 +69,7 @@ export class PrivacyService {
     // Queue deletion request (in production: async job)
     // Mark student for deletion
     await this.prisma.student.update({
-      where: { studentId },
+      where: { id: student.id },
       data: {
         status: "INACTIVE",
         faceEnrolled: false,
