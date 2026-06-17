@@ -4,7 +4,6 @@ Exposes REST endpoints calling the LocateAnything model (currently mocked for lo
 """
 
 import io
-from typing import List, Optional
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from PIL import Image
 

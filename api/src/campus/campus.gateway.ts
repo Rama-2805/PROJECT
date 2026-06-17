@@ -6,8 +6,8 @@ import {
   OnGatewayInit,
   OnGatewayConnection,
   OnGatewayDisconnect,
-  OnGatewayDestroy,
 } from '@nestjs/websockets';
+import { OnModuleDestroy } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { CampusService } from './campus.service';
 
@@ -15,7 +15,7 @@ import { CampusService } from './campus.service';
   namespace: '/campus',
   cors: { origin: '*', credentials: true },
 })
-export class CampusGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnGatewayDestroy {
+export class CampusGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy {
   @WebSocketServer() server: Server;
 
   private intervals: NodeJS.Timeout[] = [];
@@ -59,7 +59,7 @@ export class CampusGateway implements OnGatewayInit, OnGatewayConnection, OnGate
     console.log(`Campus client disconnected: ${client.id}`);
   }
 
-  handleDestroy() {
+  onModuleDestroy() {
     // Clean up all intervals to prevent memory leaks
     this.intervals.forEach((interval) => clearInterval(interval));
     this.intervals = [];

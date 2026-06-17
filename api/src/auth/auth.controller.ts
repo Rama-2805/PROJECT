@@ -9,11 +9,12 @@ import {
   HttpCode,
   HttpStatus,
 } from "@nestjs/common";
-import { Request, Response } from "express";
+import type { Request, Response } from "express";
 import { AuthService } from "./auth.service";
 import { RegisterDto, LoginDto } from "./auth.dto";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
-import { CurrentUser, JwtPayload } from "../common/decorators/current-user.decorator";
+import { CurrentUser } from "../common/decorators/current-user.decorator";
+import type { JwtPayload } from "../_shared/types/jwt";
 import { Throttle } from "@nestjs/throttler";
 
 @Controller("auth")

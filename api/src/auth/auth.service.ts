@@ -5,9 +5,9 @@ import {
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import * as argon2 from "argon2";
-import { Response } from "express";
+import type { Response } from "express";
 import { PrismaService } from "../prisma/prisma.service";
-import { JwtPayload } from "./jwt.strategy";
+import type { JwtPayload } from "../_shared/types/jwt";
 import { RegisterDto, LoginDto } from "./auth.dto";
 
 @Injectable()
@@ -171,6 +171,7 @@ export class AuthService {
   private buildAuthResponse(user: any) {
     const sanitized = this.sanitizeUser(user);
     const tokens = this.generateTokens({
+      id: user.id,
       sub: user.id,
       email: user.email,
       institutionId: user.institutionId,

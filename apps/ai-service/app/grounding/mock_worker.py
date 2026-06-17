@@ -4,7 +4,6 @@ Simulates Vision-Language Grounding, Object Detection, GUI Grounding,
 and OCR endpoints without loading 3B model weights to run on low-RAM (e.g. 4GB) setups.
 """
 
-import re
 import random
 from PIL import Image
 

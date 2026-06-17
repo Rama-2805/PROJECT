@@ -58,29 +58,29 @@ SmartCampus AI transforms university classrooms into intelligent, data-driven le
 ### Development Setup
 
 ```bash
-# 1. Clone and install
+# 1. Clone the repository
 git clone <repo-url>
 cd smart-campus-ai
 
-# 2. Set up environment
-cp .env.development .env
+# 2. Run the project (Runs automatic setup on first launch)
+npm start
+```
 
-# 3. Start infrastructure services
-docker compose up -d postgres redis minio
+*Note: The launcher script automatically copies environment files, installs dependencies (Node.js and Python), boots the local Docker infrastructure (PostgreSQL, Redis, MQTT, MinIO), generates the database client, and starts the API (port 4000) and Web (port 3000) development servers concurrently.*
 
-# 4. Install API dependencies & run migrations
-cd api
-npm ci
-npx prisma migrate dev
-npm run start:dev
+### Manual / Advanced Setup
 
-# 5. Install Web dependencies & start
-cd ../web
-npm ci
-npm run dev
+If you prefer to perform steps manually:
 
-# 6. (Optional) Start AI service
-cd ../apps/ai-service
+```bash
+# 1. Set up environment templates and install dependencies cross-platform
+npm run setup
+
+# 2. Start servers concurrently
+npm start
+
+# 3. (Optional) Start AI service
+cd apps/ai-service
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```

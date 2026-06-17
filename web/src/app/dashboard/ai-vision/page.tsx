@@ -7,16 +7,12 @@ import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils/cn";
 import { 
   Upload, 
-  Image as ImageIcon, 
   Play, 
   RefreshCw, 
   Sliders, 
   Search, 
-  Eye, 
   Target, 
   Cpu, 
-  Check, 
-  HelpCircle,
   FileText,
   AlertCircle
 } from "lucide-react";

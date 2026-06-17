@@ -47,8 +47,8 @@ interface ExperimentEntry {
   metrics: any;
   trainingTime: number;
   status: string;
-  startedAt: Date;
-  completedAt: Date;
+  startedAt?: Date;
+  completedAt?: Date;
   createdBy: string;
   createdAt: Date;
 }
