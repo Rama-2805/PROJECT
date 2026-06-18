@@ -29,3 +29,9 @@ Thumbs.db
 # Windows reserved file name
 nul
 
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/

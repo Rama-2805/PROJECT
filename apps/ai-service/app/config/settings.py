@@ -34,25 +34,42 @@ class Settings(BaseSettings):
     blur_threshold: float = 50.0  # Laplacian variance threshold for blur detection
 
     # Face Detection
-    detection_confidence_threshold: float = 0.6
+    detection_confidence_threshold: float = 0.8
     max_faces_per_frame: int = 20
 
     # Face Recognition
-    recognition_confidence_threshold: float = 0.7
+    recognition_confidence_threshold: float = 0.85
     embedding_size: int = 512  # ArcFace embedding dimension
 
     # Clustering
     min_cluster_size: int = 3
     cluster_selection_epsilon: float = 0.5
     min_samples: int = 2
+    clustering_eps: float = 0.3  # Cosine distance threshold for DBSCAN
+
+    # Database
+    database_url: str = "postgresql://smartcampus:smartcampus_dev@localhost:5432/smartcampus"
+
+    # CCTV Auto Enrollment Thresholds & Folders
+    duplicate_unknown_threshold: float = 0.75  # Cosine similarity for duplicate unknown filter
+    min_quality_score: float = 70.0  # Min quality score (0-100) to accept a face
+    storage_dir: str = "storage"  # Root directory for auto-enrollment storage
+    face_index_path: str = "vectors/face_index.faiss"
+    metadata_path: str = "vectors/metadata.json"
+
+    # Weekly Optimizer Scheduler (configurable)
+    optimizer_schedule_weekday: int = 6  # 0=Monday, 6=Sunday
+    optimizer_schedule_hour: int = 2  # 2 AM
 
     # Security
     encrypt_embeddings: bool = True
+    encryption_key: str = "dev-encryption-key-32-bytes-long!!"
     data_retention_days: int = 365
 
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "ignore"
 
 
 settings = Settings()

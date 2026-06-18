@@ -10,7 +10,6 @@ from typing import Optional, List, Tuple
 from dataclasses import dataclass, field
 
 from ..config.settings import settings
-from ..models.enrollment import DetectedFace, BoundingBox
 
 
 @dataclass
@@ -18,7 +17,7 @@ class RecognitionResult:
     student_id: str
     student_name: str
     confidence: float
-    bounding_box: BoundingBox
+    bounding_box: List[int]
     timestamp: float
     camera_id: str
     is_verified: bool = False
@@ -61,15 +60,7 @@ class FaceRecognizer:
         self.confidence_average_minimum = 0.85
 
         # Load face database from the enrollment module
-        self._embedder = None
-
-    @property
-    def embedder(self):
-        """Lazy-load the face embedder service."""
-        if self._embedder is None:
-            from ..services.face_embedder import FaceEmbedder
-            self._embedder = FaceEmbedder()
-        return self._embedder
+        pass
 
     def load_database(self, embeddings: List[Tuple[str, str, np.ndarray]]) -> int:
         """Load student face embeddings into the recognition database.
@@ -104,7 +95,14 @@ class FaceRecognizer:
         best_similarity = 0.0
 
         for student_id, (stored_emb, student_name) in self._face_database.items():
-            similarity = self.embedder.compute_similarity(embedding, stored_emb)
+            norm1 = np.linalg.norm(embedding)
+            norm2 = np.linalg.norm(stored_emb)
+            if norm1 == 0 or norm2 == 0:
+                similarity = 0.0
+            else:
+                similarity = float(np.dot(embedding, stored_emb) / (norm1 * norm2))
+            # Scale from [-1, 1] to [0, 1] for matching old threshold logic
+            similarity = max(0.0, min(1.0, (similarity + 1) / 2))
 
             if similarity > best_similarity:
                 best_similarity = similarity
@@ -165,7 +163,7 @@ class FaceRecognizer:
     def recognize_face(
         self,
         embedding: np.ndarray,
-        bounding_box: BoundingBox,
+        bounding_box: List[int],
         camera_id: str,
         timestamp: float,
     ) -> Optional[RecognitionResult]:
@@ -194,7 +192,7 @@ class FaceRecognizer:
     def recognize_batch(
         self,
         embeddings: List[np.ndarray],
-        detections: List[DetectedFace],
+        detections: List[dict],
         camera_id: str,
     ) -> List[Optional[RecognitionResult]]:
         """Recognize multiple faces in a single frame."""
@@ -206,7 +204,7 @@ class FaceRecognizer:
                 results.append(None)
                 continue
 
-            result = self.recognize_face(emb, det.bounding_box, camera_id, timestamp)
+            result = self.recognize_face(emb, det.get("bbox") or det.get("bounding_box"), camera_id, timestamp)
             results.append(result)
 
         return results
