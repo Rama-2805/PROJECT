@@ -21,7 +21,7 @@ The SmartCampus AI mobile ecosystem consists of three React Native applications 
 ## Project Structure
 
 ```
-mobile/
+apps/mobile/
 ├── src/
 │   ├── App.tsx                    # Entry point with initialization
 │   ├── navigation/
@@ -160,7 +160,7 @@ The `offlineService` provides:
 
 ```bash
 # Install dependencies
-cd mobile && npm install
+cd apps/mobile && npm install
 
 # Start development
 npm start

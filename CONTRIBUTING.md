@@ -12,9 +12,9 @@ Thank you for considering contributing to SmartCampus AI! We welcome contributio
 3. Set up the development environment:
    ```bash
    cp .env.development .env
-   cd api && npm ci
+   cd apps/api && npm ci
    cd ../web && npm ci
-   cd ../apps/ai-service && pip install -r requirements.txt
+   cd ../ai-service && pip install -r requirements.txt
    ```
 4. Create a branch:
    ```bash
@@ -33,17 +33,17 @@ Thank you for considering contributing to SmartCampus AI! We welcome contributio
 
 1. Run type checking:
    ```bash
-   cd api && npx tsc --noEmit
-   cd web && npx tsc --noEmit
+   cd apps/api && npx tsc --noEmit
+   cd ../web && npx tsc --noEmit
    ```
 2. Run linting:
    ```bash
-   cd api && npm run lint
-   cd web && npm run lint
+   cd apps/api && npm run lint
+   cd ../web && npm run lint
    ```
 3. Run tests:
    ```bash
-   cd api && npm test
+   cd apps/api && npm test
    ```
 
 ## Pull Request Process
@@ -58,14 +58,20 @@ Thank you for considering contributing to SmartCampus AI! We welcome contributio
 
 ```
 smart-campus-ai/
-├── api/              # NestJS backend
-├── web/              # Next.js frontend
 ├── apps/
+│   ├── api/          # NestJS backend
+│   ├── web/          # Next.js frontend
+│   ├── mobile/       # React Native mobile app
 │   ├── ai-service/   # Python AI microservice
-│   └── edge-agent/   # Edge device simulator
+│   ├── ai-brain/     # Python AI agent brain
+│   ├── edge-agent/   # Edge device simulator
+│   └── mlops/        # MLOps pipeline modules
+├── packages/
+│   └── shared/       # Shared TypeScript library
+├── deploy/
+│   └── monitoring/   # Prometheus/Grafana configs
 ├── docs/             # Documentation
-├── scripts/          # Utility scripts
-└── monitoring/       # Prometheus/Grafana config
+└── scripts/          # Utility scripts
 ```
 
 ## Questions?

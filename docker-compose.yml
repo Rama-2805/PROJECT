@@ -118,7 +118,7 @@ services:
   # ─── Backend API ───────────────────────────────────────────────
   api:
     build:
-      context: ./api
+      context: ./apps/api
       dockerfile: Dockerfile
       target: production
     container_name: smartcampus-api
@@ -156,7 +156,7 @@ services:
   # ─── Frontend ──────────────────────────────────────────────────
   web:
     build:
-      context: ./web
+      context: ./apps/web
       dockerfile: Dockerfile
       target: production
     container_name: smartcampus-web
@@ -266,7 +266,7 @@ services:
     restart: unless-stopped
     networks: [smartcampus-net]
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -285,8 +285,8 @@ services:
     restart: unless-stopped
     networks: [smartcampus-net]
     volumes:
-      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
-      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./deploy/monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./deploy/monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
       - grafana-data:/var/lib/grafana
     environment:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}

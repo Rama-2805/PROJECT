@@ -81,7 +81,7 @@ kubectl apply -f deploy/k8s/
 
 ```bash
 # Generate migration
-cd api
+cd apps/api
 npx prisma migrate dev --name add_new_model
 
 # Apply to production

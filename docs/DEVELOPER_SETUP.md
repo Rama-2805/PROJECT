@@ -17,7 +17,7 @@ git clone <repository-url>
 cd smart-campus-ai
 
 # Install API dependencies
-cd api
+cd apps/api
 npm ci
 
 # Install Web dependencies
@@ -25,7 +25,7 @@ cd ../web
 npm ci
 
 # Install AI service dependencies
-cd ../apps/ai-service
+cd ../ai-service
 pip install -r requirements.txt
 ```
 
@@ -43,7 +43,7 @@ cp .env.development .env
 docker compose up -d postgres
 
 # Run migrations
-cd api
+cd apps/api
 npx prisma migrate dev
 
 # Seed demo data (if available)
@@ -54,19 +54,19 @@ npx prisma db seed
 
 ```bash
 # Terminal 1: Backend API
-cd api
+cd apps/api
 npm run start:dev
 
 # Terminal 2: Frontend
-cd web
+cd ../web
 npm run dev
 
 # Terminal 3: AI Service (optional)
-cd apps/ai-service
+cd ../ai-service
 uvicorn app.main:app --reload --port 8000
 
 # Terminal 4: Edge Agent Simulator (optional)
-cd apps/edge-agent
+cd ../edge-agent
 python -m app.simulator --simulate 5
 ```
 
@@ -85,24 +85,30 @@ The app is now running at:
 
 ```
 smart-campus-ai/
-├── api/                  # NestJS backend
-│   ├── src/
-│   │   ├── auth/         # Authentication & JWT
-│   │   ├── common/       # Guards, decorators, interceptors
-│   │   ├── security/     # Encryption, audit, security guards
-│   │   ├── privacy/      # Biometric privacy controls
-│   │   └── ...           # Domain modules
-│   └── prisma/           # Database schema & migrations
-├── web/                  # Next.js frontend
-│   └── src/
-│       ├── app/          # App Router pages
-│       ├── components/   # Reusable UI components
-│       └── lib/          # Utilities & mock data
 ├── apps/
+│   ├── api/              # NestJS backend
+│   │   ├── src/
+│   │   │   ├── auth/     # Authentication & JWT
+│   │   │   ├── common/   # Guards, decorators, interceptors
+│   │   │   ├── security/ # Encryption, audit, security guards
+│   │   │   ├── privacy/  # Biometric privacy controls
+│   │   │   └── ...       # Domain modules
+│   │   └── prisma/       # Database schema & migrations
+│   ├── web/              # Next.js frontend
+│   │   └── src/
+│   │       ├── app/      # App Router pages
+│   │       ├── components/ # Reusable UI components
+│   │       └── lib/      # Utilities & mock data
+│   ├── mobile/           # Expo React Native app
 │   ├── ai-service/       # Python AI microservice
-│   └── edge-agent/       # Edge device simulator
+│   ├── ai-brain/         # Python AI agent brain
+│   ├── edge-agent/       # Edge device simulator
+│   └── mlops/            # MLOps pipeline modules
+├── packages/
+│   └── shared/           # Shared TypeScript library
+├── deploy/
+│   └── monitoring/       # Prometheus & Grafana configs
 ├── .github/workflows/    # CI/CD pipelines
-├── monitoring/           # Prometheus & Grafana config
 ├── scripts/              # Database & backup utilities
 └── docs/                 # Documentation
 ```
@@ -114,7 +120,7 @@ smart-campus-ai/
 ### API
 
 ```bash
-cd api
+cd apps/api
 npm run start:dev        # Start dev server (watch mode)
 npm run build            # Build for production
 npm test                 # Run unit tests
@@ -127,7 +133,7 @@ npx prisma migrate deploy # Apply migration
 ### Web
 
 ```bash
-cd web
+cd apps/web
 npm run dev              # Start dev server
 npm run build            # Build for production
 npm run lint             # Lint code
@@ -156,13 +162,13 @@ python -m app.simulator --device-id DEVICE_TEST_001
 
 ```bash
 # Frontend
-cd web && npx tsc --noEmit
+cd apps/web && npx tsc --noEmit
 
 # Backend
-cd api && npx tsc --noEmit
+cd apps/api && npx tsc --noEmit
 
 # Both (from root, requires concurrently)
-npx concurrently "cd web && npx tsc --noEmit" "cd api && npx tsc --noEmit"
+npx concurrently "cd apps/web && npx tsc --noEmit" "cd apps/api && npx tsc --noEmit"
 ```
 
 ---
@@ -171,13 +177,13 @@ npx concurrently "cd web && npx tsc --noEmit" "cd api && npx tsc --noEmit"
 
 ```bash
 # API unit tests
-cd api && npm test
+cd apps/api && npm test
 
 # API with coverage
-cd api && npm run test:cov
+cd apps/api && npm run test:cov
 
 # E2E tests
-cd api && npm run test:e2e
+cd apps/api && npm run test:e2e
 ```
 
 ---
@@ -187,7 +193,7 @@ cd api && npm run test:e2e
 ### API Debug Mode
 
 ```bash
-cd api
+cd apps/api
 npm run start:debug
 # Attach debugger at chrome://inspect or IDE
 ```
@@ -216,7 +222,7 @@ npx prisma studio
 ### Prisma Client Errors
 
 ```bash
-cd api
+cd apps/api
 npx prisma generate
 ```
 

@@ -21,8 +21,8 @@ function commandExists(cmd) {
 
 // 1. Check if setup is needed
 const isSetupNeeded = !fs.existsSync(path.join(rootDir, '.env')) || 
-                      !fs.existsSync(path.join(rootDir, 'api', 'node_modules')) ||
-                      !fs.existsSync(path.join(rootDir, 'web', 'node_modules'));
+                      !fs.existsSync(path.join(rootDir, 'apps', 'api', 'node_modules')) ||
+                      !fs.existsSync(path.join(rootDir, 'apps', 'web', 'node_modules'));
 
 if (isSetupNeeded) {
   console.log("👉 First-time setup detected. Running setup script first...");
@@ -51,7 +51,7 @@ if (commandExists('docker')) {
 // 3. Ensure Prisma Client is generated
 console.log("🗄️ Generating Prisma Client...");
 try {
-  execSync('npx prisma generate', { cwd: path.join(rootDir, 'api'), stdio: 'inherit' });
+  execSync('npx prisma generate', { cwd: path.join(rootDir, 'apps', 'api'), stdio: 'inherit' });
   console.log("✅ Prisma Client generated.\n");
 } catch (prismaError) {
   console.error("❌ Failed to generate Prisma Client:", prismaError.message);
@@ -61,13 +61,13 @@ try {
 console.log("🚀 Starting development servers...");
 
 const apiProcess = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'start:dev'], {
-  cwd: path.join(rootDir, 'api'),
+  cwd: path.join(rootDir, 'apps', 'api'),
   stdio: 'inherit',
   env: { ...process.env, FORCE_COLOR: 'true' }
 });
 
 const webProcess = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'dev'], {
-  cwd: path.join(rootDir, 'web'),
+  cwd: path.join(rootDir, 'apps', 'web'),
   stdio: 'inherit',
   env: { ...process.env, FORCE_COLOR: 'true' }
 });

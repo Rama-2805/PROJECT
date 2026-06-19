@@ -39,7 +39,7 @@ echo.
 REM ─── Apply database migrations ─────────────────────────────────
 echo [2/4] Applying database migrations...
 
-cd api
+cd apps/api
 if exist node_modules\.bin\prisma (
     call npx prisma migrate dev --name init --skip-generate 2>nul
     call npx prisma generate
@@ -54,10 +54,10 @@ REM ─── Start API & Web Servers ──────────────
 echo [3/4] Starting servers...
 
 echo    Starting API server (port 4000)...
-start "SmartCampus API" cmd /c "cd api && npm run start:dev"
+start "SmartCampus API" cmd /c "cd apps/api && npm run start:dev"
 
 echo    Starting Web server (port 3000)...
-start "SmartCampus Web" cmd /c "cd web && npm run dev"
+start "SmartCampus Web" cmd /c "cd apps/web && npm run dev"
 
 echo    ✓ Servers started
 echo.

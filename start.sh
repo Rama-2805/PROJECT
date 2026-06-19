@@ -40,7 +40,7 @@ echo ""
 
 # ─── Apply migrations ───────────────────────────────────────────
 echo -e "[2/4] Applying database migrations..."
-cd api
+cd apps/api
 if [ -f node_modules/.bin/prisma ]; then
     npx prisma migrate dev --name init --skip-generate 2>/dev/null || true
     npx prisma generate
@@ -56,12 +56,12 @@ mkdir -p apps/edge-agent/data
 echo -e "[3/4] Starting servers..."
 
 echo -e "  ${CYAN}→${NC} Starting API server (port 4000)..."
-cd api && npm run start:dev &
+cd apps/api && npm run start:dev &
 API_PID=$!
 cd "$SCRIPT_DIR"
 
 echo -e "  ${CYAN}→${NC} Starting Web server (port 3000)..."
-cd web && npm run dev &
+cd apps/web && npm run dev &
 WEB_PID=$!
 cd "$SCRIPT_DIR"
 

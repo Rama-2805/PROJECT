@@ -63,7 +63,7 @@ if (!fs.existsSync(envPath)) {
   console.log("  ✓ .env already exists");
 }
 
-const apiEnvPath = path.join(rootDir, 'api', '.env');
+const apiEnvPath = path.join(rootDir, 'apps', 'api', '.env');
 if (!fs.existsSync(apiEnvPath)) {
   if (fs.existsSync(envDevPath)) {
     fs.copyFileSync(envDevPath, apiEnvPath);
@@ -85,7 +85,7 @@ console.log("");
 // 4. Install API Dependencies & Generate Prisma Client
 console.log("[4/5] Installing API dependencies and generating Prisma client...");
 try {
-  const apiDir = path.join(rootDir, 'api');
+  const apiDir = path.join(rootDir, 'apps', 'api');
   execSync('npm ci', { cwd: apiDir, stdio: 'inherit' });
   console.log("  ✓ API dependencies installed");
   try {
@@ -102,7 +102,7 @@ console.log("");
 // 5. Install Web Dependencies
 console.log("[5/5] Installing Web dependencies...");
 try {
-  const webDir = path.join(rootDir, 'web');
+  const webDir = path.join(rootDir, 'apps', 'web');
   try {
     execSync('npm ci --legacy-peer-deps', { cwd: webDir, stdio: 'inherit' });
   } catch (ciError) {
