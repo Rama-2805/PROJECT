@@ -31,33 +31,7 @@ const testimonials = [
 ];
 
 export const CircularTestimonialsDemo = () => (
-  <section className="flex flex-col gap-8 w-full max-w-[1400px] mx-auto py-16 px-6">
-    {/* Light testimonials section */}
-    <div className="bg-[#f7f7fa] p-12 md:p-20 rounded-3xl min-h-[300px] flex flex-wrap gap-6 items-center justify-center relative shadow-[0_20px_50px_rgba(0,0,0,0.1)]">
-      <div
-        className="w-full items-center justify-center relative flex"
-        style={{ maxWidth: "1456px" }}
-      >
-        <CircularTestimonials
-          testimonials={testimonials}
-          autoplay={true}
-          colors={{
-            name: "#0a0a0a",
-            designation: "#454545",
-            testimony: "#171717",
-            arrowBackground: "#141414",
-            arrowForeground: "#f1f1f7",
-            arrowHoverBackground: "#00A6FB",
-          }}
-          fontSizes={{
-            name: "28px",
-            designation: "20px",
-            quote: "20px",
-          }}
-        />
-      </div>
-    </div>
-
+  <section className="w-full max-w-[1400px] mx-auto py-16 px-6">
     {/* Dark testimonials section */}
     <div className="bg-[#060507] p-12 md:p-16 rounded-3xl min-h-[300px] flex flex-wrap gap-6 items-center justify-center relative border border-white/5 shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
       <div
