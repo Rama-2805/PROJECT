@@ -6,6 +6,8 @@ import { MetricCard } from "@/components/dashboard/widgets/MetricCard";
 import { AIStatusCard } from "@/components/dashboard/widgets/AIStatusCard";
 import { ActivityFeed } from "@/components/dashboard/widgets/ActivityFeed";
 import { staggerContainer, fadeInUp } from "@/lib/animations";
+import { AnimatedText } from "@/components/ui/animated-text";
+import { GooeyText } from "@/components/ui/gooey-text-morphing";
 import type { DashboardData } from "@/lib/mock/dashboard";
 import { getDashboardData, getRecentEvents } from "@/lib/mock/dashboard";
 import type { ActivityEvent } from "@/lib/mock/dashboard";
@@ -68,11 +70,14 @@ export default function DashboardPage() {
 
   if (loading || !data) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="flex flex-col items-center gap-3">
-          <div className="h-8 w-8 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
-          <p className="text-sm text-gray-500 font-medium">Booting AI Command Center...</p>
-        </div>
+      <div className="flex flex-col items-center justify-center h-[250px] gap-6">
+        <GooeyText
+          texts={["Booting", "AI Command", "Center", "SmartCampus"]}
+          morphTime={1.2}
+          cooldownTime={0.3}
+          className="font-extrabold tracking-wider"
+        />
+        <p className="text-xs text-gray-500 font-mono tracking-widest uppercase animate-pulse">Initializing Telemetry Sync...</p>
       </div>
     );
   }
@@ -88,11 +93,14 @@ export default function DashboardPage() {
         animate="visible"
       >
         {/* Greeting */}
-        <motion.div variants={fadeInUp} className="border-b border-white/5 pb-4">
-          <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-white via-white to-gray-400 bg-clip-text text-transparent tracking-tight">
-            {data.greeting}
-          </h1>
-          <p className="text-sm text-gray-400 mt-1 font-medium">{data.aiSummary}</p>
+        <motion.div variants={fadeInUp} className="border-b border-white/5 pb-4 flex flex-col items-start justify-start gap-1">
+          <AnimatedText
+            text={data.greeting}
+            className="items-start justify-start"
+            textClassName="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-white via-white to-gray-400 bg-clip-text text-transparent tracking-tight text-left"
+            underlineClassName="text-blue-500/80"
+          />
+          <p className="text-sm text-gray-400 mt-4 font-medium">{data.aiSummary}</p>
         </motion.div>
 
         {/* KPI Metrics */}

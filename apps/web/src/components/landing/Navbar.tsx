@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { Cloud, Globe } from "lucide-react";
+import { TextReveal } from "@/components/ui/text-reveal";
 
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
@@ -86,10 +87,15 @@ export function Navbar() {
             <Globe className="w-5 h-5" />
           </div>
           <div className="hidden md:flex items-center gap-2">
-             <Link href="/login" className="relative text-[15px] font-semibold text-gray-300 hover:text-white px-4 py-3 transition-colors rounded-xl group overflow-hidden">
-                <span className="relative z-10">Sign in</span>
-                <div className="absolute inset-0 bg-white/[0.03] opacity-0 group-hover:opacity-100 transition-opacity rounded-xl" />
-             </Link>
+             <TextReveal
+               text="Sign in"
+               href="/login"
+               as={Link}
+               fontSize="15px"
+               color="#d1d5db"
+               hoverColor="#ffffff"
+               className="rounded-xl px-4 py-2 bg-white/[0.03] hover:bg-white/[0.06] transition-colors"
+             />
              <button className="relative bg-white hover:bg-gray-200 text-black px-6 py-3 rounded-xl text-[15px] font-semibold overflow-hidden transition-all duration-300 shadow-[0_4px_12px_rgba(255,255,255,0.1)] hover:shadow-[0_6px_20px_rgba(255,255,255,0.2)] group cursor-pointer">
                <span className="relative z-10">Book a demo</span>
                {/* Gloss shimmer overlay */}
