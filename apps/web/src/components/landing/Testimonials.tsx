@@ -31,11 +31,11 @@ const testimonials = [
 ];
 
 export const CircularTestimonialsDemo = () => (
-  <section className="w-full max-w-[1400px] mx-auto py-16 px-6">
+  <section>
     {/* Dark testimonials section */}
-    <div className="bg-[#060507] p-12 md:p-16 rounded-3xl min-h-[300px] flex flex-wrap gap-6 items-center justify-center relative border border-white/5 shadow-[0_20px_50px_rgba(0,0,0,0.5)]">
+    <div className="bg-[#060507] p-16 rounded-lg min-h-[300px] flex flex-wrap gap-6 items-center justify-center relative">
       <div
-        className="w-full items-center justify-center relative flex"
+        className="items-center justify-center relative flex"
         style={{ maxWidth: "1024px" }}
       >
         <CircularTestimonials

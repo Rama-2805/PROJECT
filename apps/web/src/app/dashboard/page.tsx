@@ -8,6 +8,7 @@ import { ActivityFeed } from "@/components/dashboard/widgets/ActivityFeed";
 import { staggerContainer, fadeInUp } from "@/lib/animations";
 import { AnimatedText } from "@/components/ui/animated-text";
 import { GooeyText } from "@/components/ui/gooey-text-morphing";
+import { useUIStore } from "@/store/uiStore";
 import type { DashboardData } from "@/lib/mock/dashboard";
 import { getDashboardData, getRecentEvents } from "@/lib/mock/dashboard";
 import type { ActivityEvent } from "@/lib/mock/dashboard";
@@ -31,15 +32,18 @@ const chartData = [
 ];
 
 const CustomTooltip = ({ active, payload, label }: any) => {
+  const theme = useUIStore.getState().theme;
+  const isLight = theme === "light";
+
   if (active && payload && payload.length) {
     return (
-      <div className="bg-[#111111]/95 border border-white/10 rounded-xl p-3 shadow-2xl backdrop-blur-md font-mono text-xs">
-        <p className="font-bold text-gray-200 mb-1.5 uppercase tracking-wider">{label} Telemetry</p>
+      <div className="bg-glass-heavy border border-glass-border rounded-xl p-3 shadow-glass backdrop-blur-md font-mono text-xs text-text-primary">
+        <p className="font-bold text-text-primary mb-1.5 uppercase tracking-wider">{label} Telemetry</p>
         {payload.map((entry: any) => (
           <div key={entry.name} className="flex items-center gap-2 mt-1.5">
             <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: entry.color }} />
-            <span className="text-gray-400 capitalize">{entry.name}:</span>
-            <span className="font-bold text-white ml-auto">{entry.value}%</span>
+            <span className="text-text-secondary capitalize">{entry.name}:</span>
+            <span className="font-bold text-text-primary ml-auto">{entry.value}%</span>
           </div>
         ))}
       </div>
@@ -93,14 +97,14 @@ export default function DashboardPage() {
         animate="visible"
       >
         {/* Greeting */}
-        <motion.div variants={fadeInUp} className="border-b border-white/5 pb-4 flex flex-col items-start justify-start gap-1">
+        <motion.div variants={fadeInUp} className="border-b border-glass-border pb-4 flex flex-col items-start justify-start gap-1">
           <AnimatedText
             text={data.greeting}
-            className="items-start justify-start"
-            textClassName="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-white via-white to-gray-400 bg-clip-text text-transparent tracking-tight text-left"
-            underlineClassName="text-blue-500/80"
+            className="items-start justify-start animate-gradient-shift"
+            textClassName="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-text-primary via-text-primary to-text-secondary bg-clip-text text-transparent tracking-tight text-left"
+            underlineClassName="text-blue-500/80 dark:text-blue-400/80"
           />
-          <p className="text-sm text-gray-400 mt-4 font-medium">{data.aiSummary}</p>
+          <p className="text-sm text-text-secondary mt-4 font-medium">{data.aiSummary}</p>
         </motion.div>
 
         {/* KPI Metrics */}
@@ -172,19 +176,19 @@ export default function DashboardPage() {
 
         {/* Attendance Overview Chart */}
         <motion.div variants={fadeInUp}>
-          <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-[#111111] p-5 sm:p-6 shadow-[0_20px_50px_rgba(0,0,0,0.3)]">
+          <div className="relative overflow-hidden rounded-2xl border border-glass-border bg-glass-medium p-5 sm:p-6 shadow-glass">
             {/* subtle top glow */}
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-white opacity-20 blur-sm" />
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-text-primary opacity-20 blur-sm" />
             {/* Cyber Grid Overlay inside chart container */}
-            <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.015)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none opacity-40" />
+            <div className="absolute inset-0 bg-[linear-gradient(to_right,var(--color-glass-border)_1px,transparent_1px),linear-gradient(to_bottom,var(--color-glass-border)_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none opacity-40" />
 
-            <div className="flex items-center justify-between mb-6 border-b border-white/5 pb-4 relative z-10">
+            <div className="flex items-center justify-between mb-6 border-b border-glass-border pb-4 relative z-10">
               <div className="flex items-center gap-2">
-                <span className="h-1.5 w-1.5 rounded-full bg-blue-400 animate-pulse" style={{ filter: "drop-shadow(0 0 3px #60A5FA)" }} />
-                <h3 className="text-[10px] font-bold uppercase tracking-wider text-gray-300 font-mono">ATTENDANCE TELEMETRY OVERVIEW</h3>
+                <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" style={{ filter: "drop-shadow(0 0 3px #3B82F6)" }} />
+                <h3 className="text-[10px] font-bold uppercase tracking-wider text-text-primary font-mono">ATTENDANCE TELEMETRY OVERVIEW</h3>
               </div>
               
-              <div className="flex items-center gap-4 text-[9px] font-bold text-gray-500 font-mono uppercase tracking-widest">
+              <div className="flex items-center gap-4 text-[9px] font-bold text-text-muted font-mono uppercase tracking-widest">
                 <div className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-md bg-[#3B82F6]" />
                   <span>PRESENT</span>
@@ -218,9 +222,9 @@ export default function DashboardPage() {
                         <stop offset="95%" stopColor="#EF4444" stopOpacity={0.0} />
                       </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.02)" />
-                    <XAxis dataKey="day" stroke="rgba(255,255,255,0.3)" fontSize={10} className="font-mono" tickLine={false} />
-                    <YAxis stroke="rgba(255,255,255,0.3)" fontSize={10} className="font-mono" tickLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--color-glass-border)" />
+                    <XAxis dataKey="day" stroke="var(--color-text-muted)" opacity={0.7} fontSize={10} className="font-mono" tickLine={false} />
+                    <YAxis stroke="var(--color-text-muted)" opacity={0.7} fontSize={10} className="font-mono" tickLine={false} />
                     <Tooltip content={<CustomTooltip />} />
                     <Area
                       type="monotone"
@@ -249,7 +253,7 @@ export default function DashboardPage() {
                   </AreaChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="flex items-center justify-center h-full text-xs font-mono text-gray-500">INITIALIZING TELEMETRY CHART...</div>
+                <div className="flex items-center justify-center h-full text-xs font-mono text-text-muted">INITIALIZING TELEMETRY CHART...</div>
               )}
             </div>
           </div>

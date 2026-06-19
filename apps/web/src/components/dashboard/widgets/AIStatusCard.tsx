@@ -4,6 +4,8 @@ import { motion } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
 import type { AIModelStatus } from "@/lib/mock/dashboard";
 import { GlassCard } from "@/components/glass/GlassCard";
+import { useUIStore } from "@/store/uiStore";
+import { useEffect, useState } from "react";
 
 export interface AIStatusCardProps {
   models: AIModelStatus[];
@@ -28,16 +30,26 @@ function NeuralDot({ delay = 0 }: { delay?: number }) {
 }
 
 export function AIStatusCard({ models }: AIStatusCardProps) {
+  const theme = useUIStore((s) => s.theme);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const isLight = mounted && theme === "light";
+  const glowColor = isLight ? "rgba(59, 130, 246, 0.08)" : "rgba(255, 255, 255, 0.08)";
+
   return (
-    <GlassCard className="relative p-5 sm:p-6 overflow-hidden w-full h-full border-white/10 bg-[#111111]/80" glowColor="rgba(255, 255, 255, 0.08)">
+    <GlassCard className="relative p-5 sm:p-6 overflow-hidden w-full h-full" glowColor={glowColor}>
       {/* subtle top glow */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-white opacity-20 blur-sm" />
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-text-primary opacity-20 blur-sm transition-colors duration-300" />
       {/* Cyber Grid Overlay inside card */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.01)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.01)_1px,transparent_1px)] bg-[size:14px_14px] pointer-events-none opacity-30" />
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,var(--color-glass-border)_1px,transparent_1px),linear-gradient(to_bottom,var(--color-glass-border)_1px,transparent_1px)] bg-[size:14px_14px] pointer-events-none opacity-30" />
 
       {/* Sweeping Scanner Line */}
       <motion.div
-        className="absolute left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-white/30 to-transparent pointer-events-none z-10"
+        className="absolute left-0 right-0 h-[1.5px] bg-gradient-to-r from-transparent via-text-primary/20 to-transparent pointer-events-none z-10"
         initial={{ top: "0%" }}
         animate={{ top: ["0%", "100%", "0%"] }}
         transition={{
@@ -49,7 +61,7 @@ export function AIStatusCard({ models }: AIStatusCardProps) {
 
       {/* Neural network background */}
       <div className="absolute inset-0 pointer-events-none">
-        <svg className="w-full h-full opacity-[0.15]" viewBox="0 0 400 200">
+        <svg className="w-full h-full opacity-[0.25] dark:opacity-[0.15] text-text-primary" viewBox="0 0 400 200">
           {/* Main Nodes */}
           {[
             [50, 40], [120, 30], [200, 50], [280, 35], [350, 45],
@@ -57,8 +69,8 @@ export function AIStatusCard({ models }: AIStatusCardProps) {
             [60, 160], [140, 170], [220, 150], [300, 165], [370, 155],
           ].map(([x, y], i) => (
             <g key={i}>
-              <circle cx={x} cy={y} r="2.5" fill="#FFFFFF" opacity="0.8" />
-              <circle cx={x} cy={y} r="6" fill="#FFFFFF" className="animate-ping" opacity="0.1" />
+              <circle cx={x} cy={y} r="2.5" fill="currentColor" opacity="0.8" />
+              <circle cx={x} cy={y} r="6" fill="currentColor" className="animate-ping" opacity="0.1" />
             </g>
           ))}
           {/* Base Connection Lines */}
@@ -78,7 +90,7 @@ export function AIStatusCard({ models }: AIStatusCardProps) {
                 y1={nodes[src][1]}
                 x2={nodes[dst][0]}
                 y2={nodes[dst][1]}
-                stroke="#FFFFFF"
+                stroke="currentColor"
                 strokeWidth="0.5"
                 opacity="0.15"
               />
@@ -101,7 +113,7 @@ export function AIStatusCard({ models }: AIStatusCardProps) {
                 y1={nodes[src][1]}
                 x2={nodes[dst][0]}
                 y2={nodes[dst][1]}
-                stroke="#FFFFFF"
+                stroke="currentColor"
                 strokeWidth="1"
                 strokeDasharray="6 25"
                 opacity="0.5"
@@ -134,7 +146,7 @@ export function AIStatusCard({ models }: AIStatusCardProps) {
               <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">AI CORE ACTIVE</span>
             </motion.div>
           </div>
-          <span className="text-[10px] text-gray-500 font-mono tracking-wider">v2.1.0</span>
+          <span className="text-[10px] text-text-muted font-mono tracking-wider">v2.1.0</span>
         </div>
 
         {/* Model Statuses */}
@@ -142,19 +154,19 @@ export function AIStatusCard({ models }: AIStatusCardProps) {
           {models.map((model) => (
             <div
               key={model.name}
-              className="flex items-center justify-between p-3.5 rounded-xl bg-black/40 border border-white/5 hover:bg-white/[0.03] hover:border-white/20 transition-all duration-300 shadow-sm"
+              className="flex items-center justify-between p-3.5 rounded-xl bg-bg-primary/40 border border-glass-border hover:bg-glass-heavy hover:border-glass-border/40 transition-all duration-300 shadow-sm"
             >
               <div className="min-w-0 mr-2">
-                <p className="text-xs font-bold text-gray-200 truncate group-hover:text-white">{model.name}</p>
+                <p className="text-xs font-bold text-text-primary truncate">{model.name}</p>
                 {model.accuracy && (
-                  <p className="text-[10px] text-gray-500 font-medium">{model.accuracy}% ACCURACY</p>
+                  <p className="text-[10px] text-text-muted font-medium">{model.accuracy}% ACCURACY</p>
                 )}
               </div>
               <span className={cn(
                 "flex items-center gap-1.5 text-[9px] font-bold px-2 py-1 rounded-md border tracking-wider shrink-0",
-                model.status === "online" && "text-emerald-400 bg-emerald-500/10 border-emerald-500/20",
-                model.status === "offline" && "text-red-400 bg-red-500/10 border-red-500/20",
-                model.status === "degraded" && "text-amber-400 bg-amber-500/10 border-amber-500/20",
+                model.status === "online" && "text-emerald-500 bg-emerald-500/10 border-emerald-500/20 dark:text-emerald-400 dark:bg-emerald-500/10 dark:border-emerald-500/20",
+                model.status === "offline" && "text-red-500 bg-red-500/10 border-red-500/20 dark:text-red-400 dark:bg-red-500/10 dark:border-red-500/20",
+                model.status === "degraded" && "text-amber-500 bg-amber-500/10 border-amber-500/20 dark:text-amber-400 dark:bg-amber-500/10 dark:border-amber-500/20",
               )}>
                 <span className={cn(
                   "h-1.5 w-1.5 rounded-full animate-pulse",

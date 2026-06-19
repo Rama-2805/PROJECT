@@ -12,14 +12,12 @@ import {
   CheckSquare, 
   Cpu, 
   BarChart3, 
-  BrainCircuit, 
-  Box, 
-  FileText, 
   Settings,
   ChevronLeft,
   ChevronRight,
   Cloud,
-  Eye
+  Activity,
+  ScanFace
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
@@ -29,12 +27,10 @@ const NAV_ITEMS = [
   { href: "/dashboard/teachers", label: "Teachers", icon: GraduationCap },
   { href: "/dashboard/classrooms", label: "Classes", icon: BookOpen },
   { href: "/dashboard/attendance", label: "Attendance", icon: CheckSquare },
-  { href: "/dashboard/devices", label: "Devices", icon: Cpu },
+  { href: "/dashboard/live-monitoring", label: "Live Monitoring", icon: Activity },
+  { href: "/dashboard/face-enrollment", label: "Unknown Faces", icon: ScanFace },
   { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/dashboard/ai-brain", label: "AI Brain", icon: BrainCircuit },
-  { href: "/dashboard/ai-vision", label: "AI Vision", icon: Eye },
-  { href: "/dashboard/digital-twin", label: "Digital Twin", icon: Box },
-  { href: "/dashboard/reports", label: "Reports", icon: FileText },
+  { href: "/dashboard/system", label: "System Health", icon: Cpu },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },
 ];
 
@@ -51,16 +47,16 @@ export function GlassSidebar() {
         width: sidebarOpen ? 280 : 80,
       }}
       transition={{ type: "spring", stiffness: 300, damping: 30 }}
-      className="fixed left-0 top-0 h-full z-50 flex flex-col border-r border-white/10 bg-[#050505]/90 backdrop-blur-[40px] shadow-[4px_0_24px_rgba(0,0,0,0.5)]"
+      className="fixed left-0 top-0 h-full z-50 flex flex-col border-r border-glass-border bg-bg-secondary/90 backdrop-blur-[40px] shadow-[4px_0_24px_rgba(0,0,0,0.05)] dark:shadow-[4px_0_24px_rgba(0,0,0,0.5)] transition-colors duration-300"
     >
       {/* Header Logo */}
-      <div className="flex h-20 items-center justify-between px-6 border-b border-white/10">
+      <div className="flex h-20 items-center justify-between px-6 border-b border-glass-border">
         <Link href="/" className="flex items-center gap-3 overflow-hidden whitespace-nowrap">
-          <Cloud className="w-8 h-8 text-white fill-white shrink-0" />
+          <Cloud className="w-8 h-8 text-text-primary fill-text-primary shrink-0 transition-colors" />
           {sidebarOpen && (
             <div className="flex flex-col">
-              <span className="text-[1.15rem] font-medium text-white leading-none tracking-tight">SMARTCAMPUS</span>
-              <span className="text-[0.55rem] font-semibold text-gray-500 uppercase tracking-widest mt-0.5">Intelligent Education</span>
+              <span className="text-[1.15rem] font-medium text-text-primary leading-none tracking-tight transition-colors">SMARTCAMPUS</span>
+              <span className="text-[0.55rem] font-semibold text-text-muted uppercase tracking-widest mt-0.5 transition-colors">Intelligent Education</span>
             </div>
           )}
         </Link>
@@ -78,29 +74,29 @@ export function GlassSidebar() {
                 whileTap={{ scale: 0.98 }}
                 className={cn(
                   "relative flex items-center gap-4 rounded-xl px-3.5 py-3 transition-all duration-300 group cursor-pointer",
-                  isActive ? "text-white" : "text-gray-400 hover:text-white"
+                  isActive ? "text-text-primary" : "text-text-secondary hover:text-text-primary"
                 )}
               >
                 {/* Active Glass Capsule Indicator */}
                 {isActive && (
                   <motion.div
                     layoutId="activeNavCapsule"
-                    className="absolute inset-0 rounded-xl bg-gradient-to-r from-white/10 via-white/5 to-transparent border border-white/20 shadow-[0_0_25px_rgba(255,255,255,0.05),inset_0_1px_1px_rgba(255,255,255,0.1)] pointer-events-none"
+                    className="absolute inset-0 rounded-xl bg-glass-heavy border border-glass-border shadow-glass pointer-events-none"
                     transition={{ type: "spring", stiffness: 380, damping: 30 }}
                   />
                 )}
 
                 {/* Subtle Hover Backlight (only when not active) */}
                 {!isActive && (
-                  <div className="absolute inset-0 rounded-xl bg-white/[0.02] border border-white/0 opacity-0 group-hover:opacity-100 group-hover:border-white/5 transition-all duration-300 pointer-events-none" />
+                  <div className="absolute inset-0 rounded-xl bg-text-primary/[0.02] border border-transparent group-hover:bg-text-primary/[0.04] group-hover:border-glass-border transition-all duration-300 pointer-events-none" />
                 )}
                 
                 <item.icon 
                   className={cn(
                     "h-5 w-5 shrink-0 transition-all duration-350", 
                     isActive 
-                      ? "text-white filter drop-shadow-[0_0_8px_rgba(255,255,255,0.4)]" 
-                      : "group-hover:text-white group-hover:scale-110"
+                      ? "text-text-primary filter drop-shadow-[0_0_8px_rgba(59,130,246,0.3)] dark:drop-shadow-[0_0_8px_rgba(255,255,255,0.4)]" 
+                      : "text-text-secondary group-hover:text-text-primary group-hover:scale-110"
                   )} 
                 />
                 
@@ -110,7 +106,7 @@ export function GlassSidebar() {
                     animate={{ opacity: 1, x: 0 }}
                     className={cn(
                       "font-medium whitespace-nowrap z-10 transition-colors duration-300",
-                      isActive ? "text-white font-semibold" : "text-gray-400 group-hover:text-white"
+                      isActive ? "text-text-primary font-semibold" : "text-text-secondary group-hover:text-text-primary"
                     )}
                   >
                     {item.label}
@@ -119,7 +115,7 @@ export function GlassSidebar() {
 
                 {/* Hover Tooltip when collapsed */}
                 {!sidebarOpen && (
-                  <div className="absolute left-full ml-4 rounded-lg bg-[#111111] border border-white/10 px-3 py-1.5 text-xs text-white opacity-0 shadow-xl scale-95 origin-left transition-all duration-300 group-hover:opacity-100 group-hover:scale-100 pointer-events-none whitespace-nowrap z-50">
+                  <div className="absolute left-full ml-4 rounded-lg bg-bg-secondary border border-glass-border px-3 py-1.5 text-xs text-text-primary opacity-0 shadow-glass scale-95 origin-left transition-all duration-300 group-hover:opacity-100 group-hover:scale-100 pointer-events-none whitespace-nowrap z-50">
                     {item.label}
                   </div>
                 )}
@@ -130,10 +126,10 @@ export function GlassSidebar() {
       </nav>
 
       {/* Toggle Button */}
-      <div className="p-4 border-t border-white/10 flex justify-center bg-black/10">
+      <div className="p-4 border-t border-glass-border flex justify-center bg-bg-primary/10">
         <button
           onClick={toggleSidebar}
-          className="flex h-10 w-full items-center justify-center rounded-xl bg-white/5 border border-white/5 text-gray-400 hover:bg-white/10 hover:border-white/10 hover:text-white transition-all shadow-[0_2px_8px_rgba(0,0,0,0.2)]"
+          className="flex h-10 w-full items-center justify-center rounded-xl bg-glass-light border border-glass-border text-text-secondary hover:bg-glass-heavy hover:text-text-primary hover:border-glass-border transition-all shadow-glass"
         >
           {sidebarOpen ? <ChevronLeft className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
         </button>

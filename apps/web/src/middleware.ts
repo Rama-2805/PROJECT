@@ -11,6 +11,7 @@ const publicRoutes = [
   "/auth/register",
   "/auth/forgot-password",
   "/login",
+  "/login/teacher",
 ];
 
 const authRoutes = ["/auth/login", "/auth/register", "/auth/forgot-password"];
@@ -37,8 +38,22 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
-  // Protect dashboard routes
+  // Protect teacher dashboard routes
+  if (pathname.startsWith("/teacher") && !isAuthenticated) {
+    const loginUrl = new URL("/login/teacher", request.url);
+    loginUrl.searchParams.set("redirect", pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  // Protect admin dashboard routes
   if (pathname.startsWith("/dashboard") && !isAuthenticated) {
+    const loginUrl = new URL("/login/admin", request.url);
+    loginUrl.searchParams.set("redirect", pathname);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  // Protect student dashboard routes
+  if (pathname.startsWith("/student") && !isAuthenticated) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(loginUrl);

@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { motion, useMotionValue, useSpring, useTransform } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
 import { useMouseGlow } from "@/hooks/useMouseGlow";
+import { useUIStore } from "@/store/uiStore";
 
 interface GlassCardProps {
   children: React.ReactNode;
@@ -12,6 +13,16 @@ interface GlassCardProps {
 
 export const GlassCard = React.forwardRef<HTMLDivElement, GlassCardProps & React.HTMLAttributes<HTMLDivElement>>(({ children, className, glowColor = "rgba(255, 255, 255, 0.08)", tilt = true, ...props }, ref) => {
   const glowRef = useMouseGlow();
+  const theme = useUIStore((s) => s.theme);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const isLight = mounted && theme === "light";
+  const defaultGlow = isLight ? "rgba(59, 130, 246, 0.12)" : "rgba(255, 255, 255, 0.08)";
+  const finalGlowColor = glowColor === "rgba(255, 255, 255, 0.08)" ? defaultGlow : glowColor;
   
   // 3D Tilt Logic
   const x = useMotionValue(0);
@@ -49,19 +60,19 @@ export const GlassCard = React.forwardRef<HTMLDivElement, GlassCardProps & React
       style={tilt ? { rotateX, rotateY, transformStyle: "preserve-3d" } : {}}
       className={cn(
         "relative rounded-2xl overflow-hidden group transition-all duration-300",
-        "bg-[#111111] backdrop-blur-[40px] saturate-200",
-        "border border-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.35)]",
+        "bg-glass-medium backdrop-blur-[40px] saturate-200",
+        "border border-glass-border shadow-glass",
         className
       )}
     >
       {/* Inner Highlight Edge */}
-      <div className="absolute inset-0 rounded-2xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] pointer-events-none" />
+      <div className="absolute inset-0 rounded-2xl shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] dark:shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] light:shadow-[inset_0_1px_1px_rgba(0,0,0,0.02)] pointer-events-none transition-all duration-300" />
 
       {/* Mouse Glow Effect */}
       <div 
         className="pointer-events-none absolute -inset-px opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-2xl"
         style={{
-          background: `radial-gradient(600px circle at var(--mouse-x) var(--mouse-y), ${glowColor}, transparent 40%)`
+          background: `radial-gradient(600px circle at var(--mouse-x) var(--mouse-y), ${finalGlowColor}, transparent 40%)`
         }}
       />
       

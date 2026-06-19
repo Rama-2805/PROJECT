@@ -2,10 +2,10 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
-import { Cloud, ArrowRight } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Cloud, ArrowRight, ShieldCheck, Key } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { signIn, signOut } from "next-auth/react";
+import { initializeUserStore, getUsers, hashPassword, updateUserPassword } from "@/lib/userStore";
 
 function LoginContent() {
   const router = useRouter();
@@ -15,47 +15,107 @@ function LoginContent() {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
+  // Compulsory Password Reset States
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
   useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'login-success') {
-        router.push('/dashboard');
-      } else if (event.data?.type === 'login-error') {
-        setError(event.data.error);
-      }
-    };
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, [router]);
+    // Initialize the user database on load
+    initializeUserStore();
+  }, []);
 
-  const handleMicrosoftSSO = () => {
-    // Open a new tab/popup for the login flow
-    // Using the custom mock Microsoft page to prevent NextAuth redirect loop
-    window.open(
-      '/login/microsoft',
-      'MicrosoftLoginPopup',
-      'width=600,height=700,left=200,top=200'
-    );
-  };
-
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
 
-    // Verify email domain matches .edu.in (database validation)
+    // Basic domain validation
     if (!email.endsWith(".edu.in")) {
       setIsLoading(false);
       setError("AccessDenied");
       return;
     }
 
-    // Simulate API call, then redirect to dashboard
-    setTimeout(() => {
+    try {
+      const users = getUsers();
+      const user = users[email];
+
+      if (!user) {
+        setIsLoading(false);
+        setError("AccessDenied");
+        return;
+      }
+
+      if (user.role !== "student") {
+        setIsLoading(false);
+        setError("IncorrectPortal");
+        return;
+      }
+
+      const inputHash = await hashPassword(password);
+      if (inputHash !== user.passwordHash) {
+        setIsLoading(false);
+        setError("IncorrectCredentials");
+        return;
+      }
+
+      // Check if password change is forced
+      if (user.passwordNeedsChange) {
+        setIsLoading(false);
+        setShowChangePassword(true);
+        return;
+      }
+
+      // Successful login
       setIsLoading(false);
-      // Set the mock refreshToken cookie so the middleware authorizes access to /dashboard
       document.cookie = "refreshToken=mock-token-123; path=/";
-      router.push("/dashboard");
-    }, 1000);
+      localStorage.setItem("user-role", "student");
+      localStorage.setItem("currentUserEmail", email);
+      router.push("/student/dashboard");
+    } catch (err) {
+      setIsLoading(false);
+      setError("UnknownError");
+    }
+  };
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError(null);
+
+    if (newPassword.length < 6) {
+      setIsLoading(false);
+      setError("PasswordTooShort");
+      return;
+    }
+
+    if (newPassword === "demo123") {
+      setIsLoading(false);
+      setError("CannotUseDemo");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setIsLoading(false);
+      setError("PasswordsDoNotMatch");
+      return;
+    }
+
+    try {
+      const newHash = await hashPassword(newPassword);
+      await updateUserPassword(email, newHash, false);
+
+      setIsLoading(false);
+      // Automatically log in after password change
+      document.cookie = "refreshToken=mock-token-123; path=/";
+      localStorage.setItem("user-role", "student");
+      localStorage.setItem("currentUserEmail", email);
+      router.push("/student/dashboard");
+    } catch (err) {
+      setIsLoading(false);
+      setError("UpdateFailed");
+    }
   };
 
   return (
@@ -78,86 +138,147 @@ function LoginContent() {
           <Cloud className="w-9 h-9 text-white fill-white" />
           <div className="flex flex-col">
             <span className="text-[1.35rem] font-medium text-white leading-none tracking-tight">SMARTCAMPUS</span>
-            <span className="text-[0.6rem] font-semibold text-gray-500 uppercase tracking-widest mt-0.5">Intelligent Education</span>
+            <span className="text-[0.6rem] font-semibold text-gray-500 uppercase tracking-widest mt-0.5">Student Portal</span>
           </div>
         </Link>
 
         <div className="bg-[#111111] border border-white/10 rounded-2xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
           {/* subtle top glow */}
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-white opacity-20 blur-sm" />
+          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-blue-500 opacity-30 blur-sm" />
           
-          <h1 className="text-xl sm:text-2xl font-medium text-white tracking-tight mb-1">Welcome back</h1>
-          <p className="text-gray-400 text-xs sm:text-sm mb-4">Enter your credentials to access the command center.</p>
+          <AnimatePresence mode="wait">
+            {!showChangePassword ? (
+              <motion.div
+                key="login-form"
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 10 }}
+                transition={{ duration: 0.2 }}
+              >
+                <h1 className="text-xl sm:text-2xl font-medium text-white tracking-tight mb-1">Student Sign In</h1>
+                <p className="text-gray-400 text-xs sm:text-sm mb-4">Enter your student credentials to access classes.</p>
 
-          {error && (
-            <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-xl mb-4">
-              {error === 'AccessDenied' ? 'Access Denied: Your email is not registered in the university database.' : 'Authentication failed. Please try again.'}
-            </div>
-          )}
+                {error && (
+                  <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-xl mb-4">
+                    {error === "AccessDenied" && "Access Denied: Your email is not registered in the student database."}
+                    {error === "IncorrectPortal" && "Access Denied: This is the Student portal. Faculty/Admins should use their specific logins."}
+                    {error === "IncorrectCredentials" && "Authentication failed: Incorrect password."}
+                    {error === "UnknownError" && "An unexpected error occurred. Please try again."}
+                  </div>
+                )}
 
-          <form onSubmit={handleLogin} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Work Email</label>
-              <input 
-                type="email" 
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@collegename.edu.in"
-                className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors text-sm"
-              />
-            </div>
-            
-            <div className="flex flex-col gap-1.5">
-              <div className="flex justify-between items-center">
-                <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Password</label>
-                <Link href="#" className="text-xs font-medium text-gray-500 hover:text-white transition-colors">Forgot password?</Link>
-              </div>
-              <input 
-                type="password" 
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors text-sm"
-              />
-            </div>
+                <form onSubmit={handleLogin} className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Student Email</label>
+                    <input 
+                      type="email" 
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="student@collegename.edu.in"
+                      className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors text-sm"
+                    />
+                  </div>
+                  
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Password</label>
+                      <Link href="#" className="text-xs font-medium text-gray-500 hover:text-white transition-colors">Forgot password?</Link>
+                    </div>
+                    <input 
+                      type="password" 
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors text-sm"
+                    />
+                  </div>
 
-            <button 
-              type="submit" 
-              disabled={isLoading}
-              className="w-full bg-white hover:bg-gray-200 text-black rounded-xl px-4 py-2.5 font-semibold flex items-center justify-center gap-2 transition-colors mt-1 disabled:opacity-70 text-sm cursor-pointer"
-            >
-              {isLoading ? (
-                <div className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-              ) : (
-                <>Sign in <ArrowRight className="w-4 h-4" /></>
-              )}
-            </button>
-          </form>
+                  <button 
+                    type="submit" 
+                    disabled={isLoading}
+                    className="w-full bg-white hover:bg-gray-200 text-black rounded-xl px-4 py-2.5 font-semibold flex items-center justify-center gap-2 transition-colors mt-1 disabled:opacity-70 text-sm cursor-pointer"
+                  >
+                    {isLoading ? (
+                      <div className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin" />
+                    ) : (
+                      <>Sign in <ArrowRight className="w-4 h-4" /></>
+                    )}
+                  </button>
+                </form>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="change-password-form"
+                initial={{ opacity: 0, x: 10 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -10 }}
+                transition={{ duration: 0.2 }}
+              >
+                <div className="flex items-center gap-2 text-amber-400 font-semibold mb-2">
+                  <Key className="w-5 h-5" />
+                  <span className="text-xs uppercase tracking-wider">Security Policy Enforcement</span>
+                </div>
+                <h1 className="text-xl sm:text-2xl font-medium text-white tracking-tight mb-1">Update Password</h1>
+                <p className="text-gray-400 text-xs sm:text-sm mb-4">First-time login detected. You must change your password before continuing.</p>
 
-          <div className="mt-5 pt-5 border-t border-white/10 flex flex-col gap-4">
-             <button 
-                type="button"
-                onClick={handleMicrosoftSSO}
-                className="w-full bg-transparent border border-white/10 hover:border-white/30 hover:bg-white/5 text-white rounded-xl px-4 py-2.5 font-medium flex items-center justify-center gap-3 transition-colors text-xs uppercase tracking-wider cursor-pointer"
-             >
-                <svg className="w-4 h-4" viewBox="0 0 21 21" fill="currentColor">
-                  <rect x="1" y="1" width="9" height="9" fill="#f25022"/>
-                  <rect x="11" y="1" width="9" height="9" fill="#7fba00"/>
-                  <rect x="1" y="11" width="9" height="9" fill="#00a4ef"/>
-                  <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
-                </svg>
-                Continue with Microsoft
-             </button>
-          </div>
+                {error && (
+                  <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-xl mb-4">
+                    {error === "PasswordTooShort" && "Password must be at least 6 characters long."}
+                    {error === "CannotUseDemo" && "For security reasons, you cannot use the default demo password."}
+                    {error === "PasswordsDoNotMatch" && "Confirm password does not match new password."}
+                    {error === "UpdateFailed" && "Failed to update password. Please try again."}
+                  </div>
+                )}
+
+                <form onSubmit={handleChangePassword} className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">New Password</label>
+                    <input 
+                      type="password" 
+                      required
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors text-sm"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Confirm New Password</label>
+                    <input 
+                      type="password" 
+                      required
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors text-sm"
+                    />
+                  </div>
+
+                  <button 
+                    type="submit" 
+                    disabled={isLoading}
+                    className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:brightness-110 text-white rounded-xl px-4 py-2.5 font-semibold flex items-center justify-center gap-2 transition-all mt-1 disabled:opacity-70 text-sm cursor-pointer shadow-[0_0_15px_rgba(37,99,235,0.3)]"
+                  >
+                    {isLoading ? (
+                      <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      <>Update & Access Portal <ShieldCheck className="w-4 h-4" /></>
+                    )}
+                  </button>
+                </form>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
-        <p className="text-center text-gray-500 text-xs sm:text-sm mt-5">
-          Don't have an account? <Link href="#" className="text-white hover:underline">Contact your IT admin</Link>
+        <p className="text-center text-gray-500 text-xs sm:text-sm mt-5 flex flex-col gap-2">
+          <span>Are you faculty? <Link href="/login/teacher" className="text-blue-400 hover:underline">Faculty Portal</Link></span>
+          <span>Are you an administrator? <Link href="/login/admin" className="text-red-400 hover:underline">Admin Portal</Link></span>
         </p>
       </motion.div>
-
     </>
   );
 }

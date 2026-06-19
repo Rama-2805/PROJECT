@@ -10,7 +10,20 @@ interface UIState {
   assistantOpen: boolean;
   setAssistantOpen: (open: boolean) => void;
   toggleAssistant: () => void;
+  theme: "light" | "dark";
+  setTheme: (theme: "light" | "dark") => void;
+  toggleTheme: () => void;
 }
+
+const getInitialTheme = (): "light" | "dark" => {
+  if (typeof window !== "undefined") {
+    const saved = localStorage.getItem("dashboard-theme");
+    if (saved === "light" || saved === "dark") {
+      return saved;
+    }
+  }
+  return "dark";
+};
 
 export const useUIStore = create<UIState>((set) => ({
   sidebarOpen: true,
@@ -24,4 +37,19 @@ export const useUIStore = create<UIState>((set) => ({
   assistantOpen: false,
   setAssistantOpen: (open) => set({ assistantOpen: open }),
   toggleAssistant: () => set((state) => ({ assistantOpen: !state.assistantOpen })),
+
+  theme: getInitialTheme(),
+  setTheme: (theme) => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("dashboard-theme", theme);
+    }
+    set({ theme });
+  },
+  toggleTheme: () => set((state) => {
+    const nextTheme = state.theme === "dark" ? "light" : "dark";
+    if (typeof window !== "undefined") {
+      localStorage.setItem("dashboard-theme", nextTheme);
+    }
+    return { theme: nextTheme };
+  }),
 }));

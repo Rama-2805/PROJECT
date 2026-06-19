@@ -3,13 +3,15 @@
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
 import type { Teacher } from "@/lib/mock/teachers";
+import { Key } from "lucide-react";
 
 interface TeacherCardProps {
   teacher: Teacher;
   onView?: (id: string) => void;
+  onResetPassword?: (email: string) => void;
 }
 
-export function TeacherCard({ teacher, onView }: TeacherCardProps) {
+export function TeacherCard({ teacher, onView, onResetPassword }: TeacherCardProps) {
   const initials = teacher.fullName.replace("Dr. ", "").split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
 
   return (
@@ -54,7 +56,7 @@ export function TeacherCard({ teacher, onView }: TeacherCardProps) {
         </div>
       </div>
 
-      <div className="pt-3 border-t border-glass-border">
+      <div className="pt-3 border-t border-glass-border flex justify-between items-center">
         <a
           href={`mailto:${teacher.email}`}
           className="text-[10px] text-ai-blue hover:underline"
@@ -62,6 +64,16 @@ export function TeacherCard({ teacher, onView }: TeacherCardProps) {
         >
           {teacher.email}
         </a>
+        <button
+          className="p-1 rounded hover:bg-glass-light transition-colors text-text-muted hover:text-amber-400"
+          onClick={(e) => {
+            e.stopPropagation();
+            onResetPassword?.(teacher.email);
+          }}
+          title="Reset Password directly"
+        >
+          <Key className="w-3.5 h-3.5" />
+        </button>
       </div>
     </motion.div>
   );
