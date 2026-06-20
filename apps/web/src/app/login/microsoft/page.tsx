@@ -48,7 +48,7 @@ export default function MicrosoftLoginPage() {
         window.location.href = "/login-success?error=AccessDenied&reason=email_not_in_database";
       } else {
         // Sign-in succeeded. Redirect popup to /login-success
-        window.location.href = "/login-success";
+        window.location.href = `/login-success?email=${encodeURIComponent(email)}`;
       }
     } catch (err) {
       console.error("SSO Login Error:", err);

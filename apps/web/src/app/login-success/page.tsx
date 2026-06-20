@@ -7,7 +7,9 @@ export default function LoginSuccessPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    const error = new URLSearchParams(window.location.search).get("error");
+    const searchParams = new URLSearchParams(window.location.search);
+    const error = searchParams.get("error");
+    const email = searchParams.get("email");
     
     if (error) {
        setErrorMsg("Access Denied: Email not in database.");
@@ -16,7 +18,7 @@ export default function LoginSuccessPage() {
        }
     } else {
        if (window.opener) {
-           window.opener.postMessage({ type: 'login-success' }, '*');
+           window.opener.postMessage({ type: 'login-success', email }, '*');
        }
     }
 

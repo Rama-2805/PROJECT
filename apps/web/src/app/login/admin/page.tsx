@@ -15,6 +15,59 @@ function LoginContent() {
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
+  const handleMicrosoftLogin = () => {
+    const width = 500;
+    const height = 600;
+    const left = window.screen.width / 2 - width / 2;
+    const top = window.screen.height / 2 - height / 2;
+    
+    window.open(
+      "/login/microsoft",
+      "Microsoft SSO",
+      `width=${width},height=${height},left=${left},top=${top},status=no,resizable=yes`
+    );
+  };
+
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      
+      if (event.data.type === "login-success") {
+        const loggedInEmail = event.data.email;
+        if (!loggedInEmail) return;
+        
+        try {
+          const users = getUsers();
+          const user = users[loggedInEmail];
+          
+          if (!user) {
+            setError("SSOError");
+            return;
+          }
+          
+          document.cookie = "refreshToken=mock-token-123; path=/";
+          localStorage.setItem("user-role", user.role);
+          localStorage.setItem("currentUserEmail", loggedInEmail);
+          
+          if (user.role === "admin") {
+            router.push("/dashboard");
+          } else if (user.role === "teacher") {
+            router.push("/teacher/dashboard");
+          } else {
+            router.push("/student/dashboard");
+          }
+        } catch (err) {
+          setError("UnknownError");
+        }
+      } else if (event.data.type === "login-error") {
+        setError("SSOError");
+      }
+    };
+    
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [router]);
+
   useEffect(() => {
     // Initialize user database on load
     initializeUserStore();
@@ -108,6 +161,7 @@ function LoginContent() {
               {error === "IncorrectPortal" && "Access Denied: This is the Admin portal. Students/Faculty should use their specific logins."}
               {error === "IncorrectCredentials" && "Authentication failed: Incorrect password."}
               {error === "UnknownError" && "An unexpected error occurred. Please try again."}
+              {error === "SSOError" && "SSO Login failed: Your Microsoft account is not registered."}
             </div>
           )}
 
@@ -151,6 +205,29 @@ function LoginContent() {
               )}
             </button>
           </form>
+
+          <div className="relative my-4 flex items-center justify-center">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-white/10" />
+            </div>
+            <span className="relative bg-[#111111] px-3 text-[10px] uppercase font-semibold text-gray-500 tracking-wider">
+              Or continue with
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleMicrosoftLogin}
+            className="w-full bg-[#1A1A1A] hover:bg-[#262626] border border-white/10 text-white rounded-xl px-4 py-2.5 font-medium flex items-center justify-center gap-3 transition-colors text-sm cursor-pointer"
+          >
+            <div className="flex gap-[2px] w-4 h-4 flex-wrap">
+              <div className="w-[7px] h-[7px] bg-[#F25022]" />
+              <div className="w-[7px] h-[7px] bg-[#7FBA00]" />
+              <div className="w-[7px] h-[7px] bg-[#00A4EF]" />
+              <div className="w-[7px] h-[7px] bg-[#FFB900]" />
+            </div>
+            Sign in with Microsoft
+          </button>
         </div>
 
         <p className="text-center text-gray-500 text-xs sm:text-sm mt-5 flex flex-col gap-2">
