@@ -6,6 +6,8 @@ import { motion } from "framer-motion";
 import { Cloud, ArrowRight, ShieldCheck, Lock } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { initializeUserStore, getUsers, hashPassword } from "@/lib/userStore";
+import { api, setAccessToken } from "@/lib/api/client";
+import { isDemoMode } from "@/lib/demo-mode";
 
 function LoginContent() {
   const router = useRouter();
@@ -85,38 +87,73 @@ function LoginContent() {
       return;
     }
 
-    try {
-      const users = getUsers();
-      const user = users[email];
+    if (isDemoMode()) {
+      try {
+        const users = getUsers();
+        const user = users[email];
 
-      if (!user) {
+        if (!user) {
+          setIsLoading(false);
+          setError("AccessDenied");
+          return;
+        }
+
+        if (user.role !== "admin") {
+          setIsLoading(false);
+          setError("IncorrectPortal");
+          return;
+        }
+
+        const inputHash = await hashPassword(password);
+        if (inputHash !== user.passwordHash) {
+          setIsLoading(false);
+          setError("IncorrectCredentials");
+          return;
+        }
+
+        // Successful login (Admins do not need compulsory change by default, or they have preset hashes)
         setIsLoading(false);
-        setError("AccessDenied");
-        return;
-      }
-
-      if (user.role !== "admin") {
+        document.cookie = "refreshToken=mock-token-123; path=/";
+        localStorage.setItem("user-role", "admin");
+        localStorage.setItem("currentUserEmail", email);
+        router.push("/dashboard");
+      } catch (err) {
         setIsLoading(false);
-        setError("IncorrectPortal");
-        return;
+        setError("UnknownError");
       }
+    } else {
+      // Live database authentication
+      try {
+        const res = await api.post<any>("/auth/login", { email, password });
+        if (!res.success || !res.data) {
+          setIsLoading(false);
+          setError("IncorrectCredentials");
+          return;
+        }
 
-      const inputHash = await hashPassword(password);
-      if (inputHash !== user.passwordHash) {
+        const { user, tokens } = res.data;
+
+        // Map roles to lowercase
+        let mappedRole = "student";
+        if (user.roles?.includes("ADMIN")) mappedRole = "admin";
+        else if (user.roles?.includes("TEACHER")) mappedRole = "teacher";
+
+        if (mappedRole !== "admin") {
+          setIsLoading(false);
+          setError("IncorrectPortal");
+          return;
+        }
+
         setIsLoading(false);
-        setError("IncorrectCredentials");
-        return;
+        setAccessToken(tokens.accessToken);
+        document.cookie = `refreshToken=${tokens.refreshToken}; path=/; max-age=${7 * 24 * 60 * 60}`;
+        localStorage.setItem("user-role", "admin");
+        localStorage.setItem("currentUserEmail", email);
+        router.push("/dashboard");
+      } catch (err) {
+        setIsLoading(false);
+        setError("UnknownError");
       }
-
-      // Successful login (Admins do not need compulsory change by default, or they have preset hashes)
-      setIsLoading(false);
-      document.cookie = "refreshToken=mock-token-123; path=/";
-      localStorage.setItem("user-role", "admin");
-      localStorage.setItem("currentUserEmail", email);
-      router.push("/dashboard");
-    } catch (err) {
-      setIsLoading(false);
-      setError("UnknownError");
     }
   };
 

@@ -38,8 +38,16 @@ export function DemoProvider({ children }: { children: ReactNode }) {
   // Detect demo mode after mount (avoids hydration mismatch from typeof window check)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setDemoActive(params.get("demo") === "true");
+    const envDemo = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+    const queryDemo = params.get("demo");
+
+    if (queryDemo === "false") {
+      setDemoActive(false);
+    } else if (queryDemo === "true" || envDemo) {
+      setDemoActive(true);
+    } else {
+      setDemoActive(false);
+    }
   }, []);
 
   const simulateEvent = useCallback((type: string, data: Record<string, unknown> = {}) => {
@@ -138,6 +146,13 @@ export function useDemoMode(): DemoContextValue {
 }
 
 export function isDemoMode(): boolean {
+  if (process.env.NEXT_PUBLIC_DEMO_MODE === "true") {
+    if (typeof window !== "undefined") {
+      const demoParam = new URLSearchParams(window.location.search).get("demo");
+      if (demoParam === "false") return false;
+    }
+    return true;
+  }
   if (typeof window === "undefined") return false;
   return new URLSearchParams(window.location.search).get("demo") === "true";
 }
