@@ -5,17 +5,23 @@ import { useUIStore } from "@/store/uiStore";
 import { TopNavbar } from "../../dashboard/layout/TopNavbar";
 import { StudentSidebar } from "./StudentSidebar";
 import { CommandPalette } from "../../dashboard/CommandPalette";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
+import { ProgressiveFluxLoader } from "@/components/ui/progressive-flux-loader";
 
 export function StudentClientWrapper({ children }: { children: React.ReactNode }) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const theme = useUIStore((s) => s.theme);
   const [mounted, setMounted] = useState(false);
+  const [showIntro, setShowIntro] = useState(false);
 
   // Avoid hydration mismatch by waiting for mount
   useEffect(() => {
     setMounted(true);
+    const hasShown = sessionStorage.getItem("student-intro-shown");
+    if (!hasShown) {
+      setShowIntro(true);
+    }
   }, []);
 
   // Synchronize theme with documentElement to resolve global CSS variables correctly
@@ -71,6 +77,45 @@ export function StudentClientWrapper({ children }: { children: React.ReactNode }
       {/* Global Modals & Panels */}
       <CommandPalette />
       
+      <AnimatePresence>
+        {showIntro && (
+          <motion.div
+            initial={{ opacity: 1 }}
+            exit={{ opacity: 0, transition: { duration: 0.6, ease: "easeInOut" } }}
+            className="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-[#060814] px-6"
+          >
+            <div className="w-full max-w-md flex flex-col items-center gap-6">
+              <motion.div
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.8, delay: 0.2 }}
+                className="flex items-center gap-2 mb-2"
+              >
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-[#1d6ffb] to-[#74e1ff] flex items-center justify-center shadow-lg">
+                  <span className="text-white font-black text-sm">S</span>
+                </div>
+                <span className="text-white font-extrabold tracking-wider text-xl uppercase text-white">SmartCampus AI</span>
+              </motion.div>
+              
+              <ProgressiveFluxLoader
+                duration={2.5}
+                loop={false}
+                phases={[
+                  { at: 0, label: "Connecting to Core..." },
+                  { at: 30, label: "Verifying Session..." },
+                  { at: 60, label: "Fetching Roles..." },
+                  { at: 90, label: "Structuring Dashboard..." },
+                  { at: 100, label: "Ready" }
+                ]}
+                onComplete={() => {
+                  sessionStorage.setItem("student-intro-shown", "true");
+                  setShowIntro(false);
+                }}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

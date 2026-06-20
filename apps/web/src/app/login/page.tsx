@@ -128,7 +128,7 @@ function LoginContent() {
         <div className="absolute top-0 left-0 w-full h-full bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-[0.02]" />
       </div>
 
-      <motion.div 
+      <motion.div
         className="z-10 w-full max-w-md"
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -145,7 +145,7 @@ function LoginContent() {
         <div className="bg-[#111111] border border-white/10 rounded-2xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
           {/* subtle top glow */}
           <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-1 bg-blue-500 opacity-30 blur-sm" />
-          
+
           <AnimatePresence mode="wait">
             {!showChangePassword ? (
               <motion.div
@@ -170,8 +170,8 @@ function LoginContent() {
                 <form onSubmit={handleLogin} className="flex flex-col gap-4">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Student Email</label>
-                    <input 
-                      type="email" 
+                    <input
+                      type="email"
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
@@ -179,14 +179,14 @@ function LoginContent() {
                       className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors text-sm"
                     />
                   </div>
-                  
+
                   <div className="flex flex-col gap-1.5">
                     <div className="flex justify-between items-center">
                       <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Password</label>
                       <Link href="#" className="text-xs font-medium text-gray-500 hover:text-white transition-colors">Forgot password?</Link>
                     </div>
-                    <input 
-                      type="password" 
+                    <input
+                      type="password"
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -195,8 +195,8 @@ function LoginContent() {
                     />
                   </div>
 
-                  <button 
-                    type="submit" 
+                  <button
+                    type="submit"
                     disabled={isLoading}
                     className="w-full bg-white hover:bg-gray-200 text-black rounded-xl px-4 py-2.5 font-semibold flex items-center justify-center gap-2 transition-colors mt-1 disabled:opacity-70 text-sm cursor-pointer"
                   >
@@ -235,8 +235,8 @@ function LoginContent() {
                 <form onSubmit={handleChangePassword} className="flex flex-col gap-4">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">New Password</label>
-                    <input 
-                      type="password" 
+                    <input
+                      type="password"
                       required
                       value={newPassword}
                       onChange={(e) => setNewPassword(e.target.value)}
@@ -247,8 +247,8 @@ function LoginContent() {
 
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Confirm New Password</label>
-                    <input 
-                      type="password" 
+                    <input
+                      type="password"
                       required
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(e.target.value)}
@@ -257,8 +257,8 @@ function LoginContent() {
                     />
                   </div>
 
-                  <button 
-                    type="submit" 
+                  <button
+                    type="submit"
                     disabled={isLoading}
                     className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 hover:brightness-110 text-white rounded-xl px-4 py-2.5 font-semibold flex items-center justify-center gap-2 transition-all mt-1 disabled:opacity-70 text-sm cursor-pointer shadow-[0_0_15px_rgba(37,99,235,0.3)]"
                   >
