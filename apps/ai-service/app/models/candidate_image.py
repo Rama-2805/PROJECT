@@ -14,6 +14,8 @@ class CandidateImage(Base):
     image_path = Column(String(512), nullable=False)
     quality_score = Column(Float, nullable=False)
     embedding_path = Column(String(512), nullable=False)
+    status = Column(String(20), nullable=False, default="PENDING")
+    similarity_score = Column(Float, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships

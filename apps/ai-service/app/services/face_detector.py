@@ -38,21 +38,44 @@ def check_and_download_models():
 class FaceDetector:
     """Detects faces in video frames using InsightFace and generates crops."""
 
-    def __init__(self):
+    def __init__(self, providers: List[str] = None):
         self.confidence_threshold = settings.detection_confidence_threshold
         self._model = None
+        self.requested_providers = providers
 
     @property
     def model(self):
         """Lazy-load the InsightFace FaceAnalysis model to save memory during import."""
         if self._model is None:
-            logger.info("Initializing InsightFace FaceAnalysis (buffalo_l) on CPU...")
             try:
                 import insightface
-                # buffalo_l includes detection and recognition models
+                import onnxruntime as ort
+                
+                # Dynamic provider filtering
+                available_providers = ort.get_available_providers()
+                requested = self.requested_providers or ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+                providers = [p for p in requested if p in available_providers]
+                if not providers:
+                    providers = ["CPUExecutionProvider"]
+                
+                provider_options = []
+                for p in providers:
+                    if p == "CoreMLExecutionProvider":
+                        provider_options.append({})
+                    elif p == "CPUExecutionProvider":
+                        provider_options.append({
+                            "intra_op_num_threads": 4,
+                            "inter_op_num_threads": 4
+                        })
+                    else:
+                        provider_options.append({})
+                
+                logger.info(f"Initializing InsightFace FaceAnalysis (buffalo_l) with ONNX execution providers: {providers} with options: {provider_options}")
+                
                 self._model = insightface.app.FaceAnalysis(
                     name="buffalo_l",
-                    providers=["CPUExecutionProvider"]
+                    providers=providers,
+                    provider_options=provider_options
                 )
                 # Initialize with detection threshold
                 self._model.prepare(ctx_id=-1, det_thresh=self.confidence_threshold)

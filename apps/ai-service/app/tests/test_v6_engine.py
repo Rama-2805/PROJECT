@@ -52,7 +52,7 @@ def _make_mock_detection(crop):
 def test_attendance_marking_rule(db_session, monkeypatch):
     """Test visibility rule: mark attendance only if student is visible for >= 5 seconds."""
     # Seed student in DB
-    student = Student(name="Manjunatha R", usn="1VI23CS001", department="CSE", semester=6, section="A")
+    student = Student(name="Manjunatha R", usn="ENG_USN001", department="CSE", semester=6, section="A")
     db_session.add(student)
     db_session.commit()
 
@@ -79,7 +79,7 @@ def test_attendance_marking_rule(db_session, monkeypatch):
     # Mock FAISS matching to return the student's USN
     monkeypatch.setattr(
         "app.services.faiss_service.faiss_service.search_face",
-        lambda *args, **kwargs: ("1VI23CS001", 0.95),
+        lambda *args, **kwargs: ("ENG_USN001", 0.95),
     )
     # Mock candidate capture to avoid candidate queue database modifications in this test
     monkeypatch.setattr(attendance_engine, "_process_learning_candidate", lambda *args: None)
@@ -107,7 +107,7 @@ def test_attendance_marking_rule(db_session, monkeypatch):
 
 def test_continuous_learning_candidate_capture(db_session, monkeypatch):
     """Test candidate capture triggers when recognition confidence is > 98% and quality > 85."""
-    student = Student(name="Manjunatha R", usn="1VI23CS001", department="CSE", semester=6, section="A")
+    student = Student(name="Manjunatha R", usn="ENG_USN001", department="CSE", semester=6, section="A")
     db_session.add(student)
     db_session.commit()
 
@@ -133,7 +133,7 @@ def test_continuous_learning_candidate_capture(db_session, monkeypatch):
     )
     monkeypatch.setattr(
         "app.services.faiss_service.faiss_service.search_face",
-        lambda *args, **kwargs: ("1VI23CS001", 0.99),
+        lambda *args, **kwargs: ("ENG_USN001", 0.99),
     )
     # Mock image storage save_candidate_face
     monkeypatch.setattr(

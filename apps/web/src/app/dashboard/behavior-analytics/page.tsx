@@ -6,6 +6,8 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils/cn";
 import { getBehaviorAnalytics, type BehaviorAnalytics, type BehaviorAlert } from "@/lib/mock/behavior";
+import { useDemoMode, isDemoMode as checkDemoMode } from "@/lib/demo-mode";
+import { dashboardApi } from "@/lib/api/dashboardApi";
 
 const fadeUp = {
   initial: { opacity: 0, y: 16 },
@@ -85,10 +87,73 @@ export default function BehaviorAnalyticsPage() {
   const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    getBehaviorAnalytics().then((d) => {
-      setData(d);
-      setAlerts(d.recentAlerts);
-    }).finally(() => setLoading(false));
+    async function load() {
+      const demo = checkDemoMode();
+      if (demo) {
+        getBehaviorAnalytics().then((d) => {
+          setData(d);
+          setAlerts(d.recentAlerts);
+        }).finally(() => setLoading(false));
+        return;
+      }
+
+      try {
+        const res = await dashboardApi.getBehaviorAnalytics();
+        if (res && res.success && res.data) {
+          const apiData = res.data;
+          setData({
+            overview: apiData.overview,
+            engagementTrend: apiData.engagement_trend,
+            behaviorDistribution: apiData.behavior_distribution.map(d => ({
+              type: d.type as any,
+              count: d.count
+            })),
+            classroomComparison: apiData.classroom_comparison,
+            studentRanking: apiData.student_ranking,
+            attentionHeatmap: apiData.attention_heatmap,
+            recentAlerts: apiData.recent_alerts.map(a => ({
+              id: a.id,
+              studentId: a.student_id,
+              studentName: a.student_name,
+              behaviorType: a.behavior_type as any,
+              severity: a.severity as any,
+              confidence: a.confidence,
+              status: a.status as any,
+              acknowledgedBy: a.acknowledged_by,
+              createdAt: a.created_at
+            })),
+            topEvents: apiData.top_events,
+            studentTimeline: apiData.student_timeline
+          });
+          setAlerts(apiData.recent_alerts.map(a => ({
+            id: a.id,
+            studentId: a.student_id,
+            studentName: a.student_name,
+            behaviorType: a.behavior_type as any,
+            severity: a.severity as any,
+            confidence: a.confidence,
+            status: a.status as any,
+            acknowledgedBy: a.acknowledged_by,
+            createdAt: a.created_at
+          })));
+        } else {
+          console.warn("Behavior Analytics API returned failure. Falling back to mocks.");
+          getBehaviorAnalytics().then((d) => {
+            setData(d);
+            setAlerts(d.recentAlerts);
+          });
+        }
+      } catch (err) {
+        console.error("Failed to fetch live behavior analytics. Falling back to mocks.", err);
+        getBehaviorAnalytics().then((d) => {
+          setData(d);
+          setAlerts(d.recentAlerts);
+        });
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
   }, []);
 
   const handleAcknowledge = (id: string) => {

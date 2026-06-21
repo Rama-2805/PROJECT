@@ -62,17 +62,19 @@ def test_enrollment_pipeline_api(client, db_session, monkeypatch):
     complete_payload = {
         "cluster_id": cluster_id,
         "name": "Manjunatha R",
-        "usn": "1VI23CS001",
+        "usn": "V6API001",
         "department": "CSE",
         "semester": 6,
         "section": "A",
     }
     response = client.post("/api/v1/enrollment/complete", json=complete_payload)
+    if response.status_code != 200:
+        print("API COMPLETE ERROR:", response.status_code, response.json())
     assert response.status_code == 200
     assert response.json()["status"] == "success"
 
     # Verify student exists in DB with semester and section
-    student = db_session.query(Student).filter(Student.usn == "1VI23CS001").first()
+    student = db_session.query(Student).filter(Student.usn == "V6API001").first()
     assert student is not None
     assert student.semester == 6
     assert student.section == "A"
@@ -131,8 +133,8 @@ def test_unknown_faces_dashboard_endpoints(client, db_session, monkeypatch):
     # 1. Fetch dashboard
     response = client.get("/api/v1/unknown-faces")
     assert response.status_code == 200
-    assert len(response.json()) == 1
-    assert response.json()[0]["cluster_id"] == "unknown_xyz"
+    assert len(response.json()["data"]) == 1
+    assert response.json()["data"][0]["cluster_id"] == "unknown_xyz"
 
     # 2. Trigger security alert
     alert_payload = {

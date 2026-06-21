@@ -5,6 +5,7 @@ import { Search, Bell, Sparkles, Moon, Sun, User, Command } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils/cn";
+import Link from "next/link";
 
 export function TopNavbar() {
   const toggleCommandPalette = useUIStore((s) => s.toggleCommandPalette);
@@ -101,14 +102,41 @@ export function TopNavbar() {
         {/* Separator */}
         <div className="hidden lg:block lg:h-6 lg:w-px lg:bg-glass-border" aria-hidden="true" />
 
-        {/* User Avatar */}
-        <button className="flex items-center gap-x-2 rounded-full p-0.5 hover:bg-glass-medium transition-all duration-300 border border-transparent hover:border-glass-border shadow-glass group">
-          <div className="h-9 w-9 rounded-full bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 p-[1px]">
-            <div className="h-full w-full rounded-full bg-bg-primary flex items-center justify-center border border-glass-border group-hover:bg-transparent transition-colors duration-300">
-              <User className="h-4 w-4 text-text-secondary group-hover:text-text-primary" />
+        {/* User Avatar & Dropdown */}
+        <div className="relative">
+          <button 
+            onClick={() => {
+              const el = document.getElementById("top-navbar-user-dropdown");
+              if (el) el.classList.toggle("hidden");
+            }}
+            className="flex items-center gap-x-2 rounded-full p-0.5 hover:bg-glass-medium transition-all duration-300 border border-transparent hover:border-glass-border shadow-glass group"
+          >
+            <div className="h-9 w-9 rounded-full bg-gradient-to-br from-indigo-500 via-purple-600 to-pink-500 p-[1px]">
+              <div className="h-full w-full rounded-full bg-bg-primary flex items-center justify-center border border-glass-border group-hover:bg-transparent transition-colors duration-300">
+                <User className="h-4 w-4 text-text-secondary group-hover:text-text-primary" />
+              </div>
             </div>
+          </button>
+          <div 
+            id="top-navbar-user-dropdown" 
+            className="hidden absolute right-0 top-full mt-2 w-48 rounded-xl bg-[#111111]/90 backdrop-blur-[40px] border border-glass-border p-2 shadow-2xl z-[100]"
+          >
+            <Link 
+              href="#" 
+              onClick={(e: React.MouseEvent) => {
+                e.preventDefault();
+                // Perform sign out
+                document.cookie = "refreshToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+                localStorage.removeItem("currentUserEmail");
+                localStorage.removeItem("user-role");
+                window.location.href = "/";
+              }}
+              className="block w-full text-left px-3.5 py-2.5 rounded-lg text-xs font-medium text-red-400 hover:text-red-300 hover:bg-white/5 transition-all cursor-pointer"
+            >
+              Sign Out
+            </Link>
           </div>
-        </button>
+        </div>
 
       </div>
     </header>

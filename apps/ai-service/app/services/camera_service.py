@@ -38,6 +38,9 @@ class CameraService:
         # Latest frame caches for instant access
         self._latest_frames: Dict[str, Tuple[float, any]] = {}
         self._lock = threading.Lock()
+        
+        # Diagnostics metrics (camera_id -> dict)
+        self._metrics: Dict[str, dict] = {}
 
     def start_camera(self, camera_id: str, source_path: str, buffer_size: int = 10) -> bool:
         """Start a background capture thread for the given camera source.
@@ -59,6 +62,17 @@ class CameraService:
             self._states[camera_id] = CameraState.CONNECTING
             self._buffers[camera_id] = queue.Queue(maxsize=buffer_size)
             self._sources[camera_id] = source_path
+            
+            # Initialize metrics for diagnostics
+            self._metrics[camera_id] = {
+                "width": 0,
+                "height": 0,
+                "fps": 0.0,
+                "last_frame_timestamp": 0.0,
+                "fps_timestamps": [],
+                "detection_history": [],
+                "recognition_history": [],
+            }
 
         thread = threading.Thread(
             target=self._capture_loop,
@@ -92,6 +106,7 @@ class CameraService:
             self._buffers.pop(camera_id, None)
             self._sources.pop(camera_id, None)
             self._latest_frames.pop(camera_id, None)
+            self._metrics.pop(camera_id, None)
             
         logger.info(f"Camera {camera_id} stopped and cleaned up.")
 
@@ -101,14 +116,15 @@ class CameraService:
             # Check if source_path is webcam index
             if source_path.isdigit():
                 cap = cv2.VideoCapture(int(source_path))
+                if cap.isOpened():
+                    # Optimize capture properties for USB Webcams only
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             else:
                 # Add CAP_FFMPEG for RTSP streams specifically to prevent timeouts
                 cap = cv2.VideoCapture(source_path, cv2.CAP_FFMPEG)
                 
             if cap.isOpened():
-                # Optimize capture properties
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                 return cap
             else:
                 cap.release()
@@ -190,9 +206,23 @@ class CameraService:
                 except queue.Full:
                     pass
 
-            # Cache latest frame
+            # Cache latest frame & update diagnostics metrics
             with self._lock:
                 self._latest_frames[camera_id] = (timestamp, frame.copy())
+                
+                metrics = self._metrics.get(camera_id)
+                if metrics is not None:
+                    metrics["last_frame_timestamp"] = timestamp
+                    if metrics["width"] == 0:
+                        metrics["width"] = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        metrics["height"] = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    
+                    timestamps = metrics["fps_timestamps"]
+                    timestamps.append(timestamp)
+                    if len(timestamps) > 30:
+                        timestamps.pop(0)
+                    if len(timestamps) > 1:
+                        metrics["fps"] = round(len(timestamps) / (timestamps[-1] - timestamps[0]), 1)
 
             # Slight delay to throttle FPS if needed (e.g. targeting ~20 FPS max)
             time.sleep(0.03)
@@ -242,6 +272,23 @@ class CameraService:
         """Get current operational state of a camera."""
         with self._lock:
             return self._states.get(camera_id, CameraState.OFFLINE)
+
+    def record_detection_metrics(self, camera_id: str, face_detected: bool, face_recognized: Optional[bool] = None):
+        """Record whether a face was detected and/or recognized for diagnostics."""
+        with self._lock:
+            metrics = self._metrics.get(camera_id)
+            if metrics is None:
+                return
+            
+            # Keep history capped at 100 entries
+            metrics["detection_history"].append(face_detected)
+            if len(metrics["detection_history"]) > 100:
+                metrics["detection_history"].pop(0)
+                
+            if face_recognized is not None:
+                metrics["recognition_history"].append(face_recognized)
+                if len(metrics["recognition_history"]) > 100:
+                    metrics["recognition_history"].pop(0)
 
 
 # Singleton instance

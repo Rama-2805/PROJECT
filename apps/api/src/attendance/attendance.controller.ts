@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Delete,
   Body,
   Param,
   Query,
@@ -66,4 +67,62 @@ export class AttendanceController {
   reportUnknownFace(@Body() dto: UnknownFaceDto) {
     return this.attendance.reportUnknownFace(dto.institutionId, dto.classroomId, dto.cameraId);
   }
+
+  @Get("unknown-faces")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  getUnknownFaces(
+    @Query("page") page?: number,
+    @Query("limit") limit?: number,
+  ) {
+    return this.attendance.getUnknownFaces(page ? Number(page) : undefined, limit ? Number(limit) : undefined);
+  }
+
+  @Get("unknown-faces/:id")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  getUnknownFaceById(@Param("id") id: string) {
+    return this.attendance.getUnknownFaceById(id);
+  }
+
+  @Delete("unknown-faces/:id")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  deleteUnknownFace(@Param("id") id: string) {
+    return this.attendance.deleteUnknownFace(id);
+  }
+
+  @Post("unknown-faces/enroll")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  enrollUnknown(@Body() dto: any) {
+    return this.attendance.enrollUnknown(dto);
+  }
+
+  @Post("unknown-faces/visitor")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  markVisitor(@Body() dto: any) {
+    return this.attendance.markVisitor(dto);
+  }
+
+  @Post("unknown-faces/ignore")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  ignoreUnknown(@Body() dto: any) {
+    return this.attendance.ignoreUnknown(dto);
+  }
+
+  @Post("unknown-faces/alert")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  triggerAlert(@Body() dto: any) {
+    return this.attendance.triggerAlert(dto);
+  }
+
+  @Post("optimizer/run")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
+  runOptimizer() {
+    return this.attendance.runOptimizer();
+  }
+
+  @Post("optimizer/rollback")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
+  rollbackProfile(@Body() dto: any) {
+    return this.attendance.rollbackProfile(dto);
+  }
 }
+

@@ -1,6 +1,8 @@
 """SmartCampus AI — Clusters API Router."""
 
 import os
+import shutil
+import logging
 from typing import Dict, List, Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -12,23 +14,36 @@ from ..services.face_clustering import face_clustering_service
 from ..services.image_storage import image_storage
 from .websocket import websocket_manager
 
+logger = logging.getLogger("smartcampus.clusters_api")
+
 router = APIRouter(prefix=f"{settings.api_prefix}/clusters", tags=["Face Clusters"])
+
+
+def get_relative_storage_path(absolute_path: str) -> str:
+    if not absolute_path:
+        return ""
+    abs_norm = os.path.normpath(absolute_path)
+    idx = abs_norm.find("storage" + os.sep)
+    if idx != -1:
+        return abs_norm[idx:].replace(os.sep, "/")
+    idx_slash = abs_norm.find("storage/")
+    if idx_slash != -1:
+        return abs_norm[idx_slash:]
+    return absolute_path
 
 
 @router.get("")
 @router.get("/")
 def get_all_clusters(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
-    """Get summaries of all unknown face clusters.
-
-    Returns:
-        List of dicts: [{"cluster_id": "cluster_1", "images": 25, "quality": 91}]
-    """
+    """Get summaries of all unknown face clusters."""
     # Group by cluster_id and get count and average quality
     results = (
         db.query(
             UnknownFace.cluster_id,
             func.count(UnknownFace.id).label("images_count"),
-            func.avg(UnknownFace.quality_score).label("avg_quality")
+            func.avg(UnknownFace.quality_score).label("avg_quality"),
+            func.min(UnknownFace.created_at).label("first_seen"),
+            func.max(UnknownFace.created_at).label("last_seen")
         )
         .filter(UnknownFace.cluster_id.isnot(None))
         .group_by(UnknownFace.cluster_id)
@@ -37,14 +52,26 @@ def get_all_clusters(db: Session = Depends(get_db)) -> List[Dict[str, Any]]:
 
     summaries = []
     for row in results:
+        # Find representative image (highest quality score)
+        rep_face = (
+            db.query(UnknownFace)
+            .filter(UnknownFace.cluster_id == row.cluster_id)
+            .order_by(UnknownFace.quality_score.desc())
+            .first()
+        )
+        rep_image = get_relative_storage_path(rep_face.image_path) if rep_face else ""
+
         summaries.append({
             "cluster_id": row.cluster_id,
-            "images": int(row.images_count),
+            "appearance_count": int(row.images_count),
+            "first_seen": row.first_seen.isoformat() if row.first_seen else None,
+            "last_seen": row.last_seen.isoformat() if row.last_seen else None,
+            "representative_image": rep_image,
             "quality": round(float(row.avg_quality), 1) if row.avg_quality else 0.0
         })
 
-    # Sort clusters by average quality (descending)
-    summaries.sort(key=lambda x: x["quality"], reverse=True)
+    # Sort clusters by last_seen (descending) so latest ones appear first
+    summaries.sort(key=lambda x: x["last_seen"] or "", reverse=True)
     return summaries
 
 
@@ -66,20 +93,22 @@ def get_cluster_details(cluster_id: str, db: Session = Depends(get_db)) -> Dict[
     min_quality = min(quality_scores)
     max_quality = max(quality_scores)
 
-    # Get preview images saved for this cluster
-    preview_images = image_storage.get_cluster_images(cluster_id)
-    
-    # Organize preview images by their pose filenames
-    best_images = {}
-    for img_path in preview_images:
-        filename = os.path.basename(img_path)
-        pose_name = os.path.splitext(filename)[0]
-        # Store relative or absolute path
-        best_images[pose_name] = img_path
+    # Get representative image
+    rep_face = (
+        db.query(UnknownFace)
+        .filter(UnknownFace.cluster_id == cluster_id)
+        .order_by(UnknownFace.quality_score.desc())
+        .first()
+    )
+    rep_image = get_relative_storage_path(rep_face.image_path) if rep_face else ""
 
     # Format result
     return {
         "cluster_id": cluster_id,
+        "first_seen": min(f.created_at for f in faces).isoformat(),
+        "last_seen": max(f.created_at for f in faces).isoformat(),
+        "appearance_count": images_count,
+        "representative_image": rep_image,
         "statistics": {
             "total_images": images_count,
             "avg_quality": round(avg_quality, 1),
@@ -90,21 +119,62 @@ def get_cluster_details(cluster_id: str, db: Session = Depends(get_db)) -> Dict[
                 "latest": max(f.created_at for f in faces).isoformat()
             }
         },
-        "best_images": best_images,
-        "all_images": [
+        "faces": [
             {
                 "id": f.id,
-                "image_path": f.image_path,
-                "quality_score": f.quality_score,
+                "image_path": get_relative_storage_path(f.image_path),
+                "quality_score": round(f.quality_score, 1),
                 "created_at": f.created_at.isoformat()
             } for f in faces
         ]
     }
 
 
+@router.delete("/{cluster_id}")
+def delete_cluster(cluster_id: str, db: Session = Depends(get_db)):
+    """Delete a cluster and all its associated unknown face records and images."""
+    faces = db.query(UnknownFace).filter(UnknownFace.cluster_id == cluster_id).all()
+    if not faces:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Cluster with ID '{cluster_id}' not found."
+        )
+
+    # 1. Delete associated crops and embeddings from disk
+    for face in faces:
+        if face.image_path and os.path.exists(face.image_path):
+            try:
+                os.remove(face.image_path)
+            except Exception as e:
+                logger.error(f"Error removing image file {face.image_path}: {e}")
+
+        if face.embedding_path and os.path.exists(face.embedding_path):
+            try:
+                os.remove(face.embedding_path)
+            except Exception as e:
+                logger.error(f"Error removing embedding file {face.embedding_path}: {e}")
+
+    # Delete cluster directory if exists
+    cluster_dir = image_storage.clusters_dir / f"cluster_{cluster_id}"
+    if cluster_dir.exists():
+        try:
+            shutil.rmtree(str(cluster_dir), ignore_errors=True)
+        except Exception as e:
+            logger.error(f"Error removing cluster directory {cluster_dir}: {e}")
+
+    # 2. Delete database records
+    db.query(UnknownFace).filter(UnknownFace.cluster_id == cluster_id).delete()
+    db.commit()
+
+    return {
+        "status": "success",
+        "message": f"Cluster '{cluster_id}' and all its {len(faces)} detections deleted successfully."
+    }
+
+
 @router.post("/run")
 async def trigger_clustering(db: Session = Depends(get_db)) -> Dict[str, Any]:
-    """Manually run the auto-clustering DBSCAN algorithm over unassigned unknown faces."""
+    """Manually run the auto-clustering HDBSCAN algorithm over unassigned unknown faces."""
     try:
         stats = face_clustering_service.run_auto_clustering(db)
         

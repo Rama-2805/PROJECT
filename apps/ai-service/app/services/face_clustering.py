@@ -76,9 +76,10 @@ class FaceClusteringService:
         return None
 
     def run_auto_clustering(self, db: Session) -> dict:
-        """Run DBSCAN clustering over all unassigned (or all) unknown face embeddings.
+        """Run HDBSCAN clustering over all unassigned (or all) unknown face embeddings.
 
         Groups similar faces and assigns them a cluster ID.
+        Merges highly similar clusters automatically.
         Then, performs Best Image Selection for each cluster.
 
         Args:
@@ -117,33 +118,88 @@ class FaceClusteringService:
 
         X = np.array(embeddings)
 
-        # DBSCAN with cosine metric
-        # Epsilon is the maximum distance between two samples.
-        # Cosine distance = 1 - cosine_similarity.
-        # Epsilon of 0.3 means similarity threshold of 0.7.
-        dbscan = DBSCAN(eps=self.eps, min_samples=self.min_cluster_size, metric="cosine")
-        labels = dbscan.fit_predict(X)
+        # HDBSCAN with cosine metric
+        # Since HDBSCAN doesn't directly support cosine metric out of the box with density clustering,
+        # we compute the cosine distance matrix and use metric='precomputed'.
+        # Cosine distance = 1.0 - cosine_similarity.
+        dist_matrix = (1.0 - np.clip(np.dot(X, X.T), -1.0, 1.0)).astype(np.float64)
+        
+        # Fit HDBSCAN
+        import hdbscan
+        min_c_size = max(2, self.min_cluster_size)
+        clusterer = hdbscan.HDBSCAN(metric="precomputed", min_cluster_size=min_c_size, min_samples=1, allow_single_cluster=True)
+        labels = clusterer.fit_predict(dist_matrix)
 
-        cluster_counts = {}
-        # Group database records by cluster labels
-        # Label -1 is noise (unclustered/outliers)
+        # Group faces by their predicted labels
+        predicted_clusters = {}
         for face, label in zip(valid_faces, labels):
             if label == -1:
-                # If unassigned previously, we can give it an isolated new cluster ID or keep it null
-                # To be clean, we let noise faces remain unassigned or keep their existing ID.
+                continue
+            if label not in predicted_clusters:
+                predicted_clusters[label] = []
+            predicted_clusters[label].append(face)
+
+        # Calculate centroid (mean L2-normalized embedding) for each cluster
+        centroids = {}
+        for label, group_faces in predicted_clusters.items():
+            embs = []
+            for face in group_faces:
+                try:
+                    if os.path.exists(face.embedding_path):
+                        embs.append(np.load(face.embedding_path))
+                except Exception as e:
+                    logger.error(f"Error loading embedding for centroid calc: {e}")
+            if embs:
+                mean_emb = np.mean(embs, axis=0)
+                norm = np.linalg.norm(mean_emb)
+                if norm > 0:
+                    mean_emb = mean_emb / norm
+                centroids[label] = mean_emb
+
+        # Merge highly similar clusters (centroid cosine similarity >= 0.80)
+        merge_map = {}  # maps label -> target_label
+        labels_list = list(centroids.keys())
+        for i in range(len(labels_list)):
+            l1 = labels_list[i]
+            if l1 in merge_map:
+                continue
+            for j in range(i + 1, len(labels_list)):
+                l2 = labels_list[j]
+                if l2 in merge_map:
+                    continue
+                similarity = float(np.dot(centroids[l1], centroids[l2]))
+                if similarity >= 0.80:
+                    merge_map[l2] = l1
+                    logger.info(f"HDBSCAN auto-merge: merging cluster label {l2} into {l1} (similarity: {similarity:.3f})")
+
+        # Assign stable cluster IDs to database records
+        cluster_counts = {}
+        for face, label in zip(valid_faces, labels):
+            if label == -1:
+                # Keep noise face as its existing cluster_id if it had one, or assign it a fallback one
+                if not face.cluster_id:
+                    face.cluster_id = f"unknown_{uuid.uuid4().hex[:8]}"
+                    db.add(face)
                 continue
             
-            cluster_id = f"cluster_{label}"
+            # Resolve auto-merging
+            target_label = label
+            while target_label in merge_map:
+                target_label = merge_map[target_label]
+
+            cluster_id = f"cluster_{target_label}"
             face.cluster_id = cluster_id
             db.add(face)
-            
             cluster_counts[cluster_id] = cluster_counts.get(cluster_id, 0) + 1
 
         db.commit()
 
         # Run best image selection for each created cluster
         for cluster_id in cluster_counts.keys():
-            self.select_best_cluster_images(db, cluster_id)
+            try:
+                self.select_best_cluster_images(db, cluster_id)
+            except Exception as e:
+                logger.error(f"Error selecting best images for cluster {cluster_id}: {e}")
 
         logger.info(f"Auto-clustering created {len(cluster_counts)} clusters: {cluster_counts}")
         return {"processed": len(valid_faces), "clusters_created": len(cluster_counts), "clusters": cluster_counts}

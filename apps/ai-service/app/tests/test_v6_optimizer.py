@@ -14,7 +14,7 @@ from app.services.weekly_optimizer import weekly_face_optimizer
 def test_weekly_optimizer_and_profile_versioning(db_session, monkeypatch):
     """Test consolidating learning candidates, version incrementing, and updating profile state."""
     # Seed Student
-    student = Student(name="Manjunatha R", usn="1VI23CS001", department="CSE", semester=6, section="A")
+    student = Student(name="Manjunatha R", usn="OPT_USN001", department="CSE", semester=6, section="A")
     db_session.add(student)
     db_session.commit()
 
@@ -30,8 +30,8 @@ def test_weekly_optimizer_and_profile_versioning(db_session, monkeypatch):
     db_session.commit()
 
     # Add 2 learning candidate images to database queue
-    cand1 = CandidateImage(student_id=student.id, image_path="c1.jpg", quality_score=88.0, embedding_path="c1.npy")
-    cand2 = CandidateImage(student_id=student.id, image_path="c2.jpg", quality_score=90.0, embedding_path="c2.npy")
+    cand1 = CandidateImage(student_id=student.id, image_path="c1.jpg", quality_score=88.0, embedding_path="c1.npy", status="APPROVED")
+    cand2 = CandidateImage(student_id=student.id, image_path="c2.jpg", quality_score=90.0, embedding_path="c2.npy", status="APPROVED")
     db_session.add(cand1)
     db_session.add(cand2)
     db_session.commit()
@@ -76,7 +76,7 @@ def test_weekly_optimizer_and_profile_versioning(db_session, monkeypatch):
 
 def test_rollback_support(db_session, monkeypatch):
     """Test rolling back student profile versions."""
-    student = Student(name="Manjunatha R", usn="1VI23CS001", department="CSE")
+    student = Student(name="Manjunatha R", usn="OPT_USN002", department="CSE")
     db_session.add(student)
     db_session.commit()
 

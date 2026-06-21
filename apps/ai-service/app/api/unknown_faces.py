@@ -27,6 +27,19 @@ logger = logging.getLogger("smartcampus.unknown_faces_api")
 router = APIRouter(prefix=f"{settings.api_prefix}/unknown-faces", tags=["Teacher Review Dashboard"])
 
 
+def get_relative_storage_path(absolute_path: str) -> str:
+    if not absolute_path:
+        return ""
+    abs_norm = os.path.normpath(absolute_path)
+    idx = abs_norm.find("storage" + os.sep)
+    if idx != -1:
+        return abs_norm[idx:].replace(os.sep, "/")
+    idx_slash = abs_norm.find("storage/")
+    if idx_slash != -1:
+        return abs_norm[idx_slash:]
+    return absolute_path
+
+
 # Schemas
 class EnrollUnknownRequest(BaseModel):
     cluster_id: str = Field(..., description="The cluster ID to enroll.")
@@ -53,79 +66,66 @@ class SecurityAlertRequest(BaseModel):
 
 @router.get("")
 @router.get("/")
-def get_unknown_face_dashboard(db: Session = Depends(get_db)):
-    """Fetch collected unknown face clusters with AI Suggested Matches for the Review Dashboard."""
-    # Find all distinct unassigned clusters
-    results = (
-        db.query(UnknownFace.cluster_id)
-        .filter(UnknownFace.cluster_id.isnot(None))
-        .distinct()
+def get_unknown_faces_paginated(
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1),
+    db: Session = Depends(get_db)
+):
+    """Fetch paginated individual unknown face detections."""
+    total = db.query(UnknownFace).count()
+    offset = (page - 1) * limit
+    faces = (
+        db.query(UnknownFace)
+        .order_by(UnknownFace.created_at.desc())
+        .offset(offset)
+        .limit(limit)
         .all()
     )
 
-    dashboard_items = []
-    for row in results:
-        cluster_id = row.cluster_id
-        faces = db.query(UnknownFace).filter(UnknownFace.cluster_id == cluster_id).all()
-        if not faces:
-            continue
-
-        # Calculate stats
-        img_count = len(faces)
-        avg_quality = sum(f.quality_score for f in faces) / img_count
-        latest_face = max(faces, key=lambda f: f.created_at)
-
-        # AI Suggested Matching:
-        # Load the raw embeddings, compute average, and query FAISS
+    data = []
+    for face in faces:
+        # AI Suggested Matching (using individual face embedding)
         suggested_match = None
-        embeddings = []
-        for face in faces:
-            if os.path.exists(face.embedding_path):
-                try:
-                    emb = np.load(face.embedding_path)
-                    embeddings.append(emb)
-                except Exception:
-                    pass
+        if face.embedding_path and os.path.exists(face.embedding_path):
+            try:
+                emb = np.load(face.embedding_path)
+                match = faiss_service.search_face(emb, threshold=0.65)
+                if match:
+                    s_usn, similarity = match
+                    if similarity < 0.90:
+                        student = db.query(Student).filter(Student.usn == s_usn).first()
+                        if student:
+                            suggested_match = {
+                                "usn": student.usn,
+                                "name": student.name,
+                                "confidence": round(similarity * 100.0, 1)
+                            }
+            except Exception as e:
+                logger.debug(f"Failed to check suggestion: {e}")
 
-        if embeddings:
-            # Re-normalize and average
-            avg_emb = np.mean(embeddings, axis=0)
-            norm = np.linalg.norm(avg_emb)
-            if norm > 0:
-                avg_emb = avg_emb / norm
-            
-            # Query FAISS (threshold of 0.65 as specified for suggested matching)
-            match = faiss_service.search_face(avg_emb, threshold=0.65)
-            if match:
-                s_usn, similarity = match
-                # Only suggest if it lies in [0.65, 0.90) confidence window (which requires verification or suggestion)
-                if similarity < 0.90:
-                    student = db.query(Student).filter(Student.usn == s_usn).first()
-                    if student:
-                        suggested_match = {
-                            "usn": student.usn,
-                            "name": student.name,
-                            "confidence": round(similarity * 100.0, 1)  # percentage
-                        }
-
-        # Select preview path
-        # Check cluster previews first (e.g. front.jpg)
-        cluster_preview_path = f"storage/clusters/cluster_{cluster_id}/front.jpg"
-        if not os.path.exists(cluster_preview_path):
-            cluster_preview_path = latest_face.image_path
-
-        dashboard_items.append({
-            "cluster_id": cluster_id,
-            "images_count": img_count,
-            "average_quality": round(avg_quality, 1),
-            "preview_image": cluster_preview_path,
-            "detected_at": latest_face.created_at.isoformat(),
+        rel_img_path = get_relative_storage_path(face.image_path)
+        data.append({
+            "id": face.id,
+            "cluster_id": face.cluster_id or f"unknown_{face.id}",
+            "image_path": rel_img_path,
+            "preview_image": rel_img_path,
+            "quality_score": round(face.quality_score, 1),
+            "camera_id": face.camera_id or "Unknown",
+            "is_resolved": face.is_resolved or False,
+            "status": "Resolved" if face.is_resolved else "Unresolved",
+            "created_at": face.created_at.isoformat(),
+            "detected_at": face.created_at.isoformat(),
             "suggested_match": suggested_match
         })
 
-    # Sort by detection time (newest first)
-    dashboard_items.sort(key=lambda x: x["detected_at"], reverse=True)
-    return dashboard_items
+    import math
+    return {
+        "data": data,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "total_pages": math.ceil(total / limit) if limit > 0 else 0
+    }
 
 
 @router.post("/enroll")
@@ -265,4 +265,82 @@ def trigger_security_alert(request: SecurityAlertRequest, db: Session = Depends(
     return {
         "status": "success",
         "message": f"Security alert successfully triggered for cluster '{cluster_id}' at location '{location}'."
+    }
+
+
+@router.get("/{id}")
+def get_unknown_face_by_id(id: int, db: Session = Depends(get_db)):
+    """Fetch details of a single unknown face record."""
+    face = db.query(UnknownFace).filter(UnknownFace.id == id).first()
+    if not face:
+        raise HTTPException(status_code=404, detail="Unknown face not found.")
+
+    suggested_match = None
+    if face.embedding_path and os.path.exists(face.embedding_path):
+        try:
+            emb = np.load(face.embedding_path)
+            match = faiss_service.search_face(emb, threshold=0.65)
+            if match:
+                s_usn, similarity = match
+                if similarity < 0.90:
+                    student = db.query(Student).filter(Student.usn == s_usn).first()
+                    if student:
+                        suggested_match = {
+                            "usn": student.usn,
+                            "name": student.name,
+                            "confidence": round(similarity * 100.0, 1)
+                        }
+        except Exception:
+            pass
+
+    rel_img_path = get_relative_storage_path(face.image_path)
+    return {
+        "id": face.id,
+        "cluster_id": face.cluster_id or f"unknown_{face.id}",
+        "image_path": rel_img_path,
+        "preview_image": rel_img_path,
+        "quality_score": round(face.quality_score, 1),
+        "camera_id": face.camera_id or "Unknown",
+        "is_resolved": face.is_resolved or False,
+        "status": "Resolved" if face.is_resolved else "Unresolved",
+        "created_at": face.created_at.isoformat(),
+        "detected_at": face.created_at.isoformat(),
+        "suggested_match": suggested_match
+    }
+
+
+@router.delete("/{id}")
+def delete_unknown_face(id: int, db: Session = Depends(get_db)):
+    """Delete an unknown face record and its associated filesystem assets."""
+    face = db.query(UnknownFace).filter(UnknownFace.id == id).first()
+    if not face:
+        raise HTTPException(status_code=404, detail="Unknown face not found.")
+
+    # 1. Delete associated crop image and embedding vector files
+    if face.image_path and os.path.exists(face.image_path):
+        try:
+            os.remove(face.image_path)
+        except Exception as e:
+            logger.error(f"Error removing image file {face.image_path}: {e}")
+
+    if face.embedding_path and os.path.exists(face.embedding_path):
+        try:
+            os.remove(face.embedding_path)
+        except Exception as e:
+            logger.error(f"Error removing embedding file {face.embedding_path}: {e}")
+
+    # 2. Delete database record
+    db.delete(face)
+    db.commit()
+
+    # Log action
+    security_service.log_audit(
+        db,
+        action="DELETE_UNKNOWN_FACE",
+        details=f"Unknown face ID {id} ignored/deleted."
+    )
+
+    return {
+        "status": "success",
+        "message": f"Unknown face detection {id} ignored and purged successfully."
     }

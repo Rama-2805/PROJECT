@@ -121,7 +121,6 @@ services:
       context: ./apps/api
       dockerfile: Dockerfile
       target: production
-    container_name: smartcampus-api
     restart: unless-stopped
     networks: [smartcampus-net]
     depends_on:
@@ -159,7 +158,6 @@ services:
       context: ./apps/web
       dockerfile: Dockerfile
       target: production
-    container_name: smartcampus-web
     restart: unless-stopped
     networks: [smartcampus-net]
     depends_on:
@@ -220,7 +218,6 @@ services:
     build:
       context: ./apps/ai-service
       dockerfile: Dockerfile
-    container_name: smartcampus-ai-worker
     restart: unless-stopped
     networks: [smartcampus-net]
     depends_on:
@@ -243,7 +240,6 @@ services:
     build:
       context: ./apps/edge-agent
       dockerfile: Dockerfile
-    container_name: smartcampus-edge-agent
     restart: unless-stopped
     networks: [smartcampus-net]
     depends_on:

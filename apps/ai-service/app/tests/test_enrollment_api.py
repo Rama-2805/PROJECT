@@ -49,8 +49,8 @@ def test_unknown_faces_and_clusters_endpoints(client, db_session, monkeypatch):
     response = client.get("/api/v1/unknown-faces")
     assert response.status_code == 200
     data = response.json()
-    assert len(data) == 1
-    assert data[0]["cluster_id"] == "cluster_test"
+    assert len(data["data"]) == 1
+    assert data["data"][0]["cluster_id"] == "cluster_test"
 
     # 2. Fetch all clusters
     response = client.get("/api/v1/clusters")
@@ -58,7 +58,7 @@ def test_unknown_faces_and_clusters_endpoints(client, db_session, monkeypatch):
     clusters = response.json()
     assert len(clusters) == 1
     assert clusters[0]["cluster_id"] == "cluster_test"
-    assert clusters[0]["images"] == 1
+    assert clusters[0]["appearance_count"] == 1
     assert clusters[0]["quality"] == 88.5
 
     # 3. Fetch cluster details
@@ -67,7 +67,7 @@ def test_unknown_faces_and_clusters_endpoints(client, db_session, monkeypatch):
     details = response.json()
     assert details["cluster_id"] == "cluster_test"
     assert details["statistics"]["total_images"] == 1
-    assert "front" in details["best_images"]
+    assert len(details["faces"]) == 1
 
 
 def test_enroll_student_flow(client, db_session, monkeypatch):
@@ -112,7 +112,7 @@ def test_enroll_student_flow(client, db_session, monkeypatch):
     enroll_data = {
         "cluster_id": "cluster_enroll",
         "name": "Manjunatha R",
-        "usn": "1VI23CS001",
+        "usn": "ENROLL001",
         "department": "CSE",
         "semester": 6,
         "section": "A",
@@ -120,12 +120,14 @@ def test_enroll_student_flow(client, db_session, monkeypatch):
 
     # Trigger enrollment via the Teacher Review Dashboard's enroll action
     response = client.post("/api/v1/unknown-faces/enroll", json=enroll_data)
+    if response.status_code != 200:
+        print("API ENROLL ERROR:", response.status_code, response.json())
     assert response.status_code == 200
     res_data = response.json()
     assert res_data["status"] == "success"
 
     # Verify student is in DB
-    student = db_session.query(Student).filter(Student.usn == "1VI23CS001").first()
+    student = db_session.query(Student).filter(Student.usn == "ENROLL001").first()
     assert student is not None
     assert student.name == "Manjunatha R"
 

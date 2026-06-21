@@ -80,12 +80,7 @@ function LoginContent() {
     setIsLoading(true);
     setError(null);
 
-    // Basic domain validation
-    if (!email.endsWith(".edu.in")) {
-      setIsLoading(false);
-      setError("AccessDenied");
-      return;
-    }
+    // Domain validation removed to allow seeded accounts like @smartcampus.edu
 
     if (isDemoMode()) {
       try {

@@ -12,6 +12,11 @@ import { useUIStore } from "@/store/uiStore";
 import type { DashboardData } from "@/lib/mock/dashboard";
 import { getDashboardData, getRecentEvents } from "@/lib/mock/dashboard";
 import type { ActivityEvent } from "@/lib/mock/dashboard";
+import { useDemoMode, isDemoMode as checkDemoMode } from "@/lib/demo-mode";
+import { dashboardApi } from "@/lib/api/dashboardApi";
+import { GlassCard } from "@/components/ui/GlassCard";
+import { Button } from "@/components/ui/Button";
+
 import { 
   AreaChart, 
   Area, 
@@ -58,16 +63,93 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
 
+  const { isDemoMode, simulateEvent, activeSimulations, toggleSimulation } = useDemoMode();
+  const [rebuildingFaiss, setRebuildingFaiss] = useState(false);
+  const [faissProgress, setFaissProgress] = useState(0);
+
+  const triggerFaissRebuild = () => {
+    setRebuildingFaiss(true);
+    setFaissProgress(0);
+    const interval = setInterval(() => {
+      setFaissProgress((p) => {
+        if (p >= 100) {
+          clearInterval(interval);
+          setTimeout(() => setRebuildingFaiss(false), 800);
+          simulateEvent("SYSTEM_OPTIMIZED", {
+            description: "Centroid calculations complete. Vector spaces aligned (+1.4% hit-rate)",
+          });
+          return 100;
+        }
+        return p + 10;
+      });
+    }, 200);
+  };
+
   useEffect(() => {
     setMounted(true);
     async function load() {
-      const [dashData, recentEvents] = await Promise.all([
-        getDashboardData(),
-        getRecentEvents(),
-      ]);
-      setData(dashData);
-      setEvents(recentEvents);
-      setLoading(false);
+      const demo = checkDemoMode();
+      if (demo) {
+        const [dashData, recentEvents] = await Promise.all([
+          getDashboardData(),
+          getRecentEvents(),
+        ]);
+        setData(dashData);
+        setEvents(recentEvents);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const res = await dashboardApi.getAdminSummary();
+        if (res && res.success && res.data) {
+          const apiData = res.data;
+          setData({
+            stats: {
+              totalStudents: apiData.total_students,
+              attendanceToday: apiData.attendance_today,
+              aiRecognitionAccuracy: apiData.ai_recognition_accuracy,
+              activeClassrooms: apiData.active_classrooms,
+              connectedDevices: { online: apiData.connected_devices_online, total: apiData.connected_devices_total },
+              monthlyAttendanceGrowth: apiData.monthly_attendance_growth,
+              averageEngagement: apiData.average_engagement,
+              pendingAlerts: apiData.pending_alerts,
+            },
+            recentEvents: apiData.recent_events.map(e => ({
+              ...e,
+              timestamp: new Date(e.timestamp)
+            })),
+            aiModels: apiData.ai_models.map(m => ({
+              ...m,
+              status: m.status as "online" | "offline" | "degraded"
+            })),
+            greeting: apiData.greeting,
+            aiSummary: apiData.ai_summary
+          });
+          setEvents(apiData.recent_events.map(e => ({
+            ...e,
+            timestamp: new Date(e.timestamp)
+          })));
+        } else {
+          console.warn("Dashboard API returned failure. Falling back to mocks.");
+          const [dashData, recentEvents] = await Promise.all([
+            getDashboardData(),
+            getRecentEvents(),
+          ]);
+          setData(dashData);
+          setEvents(recentEvents);
+        }
+      } catch (err) {
+        console.error("Failed to fetch live admin stats. Falling back to mocks.", err);
+        const [dashData, recentEvents] = await Promise.all([
+          getDashboardData(),
+          getRecentEvents(),
+        ]);
+        setData(dashData);
+        setEvents(recentEvents);
+      } finally {
+        setLoading(false);
+      }
     }
     load();
   }, []);
@@ -97,15 +179,77 @@ export default function DashboardPage() {
         animate="visible"
       >
         {/* Greeting */}
-        <motion.div variants={fadeInUp} className="border-b border-glass-border pb-4 flex flex-col items-start justify-start gap-1">
-          <AnimatedText
-            text={data.greeting}
-            className="items-start justify-start animate-gradient-shift"
-            textClassName="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-text-primary via-text-primary to-text-secondary bg-clip-text text-transparent tracking-tight text-left"
-            underlineClassName="text-blue-500/80 dark:text-blue-400/80"
-          />
-          <p className="text-sm text-text-secondary mt-4 font-medium">{data.aiSummary}</p>
+        <motion.div variants={fadeInUp} className="border-b border-glass-border pb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div className="flex flex-col items-start justify-start gap-1">
+            <AnimatedText
+              text={data.greeting}
+              className="items-start justify-start animate-gradient-shift"
+              textClassName="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-text-primary via-text-primary to-text-secondary bg-clip-text text-transparent tracking-tight text-left"
+              underlineClassName="text-blue-500/80 dark:text-blue-400/80"
+            />
+            <p className="text-sm text-text-secondary mt-4 font-medium">{data.aiSummary}</p>
+          </div>
+          {isDemoMode && (
+            <span className="px-2 py-1 rounded bg-warning/20 border border-warning/30 text-warning text-xs font-bold font-mono">
+              VIVA PRESENTATION MODE ACTIVE
+            </span>
+          )}
         </motion.div>
+
+        {/* Viva Demo Simulator Panel */}
+        {isDemoMode && (
+          <motion.div variants={fadeInUp}>
+            <GlassCard className="p-4 border-warning/20 bg-warning/5" subtle>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-warning mb-3 font-mono">Viva Demonstration Simulation Control Panel</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    const names = ["Siddharth Saxena", "Sneha Reddy", "Arjun Sharma", "Shreya Agarwal"];
+                    const name = names[Math.floor(Math.random() * names.length)];
+                    simulateEvent("ATTENDANCE_DETECTED", {
+                      studentId: "CSE2026002",
+                      studentName: name,
+                      confidence: 0.96,
+                    });
+                  }}
+                >
+                  Simulate Live Attendance
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    simulateEvent("UNKNOWN_PERSON", {
+                      confidence: 0.81,
+                    });
+                  }}
+                >
+                  Simulate Unknown Face Capture
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    simulateEvent("DEVICE_HEARTBEAT", {
+                      deviceId: "DEVICE_CSE_003",
+                      status: "WARNING",
+                    });
+                  }}
+                >
+                  Simulate CCTV Node Warning
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={triggerFaissRebuild}
+                  disabled={rebuildingFaiss}
+                >
+                  {rebuildingFaiss ? `Optimizing FAISS ${faissProgress}%` : "Trigger FAISS Index Rebuild"}
+                </Button>
+              </div>
+            </GlassCard>
+          </motion.div>
+        )}
 
         {/* KPI Metrics */}
         <motion.div

@@ -15,12 +15,15 @@ from .api.health import router as cctv_health_router
 from .api.unknown_faces import router as unknown_faces_router
 from .api.clusters import router as clusters_router
 from .api.enrollment import router as cctv_enrollment_router
+from .api.video_enrollment import router as video_enrollment_router
 from .api.attendance import router as cctv_attendance_router
 from .api.optimizer import router as optimizer_router
 from .api.analytics import router as analytics_router
 from .behavior.routes import router as behavior_router
 from .grounding.routes import router as grounding_router
 from .api.camera import router as camera_router
+from .dashboard.routes import router as dashboard_router
+from .api.learning import router as learning_router
 
 
 @asynccontextmanager
@@ -36,10 +39,37 @@ async def lifespan(app: FastAPI):
 
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("smartcampus.main")
+    
+    # Force smartcampus loggers to output to stdout/stderr
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    
+    sc_logger = logging.getLogger("smartcampus")
+    sc_logger.setLevel(logging.INFO)
+    if not sc_logger.handlers:
+        sc_logger.addHandler(handler)
 
     # Create all database tables on startup
     print(f"[{settings.app_name}] Initializing database tables...")
     Base.metadata.create_all(bind=engine)
+
+    # Safely perform column migrations
+    from sqlalchemy import text, inspect
+    try:
+        inspector = inspect(engine)
+        if "candidate_images" in inspector.get_table_names():
+            columns = [col["name"] for col in inspector.get_columns("candidate_images")]
+            with engine.begin() as conn:
+                if "status" not in columns:
+                    print(f"[{settings.app_name}] Adding status column to candidate_images table...")
+                    conn.execute(text("ALTER TABLE candidate_images ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'PENDING';"))
+                if "similarity_score" not in columns:
+                    print(f"[{settings.app_name}] Adding similarity_score column to candidate_images table...")
+                    conn.execute(text("ALTER TABLE candidate_images ADD COLUMN similarity_score DOUBLE PRECISION;"))
+    except Exception as db_err:
+        logger.error(f"Failed to migrate candidate_images table columns: {db_err}")
 
     # Verify and auto-download InsightFace models
     from .services.face_detector import check_and_download_models
@@ -113,12 +143,20 @@ app.include_router(cctv_health_router)
 app.include_router(unknown_faces_router)
 app.include_router(clusters_router)
 app.include_router(cctv_enrollment_router)
+app.include_router(video_enrollment_router)
 app.include_router(cctv_attendance_router)
 app.include_router(optimizer_router)
 app.include_router(analytics_router)
 app.include_router(behavior_router)
 app.include_router(grounding_router)
 app.include_router(camera_router)
+app.include_router(dashboard_router)
+app.include_router(learning_router)
+
+# Serve storage folder statically
+from fastapi.staticfiles import StaticFiles
+app.mount("/storage", StaticFiles(directory="storage"), name="storage")
+
 
 
 # Global WebSocket event connection

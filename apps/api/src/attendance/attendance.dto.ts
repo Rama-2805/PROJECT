@@ -11,7 +11,7 @@ export class StartSessionDto {
 export class IngestAttendanceDto {
   @IsString() sessionId: string;
   @IsString() studentId: string;
-  @IsString() studentName: string;
+  @IsOptional() @IsString() studentName?: string;
   @IsNumber() confidence: number;
   @IsOptional() @IsString() cameraId?: string;
   @IsOptional() @IsString() method?: string;

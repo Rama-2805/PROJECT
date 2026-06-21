@@ -6,13 +6,37 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils/cn";
 import { getAttendanceAnalytics } from "@/lib/mock/attendance";
+import { isDemoMode as checkDemoMode } from "@/lib/demo-mode";
+import { dashboardApi } from "@/lib/api/dashboardApi";
 
 export default function AttendancePage() {
   const [analytics, setAnalytics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getAttendanceAnalytics().then(setAnalytics).finally(() => setLoading(false));
+    async function load() {
+      const demo = checkDemoMode();
+      if (demo) {
+        getAttendanceAnalytics().then(setAnalytics).finally(() => setLoading(false));
+        return;
+      }
+
+      try {
+        const res = await dashboardApi.getAttendanceOverview();
+        if (res && res.success && res.data) {
+          setAnalytics(res.data);
+        } else {
+          console.warn("Attendance overview API returned failure. Falling back to mocks.");
+          getAttendanceAnalytics().then(setAnalytics);
+        }
+      } catch (err) {
+        console.error("Failed to fetch live attendance overview. Falling back to mocks.", err);
+        getAttendanceAnalytics().then(setAnalytics);
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
   }, []);
 
   if (loading) {

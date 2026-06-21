@@ -1,11 +1,14 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils/cn";
 import { getLiveMonitoringData, generateLiveEvent, type LiveMonitoringData, type LiveAttendanceEvent } from "@/lib/mock/attendance";
+import { isDemoMode } from "@/lib/demo-mode";
+import { api } from "@/lib/api/client";
+import { useAuthStore } from "@/lib/store/auth";
 
 export default function LiveMonitoringPage() {
   const [data, setData] = useState<LiveMonitoringData | null>(null);
@@ -13,34 +16,231 @@ export default function LiveMonitoringPage() {
   const [loading, setLoading] = useState(true);
   const [sessionActive, setSessionActive] = useState(false);
   const [eventFilter, setEventFilter] = useState<string>("all");
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  
+  const user = useAuthStore((s) => s.user);
 
+  // Initialize query parameters and check active session
   useEffect(() => {
-    getLiveMonitoringData().then((d) => {
-      setData(d);
-      setEvents(d.events);
-      setLoading(false);
-    });
+    const params = new URLSearchParams(window.location.search);
+    const querySessionId = params.get("sessionId");
+    if (querySessionId) {
+      setActiveSessionId(querySessionId);
+      setSessionActive(true);
+    }
   }, []);
 
-  // Simulate real-time events
+  // Sync session active/inactive data
+  useEffect(() => {
+    if (isDemoMode()) {
+      getLiveMonitoringData().then((d) => {
+        setData(d);
+        setEvents(d.events);
+        setLoading(false);
+      });
+      return;
+    }
+
+    const fetchLiveData = async () => {
+      if (!activeSessionId) {
+        try {
+          const res = await api.get<any>("/attendance/records?limit=1");
+          if (res.success && res.data?.data?.length > 0) {
+            const latestSession = res.data.data[0].session;
+            if (latestSession && latestSession.status === "ACTIVE") {
+              setActiveSessionId(latestSession.sessionId);
+              setSessionActive(true);
+            }
+          }
+        } catch (err) {
+          console.error("Error looking up active session:", err);
+        }
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const res = await api.get<any>(`/attendance/live?sessionId=${activeSessionId}`);
+        if (res.success && res.data) {
+          const s = res.data;
+          setData({
+            session: {
+              sessionId: s.sessionId,
+              classroomId: s.classroomId,
+              classroomName: s.classroomName,
+              subjectName: s.subjectName,
+              teacherName: s.teacherName,
+              status: s.status as any,
+              totalPresent: s.totalPresent,
+              totalStudents: s.totalStudents,
+              startedAt: s.startedAt,
+              recognitionAccuracy: 99.1,
+              unknownFaces: data?.session?.unknownFaces || 0,
+            },
+            events: s.recentEvents.map((e: any) => ({
+              type: e.type,
+              studentId: e.studentId,
+              studentName: e.studentName,
+              confidence: e.confidence,
+              time: e.time,
+            })),
+            presentStudents: s.presentStudents,
+            cameraStatus: s.status === "ACTIVE" ? "ONLINE" : "OFFLINE",
+            fps: s.status === "ACTIVE" ? 28 : 0,
+          });
+          setEvents(s.recentEvents.map((e: any) => ({
+            type: e.type,
+            studentId: e.studentId,
+            studentName: e.studentName,
+            confidence: e.confidence,
+            time: e.time,
+          })));
+        }
+      } catch (err) {
+        console.error("Error fetching live status:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchLiveData();
+
+    let interval: ReturnType<typeof setInterval>;
+    if (sessionActive && activeSessionId) {
+      interval = setInterval(fetchLiveData, 5000);
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [sessionActive, activeSessionId]);
+
+  // Simulate real-time events (Demo Mode) or handle WebSocket streams (Live Mode)
   useEffect(() => {
     if (!sessionActive || !data) return;
 
-    const interval = setInterval(() => {
-      const newEvent = generateLiveEvent();
-      setEvents((prev) => [newEvent, ...prev].slice(0, 50));
+    if (isDemoMode()) {
+      const interval = setInterval(() => {
+        const newEvent = generateLiveEvent();
+        setEvents((prev) => [newEvent, ...prev].slice(0, 50));
 
-      // Update attendance counts
-      if (newEvent.type === "ATTENDANCE_DETECTED") {
-        setData((prev) => prev ? {
-          ...prev,
-          session: { ...prev.session, totalPresent: prev.session.totalPresent + 1 },
-        } : prev);
+        if (newEvent.type === "ATTENDANCE_DETECTED") {
+          setData((prev) => prev ? {
+            ...prev,
+            session: { ...prev.session, totalPresent: prev.session.totalPresent + 1 },
+          } : prev);
+        }
+      }, 3000 + Math.random() * 4000);
+
+      return () => clearInterval(interval);
+    } else {
+      const wsUrl = process.env.NEXT_PUBLIC_AI_WS_URL || "ws://localhost:8000/api/v1/ws";
+      const socket = new WebSocket(wsUrl);
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          const eventType = payload.event;
+          const eventData = payload.data;
+
+          if (eventType === "ATTENDANCE_MARKED") {
+            if (eventData.class_id === activeSessionId) {
+              const newEvent: LiveAttendanceEvent = {
+                type: "ATTENDANCE_DETECTED",
+                studentId: eventData.usn,
+                studentName: eventData.name,
+                confidence: eventData.confidence,
+                time: eventData.time,
+              };
+
+              setEvents((prev) => [newEvent, ...prev].slice(0, 50));
+
+              setData((prev) => {
+                if (!prev) return prev;
+                const alreadyPresent = prev.presentStudents.some((s) => s.id === eventData.usn);
+                const updatedPresent = alreadyPresent
+                  ? prev.presentStudents
+                  : [{ id: eventData.usn, name: eventData.name, confidence: eventData.confidence }, ...prev.presentStudents];
+                
+                return {
+                  ...prev,
+                  session: {
+                    ...prev.session,
+                    totalPresent: updatedPresent.length,
+                  },
+                  presentStudents: updatedPresent,
+                };
+              });
+            }
+          } else if (eventType === "UNKNOWN_FACE") {
+            const newEvent: LiveAttendanceEvent = {
+              type: "UNKNOWN_PERSON",
+              confidence: eventData.possible_match?.confidence || 0.0,
+              time: new Date(eventData.timestamp).toLocaleTimeString(),
+            };
+            setEvents((prev) => [newEvent, ...prev].slice(0, 50));
+
+            setData((prev) => prev ? {
+              ...prev,
+              session: {
+                ...prev.session,
+                unknownFaces: (prev.session.unknownFaces || 0) + 1,
+              }
+            } : prev);
+          }
+        } catch (err) {
+          console.error("Failed to parse WebSocket message:", err);
+        }
+      };
+
+      return () => {
+        socket.close();
+      };
+    }
+  }, [sessionActive, data, activeSessionId]);
+
+  const handleToggleSession = async () => {
+    if (isDemoMode()) {
+      setSessionActive(!sessionActive);
+      return;
+    }
+
+    if (sessionActive && activeSessionId) {
+      try {
+        setLoading(true);
+        const res = await api.post<any>(`/attendance/sessions/${activeSessionId}/end`);
+        if (res.success) {
+          setSessionActive(false);
+          setActiveSessionId(null);
+          window.history.pushState({}, "", window.location.pathname);
+        }
+      } catch (err) {
+        console.error("Error ending session:", err);
+      } finally {
+        setLoading(false);
       }
-    }, 3000 + Math.random() * 4000);
-
-    return () => clearInterval(interval);
-  }, [sessionActive, data]);
+    } else {
+      try {
+        setLoading(true);
+        const res = await api.post<any>("/attendance/sessions/start", {
+          institutionId: user?.institutionId || "inst-1",
+          classroomId: "room-023",
+          teacherId: user?.id || "teacher-1",
+          subjectName: "Data Structures & Algorithms",
+          totalStudents: 50,
+        });
+        if (res.success && res.data) {
+          setActiveSessionId(res.data.sessionId);
+          setSessionActive(true);
+          window.history.pushState({}, "", `${window.location.pathname}?sessionId=${res.data.sessionId}`);
+        }
+      } catch (err) {
+        console.error("Error starting session:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+  };
 
   const filteredEvents = eventFilter === "all"
     ? events
@@ -109,7 +309,7 @@ export default function LiveMonitoringPage() {
           <Button
             size="sm"
             variant={sessionActive ? "secondary" : "primary"}
-            onClick={() => setSessionActive(!sessionActive)}
+            onClick={handleToggleSession}
           >
             {sessionActive ? (
               <>
@@ -126,34 +326,37 @@ export default function LiveMonitoringPage() {
         </div>
       </div>
 
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Camera Feed */}
         <div className="lg:col-span-2 space-y-6">
           {/* Camera Feed */}
           <GlassCard noPadding className="overflow-hidden">
             <div className="relative aspect-video bg-gradient-to-br from-bg-secondary to-bg-primary flex items-center justify-center">
-              {/* Simulated Camera Feed */}
-              <div className="absolute inset-0 flex items-center justify-center">
-                <div className="text-center">
-                  <div className={cn(
-                    "h-24 w-24 rounded-full bg-gradient-to-br from-ai-blue/20 to-ai-purple/20 mx-auto mb-4 flex items-center justify-center",
-                    sessionActive && "animate-pulse",
-                  )}>
-                    <svg className={cn("w-10 h-10", sessionActive ? "text-ai-blue" : "text-text-dim")} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" />
-                    </svg>
-                  </div>
-                  <p className="text-sm text-text-muted">
-                    {sessionActive ? "Camera Feed Active — AI Processing" : "Camera Inactive"}
-                  </p>
-                  {sessionActive && (
-                    <div className="flex items-center justify-center gap-2 mt-2">
-                      <span className="h-1.5 w-1.5 rounded-full bg-success animate-glow-pulse" />
-                      <span className="text-[10px] text-success">{data?.cameraStatus} • {data?.fps} FPS</span>
+              {/* Simulated or Real Camera Feed */}
+              {sessionActive ? (
+                <img
+                  src={`${process.env.NEXT_PUBLIC_AI_HTTP_URL || "http://localhost:8000"}/api/v1/camera/stream?camera_id=${data?.session.classroomId || "room-023"}`}
+                  className="w-full h-full object-cover"
+                  alt="Live Camera Monitoring Feed"
+                  onError={(e) => {
+                    console.error("Camera stream load error");
+                  }}
+                />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="text-center">
+                    <div className="h-24 w-24 rounded-full bg-gradient-to-br from-ai-blue/20 to-ai-purple/20 mx-auto mb-4 flex items-center justify-center">
+                      <svg className="w-10 h-10 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 15a4.5 4.5 0 004.5 4.5H18a3.75 3.75 0 001.332-7.257 3 3 0 00-3.758-3.848 5.25 5.25 0 00-10.233 2.33A4.502 4.502 0 002.25 15z" />
+                      </svg>
                     </div>
-                  )}
+                    <p className="text-sm text-text-muted">
+                      Camera Inactive
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* AI Overlay Indicators */}
               {sessionActive && (

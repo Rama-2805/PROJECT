@@ -52,7 +52,7 @@ class WeeklyFaceOptimizer:
 
         for student in students:
             # Check for new candidate images
-            candidates = db.query(CandidateImage).filter(CandidateImage.student_id == student.id).all()
+            candidates = db.query(CandidateImage).filter(CandidateImage.student_id == student.id, CandidateImage.status == "APPROVED").all()
             if not candidates:
                 continue
 
@@ -276,18 +276,23 @@ class WeeklyFaceOptimizer:
     def _rebuild_faiss_index(self, db: Session):
         """Internal helper to load all active profiles and rebuild FAISS index."""
         active_embeddings = []
-        all_active_profiles = db.query(FaceProfile).filter(FaceProfile.is_active == True).all()
+        
+        # Optimize N+1 queries: join Student, FaceProfile, and Embedding tables in one call
+        active_data = (
+            db.query(Student.usn, Embedding.vector_path)
+            .join(FaceProfile, Student.id == FaceProfile.student_id)
+            .join(Embedding, FaceProfile.id == Embedding.face_profile_id)
+            .filter(FaceProfile.is_active == True)
+            .all()
+        )
 
-        for profile in all_active_profiles:
-            student = db.query(Student).filter(Student.id == profile.student_id).first()
-            emb_record = db.query(Embedding).filter(Embedding.face_profile_id == profile.id).first()
-
-            if student and emb_record and os.path.exists(emb_record.vector_path):
+        for usn, vector_path in active_data:
+            if vector_path and os.path.exists(vector_path):
                 try:
-                    vec = np.load(emb_record.vector_path)
-                    active_embeddings.append((student.usn, vec))
+                    vec = np.load(vector_path)
+                    active_embeddings.append((usn, vec))
                 except Exception as e:
-                    logger.error(f"Error loading embedding for {student.usn}: {e}")
+                    logger.error(f"Error loading embedding for {usn}: {e}")
 
         faiss_service.rebuild_index(active_embeddings)
         websocket_manager.broadcast_sync(

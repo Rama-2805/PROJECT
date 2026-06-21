@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     # Backend API
     backend_api_url: str = "http://localhost:4000"
     backend_api_key: Optional[str] = None
+    rtsp_stream_url: Optional[str] = None
 
     # Redis & Celery
     redis_url: str = "redis://localhost:6379/0"
@@ -38,7 +39,7 @@ class Settings(BaseSettings):
     max_faces_per_frame: int = 20
 
     # Face Recognition
-    recognition_confidence_threshold: float = 0.85
+    recognition_confidence_threshold: float = 0.55
     embedding_size: int = 512  # ArcFace embedding dimension
 
     # Clustering

@@ -70,6 +70,9 @@ def mock_insightface(monkeypatch):
     the attribute chain `insightface.app.FaceAnalysis` must be explicitly set up
     to return the correct mock face objects.
     """
+    from app.services.face_detector import face_detector
+    face_detector._model = None
+
     mock_face = MagicMock()
     mock_face.det_score = 0.95
     mock_face.bbox = np.array([10.0, 10.0, 110.0, 110.0])

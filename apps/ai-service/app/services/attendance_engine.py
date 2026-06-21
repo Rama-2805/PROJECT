@@ -45,25 +45,24 @@ class AttendanceEngine:
         self.broadcast_cooldowns = {}
         # Track cooldowns for saving unknown face crops (cluster_id -> last_save_time)
         self.unknown_face_cooldowns = {}
+        
+        # Cache for the last processed/annotated frame to be used by the MJPEG stream
+        self.annotated_frames = {}
 
     def start_attendance_session(self, camera_id: str, class_id: str, source_path: str = "0") -> bool:
-        """Start capturing from the camera and run the face tracking and attendance pipeline.
+        """Start a real-time attendance session on a camera feed."""
+        # Override source_path with environment variable if configured
+        if settings.rtsp_stream_url and source_path == "0":
+            logger.info(f"Overriding camera source_path '0' with configured RTSP URL from settings: {settings.rtsp_stream_url}")
+            source_path = settings.rtsp_stream_url
 
-        Args:
-            camera_id: Camera identifier
-            class_id: The class/lecture identifier
-            source_path: USB index or RTSP link
-
-        Returns:
-            True if session started successfully
-        """
         with self._lock:
             if camera_id in self.active_sessions:
                 logger.warning(f"Attendance session for camera {camera_id} is already running.")
                 return True
 
-            # Start camera capture
-            success = camera_service.start_camera(camera_id, source_path)
+            # Start camera capture with a small buffer size (e.g. 3) to minimize delay for live streaming
+            success = camera_service.start_camera(camera_id, source_path, buffer_size=3)
             if not success:
                 logger.error(f"Failed to start camera capture for session on {camera_id}")
                 return False
@@ -116,26 +115,33 @@ class AttendanceEngine:
 
     def _session_loop(self, camera_id: str):
         """Internal frame consume loop executing face detection, tracking, and decisions."""
-        db = SessionLocal()
         try:
             tracker = self.active_sessions[camera_id]["tracker"]
             class_id = self.active_sessions[camera_id]["class_id"]
 
-            frame_counter = 0
+            last_process_time = 0.0
+            target_interval = 1.0 / 15.0  # 15 FPS processing rate throttle
+
             for timestamp, frame in camera_service.read_frames(camera_id):
                 # Check termination
                 with self._lock:
                     if camera_id not in self.active_sessions or not self.active_sessions[camera_id]["running"]:
                         break
 
-                frame_counter += 1
-                # CHANGE 14: Process every second frame to reduce CPU usage
-                if frame_counter % 2 != 0:
+                current_time = time.time()
+                if current_time - last_process_time < target_interval:
                     continue
+                last_process_time = current_time
 
+                # Create scoped database session for this frame iteration
+                db = SessionLocal()
                 try:
+                    # Create annotated copy for live stream overlays
+                    annotated = frame.copy()
+
                     # 1. Face Detection
                     detections = face_detector.detect_faces(frame)
+                    face_detected = len(detections) > 0 if detections else False
                     
                     # 2. Face Tracking (IoU Tracker matches detections to persistent tracks)
                     active_tracks = tracker.update(detections)
@@ -153,6 +159,7 @@ class AttendanceEngine:
                         websocket_manager.broadcast_sync("FACE_DETECTED", {"camera_id": camera_id, "tracks": tracking_info})
 
                     # 3. Analyze each tracked face
+                    any_recognized = False
                     for track in active_tracks:
                         # Extract crop image from frame
                         x1, y1, x2, y2 = track.bbox
@@ -161,38 +168,82 @@ class AttendanceEngine:
                             continue
 
                         # Perform Face Recognition & Decision Logic
-                        self._process_tracked_face(db, camera_id, class_id, track, crop)
+                        recognized = self._process_tracked_face(db, camera_id, class_id, track, crop)
+                        if recognized:
+                            any_recognized = True
+
+                    # Update camera service diagnostics metrics
+                    camera_service.record_detection_metrics(
+                        camera_id=camera_id,
+                        face_detected=face_detected,
+                        face_recognized=any_recognized if face_detected else None
+                    )
+
+                    # Draw visual overlay on live view
+                    for t in active_tracks:
+                        tx1, ty1, tx2, ty2 = t.bbox
+                        is_rec = hasattr(t, "student_usn") and t.student_usn is not None
+                        color = (0, 255, 0) if is_rec else (0, 0, 255)  # Green = Recognized, Red = Unknown
+                        
+                        label = f"ID: {t.track_id}"
+                        if is_rec:
+                            label += f" ({t.student_usn})"
+                            
+                        cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), color, 2)
+                        cv2.putText(annotated, label, (tx1, ty1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+
+                    with self._lock:
+                        self.annotated_frames[camera_id] = annotated
+
+                    db.commit()
 
                 except Exception as loop_err:
                     logger.error(f"Error in attendance processing loop: {loop_err}")
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
+                finally:
+                    db.close()
 
-                time.sleep(0.05)  # Yield CPU
+                time.sleep(0.01)  # Yield CPU
 
         except Exception as fatal_err:
             logger.error(f"Fatal error in attendance loop: {fatal_err}")
-        finally:
-            db.close()
 
     def _process_tracked_face(self, db: Session, camera_id: str, class_id: str, track: TrackedFace, crop: np.ndarray):
         """Evaluates a tracked face and executes matching, attendance, or learning candidates."""
         # CHANGE 6: Minimum face size check for attendance recognition
         h, w = crop.shape[:2]
-        if w < 80 or h < 80:
+        logger.info(f"Processing face track {track.track_id} with crop dimensions: {w}x{h}")
+        if w < 50 or h < 50:
+            logger.info(f"Skipping track {track.track_id} because crop is too small: {w}x{h} < 50x50")
             return
 
-        # Find raw detection details
-        from .face_detector import face_detector
-        detections = face_detector.detect_faces(crop)
-        if not detections:
-            return
-
-        det = detections[0]
+        # Use pre-detected details if available, otherwise fallback to re-detection
+        if hasattr(track, "raw_face") and track.raw_face is not None and hasattr(track, "crop") and track.crop is not None:
+            det_crop = track.crop
+            det_raw_face = track.raw_face
+        else:
+            from .face_detector import face_detector
+            detections = face_detector.detect_faces(crop)
+            if not detections:
+                return
+            det_crop = detections[0]["crop"]
+            det_raw_face = detections[0]["raw_face"]
         
         # Analyze Face Quality
-        quality = face_quality_service.analyze_quality(det["crop"], det["raw_face"])
+        quality = face_quality_service.analyze_quality(det_crop, det_raw_face)
         
-        # Extract Embedding
-        emb = embedding_service.generate_embedding(det["crop"])
+        # Extract Embedding (prefer direct pre-computed embedding from raw face)
+        if hasattr(det_raw_face, "embedding") and det_raw_face.embedding is not None:
+            emb = det_raw_face.embedding.copy()
+            norm = np.linalg.norm(emb)
+            if norm > 0:
+                emb = emb / norm
+        else:
+            emb = embedding_service.generate_embedding(det_crop)
+            
         if emb is None:
             return
 
@@ -237,32 +288,34 @@ class AttendanceEngine:
             # CHANGE 5: Rule: Visibility >= 5 seconds AND average confidence of last 10 frames >= threshold
             track_duration = time.time() - track.first_seen
             if track_duration >= 5.0 and avg_conf >= settings.recognition_confidence_threshold:
-                self._mark_student_attendance(db, matched_usn, class_id, avg_conf)
+                self._mark_student_attendance(db, matched_usn, class_id, avg_conf, camera_id)
 
             # Continuous learning check (Change 6: Keep 100x100 for candidates)
             w_crop, h_crop = quality["dimensions"]["width"], quality["dimensions"]["height"]
-            lap_var = cv2.Laplacian(cv2.cvtColor(det["crop"], cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
+            lap_var = cv2.Laplacian(cv2.cvtColor(det_crop, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
             
             if (confidence > 0.98 and 
                 quality["score"] > 85.0 and 
                 w_crop >= 100 and h_crop >= 100 and 
                 lap_var >= 60.0):
-                self._process_learning_candidate(db, matched_usn, det["crop"], emb, quality["score"])
+                self._process_learning_candidate(db, matched_usn, det_crop, emb, quality["score"], confidence)
 
-        # Case B: Needs Verification (0.80 - settings.recognition_confidence_threshold)
-        elif 0.80 <= confidence < settings.recognition_confidence_threshold:
-            logger.info(f"Student recognized with warning matching {matched_usn} (confidence: {confidence:.3f})")
+            return True
 
-        # Case C: Suggested Match (0.65 - 0.80) -> AI suggested matched for review
-        elif 0.65 <= confidence < 0.80:
-            # Save as unknown face but tag possible suggestions
-            self._save_unknown_face(db, crop, emb, quality["score"], camera_id, class_id, suggestion_usn=matched_usn, suggestion_conf=confidence)
+        # Save unrecognized face detections below recognition threshold
+        self._save_unknown_face(
+            db, 
+            crop, 
+            emb, 
+            quality["score"], 
+            camera_id, 
+            class_id, 
+            suggestion_usn=matched_usn if matched_usn else None, 
+            suggestion_conf=confidence if matched_usn else 0.0
+        )
+        return False
 
-        # Case D: Unknown Face (< 0.65)
-        else:
-            self._save_unknown_face(db, crop, emb, quality["score"], camera_id, class_id)
-
-    def _mark_student_attendance(self, db: Session, usn: str, class_id: str, confidence: float):
+    def _mark_student_attendance(self, db: Session, usn: str, class_id: str, confidence: float, camera_id: str = None):
         """Mark student attendance in the PostgreSQL/SQLite database if not already marked today."""
         student = db.query(Student).filter(Student.usn == usn).first()
         if not student:
@@ -319,9 +372,33 @@ class AttendanceEngine:
                 "confidence": att.confidence
             }
             websocket_manager.broadcast_sync("ATTENDANCE_MARKED", payload)
-            logger.info(f"Attendance marked for student {student.name} ({usn}) - Class: {class_id}")
+            logger.info(f"Attendance marked locally for student {student.name} ({usn}) - Class: {class_id}")
 
-    def _process_learning_candidate(self, db: Session, usn: str, crop: np.ndarray, embedding: np.ndarray, quality_score: float):
+            # Send post request to NestJS backend to ingest attendance
+            try:
+                import httpx
+                url = f"{settings.backend_api_url.rstrip('/')}/api/attendance/ingest"
+                headers = {
+                    "Content-Type": "application/json",
+                    "x-api-key": settings.encryption_key
+                }
+                payload_ingest = {
+                    "sessionId": class_id,
+                    "studentId": student.usn,
+                    "studentName": student.name,
+                    "confidence": float(round(confidence, 3)),
+                    "cameraId": camera_id or "webcam",
+                    "method": "FACE_RECOGNITION"
+                }
+                r = httpx.post(url, json=payload_ingest, headers=headers, timeout=5.0)
+                if r.status_code not in (200, 201):
+                    logger.error(f"Failed to ingest attendance to NestJS: Status {r.status_code}, Body {r.text}")
+                else:
+                    logger.info(f"Successfully ingested attendance to NestJS for student {student.name}")
+            except Exception as e:
+                logger.error(f"Error calling NestJS /api/attendance/ingest: {e}")
+
+    def _process_learning_candidate(self, db: Session, usn: str, crop: np.ndarray, embedding: np.ndarray, quality_score: float, similarity_score: float):
         """Validates duplicate rules and logs high-quality learning samples in CandidateImage queue."""
         student = db.query(Student).filter(Student.usn == usn).first()
         if not student:
@@ -353,11 +430,13 @@ class AttendanceEngine:
                 student_id=student.id,
                 image_path=img_path,
                 quality_score=quality_score,
-                embedding_path=emb_path
+                embedding_path=emb_path,
+                similarity_score=similarity_score,
+                status="PENDING"
             )
             db.add(cand_rec)
             db.commit()
-            logger.info(f"New learning candidate captured for {student.name} ({usn}) - Quality: {quality_score}")
+            logger.info(f"New learning candidate captured for {student.name} ({usn}) - Quality: {quality_score}, Similarity: {similarity_score}")
 
     def _save_unknown_face(self, db: Session, crop: np.ndarray, embedding: np.ndarray, quality_score: float,
                           camera_id: str, class_id: str, suggestion_usn: str = None, suggestion_conf: float = 0.0):
@@ -387,13 +466,13 @@ class AttendanceEngine:
         img_path, emb_path = image_storage.save_unknown_face(crop, embedding, filename_prefix)
 
         # Write to UnknownFace database table
-        # We can store the suggestions in details or custom columns if desired,
-        # but to keep Step 14 clean, we write suggestion info to log and handle AI suggestion on search
         unknown_face = UnknownFace(
             cluster_id=cluster_id,
             image_path=img_path,
             quality_score=quality_score,
-            embedding_path=emb_path
+            embedding_path=emb_path,
+            camera_id=camera_id,
+            is_resolved=False
         )
         db.add(unknown_face)
         db.commit()

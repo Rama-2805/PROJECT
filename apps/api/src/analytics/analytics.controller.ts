@@ -49,6 +49,24 @@ export class AnalyticsController {
     return this.analytics.getAIPerformance(institutionId);
   }
 
+  @Get("recognition")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.RESEARCH_ANALYST)
+  getRecognitionAnalytics(@Query("institutionId") institutionId?: string) {
+    return this.analytics.getRecognitionAnalytics(institutionId);
+  }
+
+  @Get("unknown-faces")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.RESEARCH_ANALYST)
+  getUnknownFaceAnalytics(@Query("institutionId") institutionId?: string) {
+    return this.analytics.getUnknownFaceAnalytics(institutionId);
+  }
+
+  @Get("continuous-learning")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.RESEARCH_ANALYST)
+  getContinuousLearningAnalytics(@Query("institutionId") institutionId?: string) {
+    return this.analytics.getContinuousLearningAnalytics(institutionId);
+  }
+
   @Get("devices")
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.DEVICE_MANAGER)
   getDeviceAnalytics(@Query("institutionId") institutionId?: string) {

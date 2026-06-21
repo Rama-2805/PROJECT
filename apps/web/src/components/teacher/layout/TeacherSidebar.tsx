@@ -14,7 +14,9 @@ import {
   User,
   ChevronLeft,
   ChevronRight,
-  Cloud
+  Cloud,
+  LogOut,
+  Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
@@ -24,6 +26,7 @@ const NAV_ITEMS = [
   { href: "/teacher/attendance", label: "Attendance", icon: CheckSquare },
   { href: "/teacher/students", label: "Students", icon: Users },
   { href: "/teacher/unknown-faces", label: "Unknown Faces", icon: ScanFace },
+  { href: "/teacher/candidates", label: "Learning Queue", icon: Sparkles },
   { href: "/teacher/reports", label: "Reports", icon: FileText },
   { href: "/teacher/profile", label: "Profile", icon: User },
 ];
@@ -117,6 +120,40 @@ export function TeacherSidebar() {
             </Link>
           );
         })}
+        {/* Explicit Sign Out item */}
+        <Link 
+          href="#"
+          onClick={(e) => {
+            e.preventDefault();
+            document.cookie = "refreshToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+            localStorage.removeItem("currentUserEmail");
+            localStorage.removeItem("user-role");
+            window.location.href = "/";
+          }}
+        >
+          <motion.div
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            className="relative flex items-center gap-4 rounded-xl px-3.5 py-3 transition-all duration-300 group cursor-pointer text-red-400 hover:text-red-300"
+          >
+            <div className="absolute inset-0 rounded-xl bg-text-primary/[0.02] border border-transparent group-hover:bg-text-primary/[0.04] group-hover:border-glass-border transition-all duration-300 pointer-events-none" />
+            <LogOut className="h-5 w-5 shrink-0 text-red-400 group-hover:scale-110 transition-all duration-350" />
+            {sidebarOpen && (
+              <motion.span
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="font-medium whitespace-nowrap z-10 text-red-400 group-hover:text-red-300"
+              >
+                Sign Out
+              </motion.span>
+            )}
+            {!sidebarOpen && (
+              <div className="absolute left-full ml-4 rounded-lg bg-bg-secondary border border-glass-border px-3 py-1.5 text-xs text-red-400 opacity-0 shadow-glass scale-95 origin-left transition-all duration-300 group-hover:opacity-100 group-hover:scale-100 pointer-events-none whitespace-nowrap z-50">
+                Sign Out
+              </div>
+            )}
+          </motion.div>
+        </Link>
       </nav>
 
       {/* Toggle Button */}

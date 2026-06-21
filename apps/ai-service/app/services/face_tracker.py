@@ -133,6 +133,8 @@ class IoUTracker(BaseTracker):
             track.bbox = det["bbox"]
             track.confidence = det["confidence"]
             track.landmarks = det.get("landmarks")
+            track.crop = det.get("crop")
+            track.raw_face = det.get("raw_face")
             track.last_seen = time.time()
             track.frame_count += 1
             
@@ -152,6 +154,8 @@ class IoUTracker(BaseTracker):
                     confidence=det["confidence"],
                     landmarks=det.get("landmarks")
                 )
+                new_track.crop = det.get("crop")
+                new_track.raw_face = det.get("raw_face")
                 self.tracks[new_id] = new_track
                 self.lost_frames[new_id] = 0
                 updated_tracks.append(new_track)

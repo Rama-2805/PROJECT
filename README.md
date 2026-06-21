@@ -1,3 +1,4 @@
+
 # SmartCampus AI
 
 **Enterprise-Grade AI-Powered Smart Campus Management Platform**
