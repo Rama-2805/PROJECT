@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useUIStore } from "@/store/uiStore";
 
 const roles = [
   {
@@ -24,6 +25,7 @@ const roles = [
 
 export function RoleSlider() {
   const [activeIndex, setActiveIndex] = useState(1); 
+  const setDemoModalOpen = useUIStore((s) => s.setDemoModalOpen);
 
   const handleNext = () => setActiveIndex((prev) => (prev + 1) % roles.length);
   const handlePrev = () => setActiveIndex((prev) => (prev - 1 + roles.length) % roles.length);
@@ -41,7 +43,10 @@ export function RoleSlider() {
           <p className="text-[18px] text-gray-400 max-w-3xl mx-auto mb-10 leading-relaxed font-light">
             Whether you're managing multi-campus operations, securing facilities, or leading a classroom, our AI operating system unifies your workflow with one secure, scalable solution.
           </p>
-          <button className="bg-white hover:bg-gray-200 text-black px-6 py-3 rounded-xl text-[15px] font-semibold transition-colors">
+          <button 
+            onClick={() => setDemoModalOpen(true)}
+            className="bg-white hover:bg-gray-200 text-black px-6 py-3 rounded-xl text-[15px] font-semibold transition-colors cursor-pointer"
+          >
             Book a demo <span className="ml-2">↗</span>
           </button>
         </div>

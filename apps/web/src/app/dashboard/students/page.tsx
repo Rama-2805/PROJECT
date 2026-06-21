@@ -6,10 +6,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Search, Filter, MoreHorizontal, Download, UserPlus, ShieldAlert, X, Key, ShieldCheck } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { useRouter } from "next/navigation";
-import { initializeUserStore, getUsers, createUser, updateUserPassword, hashPassword } from "@/lib/userStore";
+import { initializeUserStore, getUsers, saveUsers, createUser, updateUserPassword, hashPassword } from "@/lib/userStore";
 
 // Mock Data Generator for standard students
-const MOCK_DEPARTMENTS = ["Computer Science", "Electrical Eng", "Mechanical Eng", "Business", "Design"];
+const MOCK_DEPARTMENTS = ["CSE", "ISE", "ECE", "EEE", "AIML", "CSE(AI)", "MECH", "CIVIL"];
 const generateMockStudents = (count: number) => {
   return Array.from({ length: count }, (_, i) => ({
     id: `mock-stu-${10000 + i}`,
@@ -35,14 +35,24 @@ export default function StudentsPage() {
 
   // Modals
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
-  // Form States
+  // Add Form States
   const [addName, setAddName] = useState("");
   const [addEmail, setAddEmail] = useState("");
-  const [addDept, setAddDept] = useState("Computer Science");
+  const [addDept, setAddDept] = useState("CSE");
+  const [emailManuallyEdited, setEmailManuallyEdited] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);
 
+  // Edit Form States
+  const [editTargetEmail, setEditTargetEmail] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editDept, setEditDept] = useState("CSE");
+  const [editSemester, setEditSemester] = useState(1);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  // Reset Password States
   const [resetTargetEmail, setResetTargetEmail] = useState("");
   const [resetPassword, setResetPassword] = useState("");
   const [resetConfirm, setResetConfirm] = useState("");
@@ -53,19 +63,38 @@ export default function StudentsPage() {
     initializeUserStore();
   }, []);
 
+  // Dynamic email generation
+  useEffect(() => {
+    if (!emailManuallyEdited && addName) {
+      const sanitizedName = addName.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const deptMap: Record<string, string> = {
+        "CSE": "cs",
+        "ISE": "is",
+        "ECE": "ec",
+        "EEE": "ee",
+        "AIML": "ai",
+        "CSE(AI)": "csai",
+        "MECH": "mech",
+        "CIVIL": "civil"
+      };
+      const deptCode = deptMap[addDept] || "cs";
+      setAddEmail(`${sanitizedName}.${deptCode}2023@vemana.edu.in`);
+    }
+  }, [addName, addDept, emailManuallyEdited]);
+
   // Generate Base Mock List
-  const mockStudentsBase = useMemo(() => generateMockStudents(1000), []);
+  const mockStudentsBase = useMemo(() => generateMockStudents(100), []); // compaction to 100 for high performance rendering
 
   const allStudents = useMemo(() => {
     const users = getUsers();
     const customStudents = Object.values(users)
       .filter((u) => u.role === "student")
       .map((u, idx) => ({
-        id: u.email, // Use email as unique ID to trigger password resets
-        studentId: `STU-CUSTOM-${100 + idx}`,
+        id: u.email, // Use email as unique ID to trigger password resets/edits
+        studentId: u.studentId || `1VI23CS${String(100 + idx).padStart(3, "0")}`,
         name: u.fullName,
-        department: u.department || "Computer Science",
-        semester: 6,
+        department: u.department || "CSE",
+        semester: u.semester || 1,
         attendance: 94,
         engagement: 90,
         riskLevel: "LOW" as const,
@@ -78,9 +107,14 @@ export default function StudentsPage() {
 
   const filteredStudents = useMemo(() => {
     return allStudents.filter(student => {
-      const matchesSearch = student.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            student.studentId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            student.id.toLowerCase().includes(searchQuery.toLowerCase());
+      const name = student.name || "";
+      const sId = student.studentId || "";
+      const emailId = student.id || "";
+      const dept = student.department || "";
+      const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                            sId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            emailId.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                            dept.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesRisk = filterRisk === "ALL" || student.riskLevel === filterRisk;
       return matchesSearch && matchesRisk;
     });
@@ -106,11 +140,72 @@ export default function StudentsPage() {
       await createUser(addEmail, addName, "student", addDept);
       setAddName("");
       setAddEmail("");
+      setEmailManuallyEdited(false);
       setIsAddModalOpen(false);
       setRefreshKey(prev => prev + 1); // Trigger update
     } catch (err: any) {
       setAddError(err.message || "Failed to create student account");
     }
+  };
+
+  const handleEditStudentSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setEditError(null);
+
+    const users = getUsers();
+    if (users[editTargetEmail]) {
+      users[editTargetEmail].fullName = editName;
+      users[editTargetEmail].department = editDept;
+      users[editTargetEmail].semester = Number(editSemester);
+      saveUsers(users);
+      setIsEditModalOpen(false);
+      setRefreshKey(prev => prev + 1);
+    } else {
+      setEditError("Student not found");
+    }
+  };
+
+  const handlePromoteAll = () => {
+    if (confirm("Are you sure you want to promote all students to the next semester? This will update their semester numbers without altering history, emails, or embeddings.")) {
+      const users = getUsers();
+      let count = 0;
+      Object.keys(users).forEach(email => {
+        if (users[email].role === "student") {
+          const currentSem = users[email].semester || 1;
+          if (currentSem < 8) {
+            users[email].semester = currentSem + 1;
+            count++;
+          }
+        }
+      });
+      saveUsers(users);
+      setRefreshKey(prev => prev + 1);
+      alert(`Successfully promoted ${count} students!`);
+    }
+  };
+
+  const handleExportCSV = () => {
+    const headers = ["Student ID", "Name", "Email", "Department", "Semester", "Attendance", "AI Risk Level", "Status"];
+    const rows = filteredStudents.map(s => [
+      s.studentId,
+      s.name,
+      s.id,
+      s.department,
+      s.semester,
+      `${s.attendance}%`,
+      s.riskLevel,
+      s.status
+    ]);
+    
+    const csvContent = [headers.join(","), ...rows.map(r => r.map(val => `"${val}"`).join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "smartcampus_students.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const triggerResetPassword = (email: string) => {
@@ -163,8 +258,20 @@ export default function StudentsPage() {
         </div>
         
         <div className="flex items-center gap-3">
-          <button className="flex items-center gap-2 rounded-lg border border-glass-border bg-glass-light px-4 py-2 text-sm font-medium text-text-primary hover:bg-glass-medium transition-colors cursor-pointer">
+          <button 
+            onClick={handleExportCSV}
+            className="flex items-center gap-2 rounded-lg border border-glass-border bg-glass-light px-4 py-2 text-sm font-medium text-text-primary hover:bg-glass-medium transition-colors cursor-pointer"
+          >
             <Download className="w-4 h-4" /> Export CSV
+          </button>
+          <button 
+            onClick={handlePromoteAll}
+            className="flex items-center gap-2 rounded-lg border border-glass-border bg-glass-light px-4 py-2 text-sm font-medium text-text-primary hover:bg-glass-medium transition-colors cursor-pointer"
+          >
+            <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+            </svg>
+            Promote Semesters
           </button>
           <button 
             onClick={() => setIsAddModalOpen(true)}
@@ -301,19 +408,55 @@ export default function StudentsPage() {
                   </div>
 
                   {/* Actions */}
-                  <div className="col-span-1 flex justify-end items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                    {student.isCustom && (
-                      <button 
-                        onClick={() => triggerResetPassword(student.id)}
-                        className="p-1 rounded hover:bg-glass-light transition-colors text-text-muted hover:text-amber-400"
-                        title="Reset password directly"
-                      >
-                        <Key className="w-3.5 h-3.5" />
+                  <div className="col-span-1 flex justify-end items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    {student.isCustom ? (
+                      <>
+                        <button 
+                          onClick={() => {
+                            const users = getUsers();
+                            const u = users[student.id];
+                            if (u) {
+                              setEditTargetEmail(student.id);
+                              setEditName(u.fullName);
+                              setEditDept(u.department || "CSE");
+                              setEditSemester(u.semester || 1);
+                              setIsEditModalOpen(true);
+                            }
+                          }}
+                          className="p-1 rounded hover:bg-glass-light transition-colors text-text-muted hover:text-blue-500"
+                          title="Edit Student Profile"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                        </button>
+                        <button 
+                          onClick={() => triggerResetPassword(student.id)}
+                          className="p-1 rounded hover:bg-glass-light transition-colors text-text-muted hover:text-amber-400"
+                          title="Direct password reset"
+                        >
+                          <Key className="w-3.5 h-3.5" />
+                        </button>
+                        <button 
+                          onClick={() => {
+                            if (confirm(`Are you sure you want to delete student ${student.name}?`)) {
+                              const users = getUsers();
+                              delete users[student.id];
+                              saveUsers(users);
+                              setRefreshKey(prev => prev + 1);
+                            }
+                          }}
+                          className="p-1 rounded hover:bg-glass-light transition-colors text-text-muted hover:text-red-500"
+                          title="Delete Student"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    ) : (
+                      <button className="p-1 text-text-muted hover:text-text-primary rounded hover:bg-glass-light transition-colors">
+                        <MoreHorizontal className="w-5 h-5" />
                       </button>
                     )}
-                    <button className="p-1 text-text-muted hover:text-text-primary rounded hover:bg-glass-light transition-colors">
-                      <MoreHorizontal className="w-5 h-5" />
-                    </button>
                   </div>
                 </div>
               );
@@ -325,20 +468,23 @@ export default function StudentsPage() {
       {/* Add Student Modal */}
       <AnimatePresence>
         {isAddModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsAddModalOpen(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setIsAddModalOpen(false)} />
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-[#111111] border border-white/10 rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl"
+              className="bg-bg-secondary/95 border border-glass-border rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl backdrop-blur-xl"
             >
-              <button className="absolute top-4 right-4 text-text-muted hover:text-text-primary" onClick={() => setIsAddModalOpen(false)}>
+              <button 
+                className="absolute top-4 right-4 text-text-muted hover:text-text-primary p-1 rounded-lg hover:bg-glass-light transition-colors" 
+                onClick={() => setIsAddModalOpen(false)}
+              >
                 <X className="w-5 h-5" />
               </button>
               
-              <h3 className="text-base font-semibold text-text-primary font-mono uppercase tracking-wider mb-2">Enroll New Student</h3>
-              <p className="text-xs text-text-muted mb-4">Create a student account in the database. The default password is <code className="text-amber-400 font-mono">demo123</code>.</p>
+              <h3 className="text-base font-bold text-text-primary uppercase tracking-wider mb-1">Enroll New Student</h3>
+              <p className="text-xs text-text-muted mb-4">Create a student account. The default temporary password is <code className="text-amber-400 font-mono">demo123</code>.</p>
 
               {addError && (
                 <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-xl mb-4">
@@ -354,8 +500,8 @@ export default function StudentsPage() {
                     required
                     value={addName}
                     onChange={(e) => setAddName(e.target.value)}
-                    placeholder="e.g. John Doe"
-                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors"
+                    placeholder="e.g. Manjunatha Prasad"
+                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
                   />
                 </div>
 
@@ -365,9 +511,12 @@ export default function StudentsPage() {
                     type="email"
                     required
                     value={addEmail}
-                    onChange={(e) => setAddEmail(e.target.value)}
-                    placeholder="e.g. j.doe@collegename.edu.in"
-                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors"
+                    onChange={(e) => {
+                      setAddEmail(e.target.value);
+                      setEmailManuallyEdited(true);
+                    }}
+                    placeholder="e.g. manjunatha.cs2023@vemana.edu.in"
+                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
                   />
                 </div>
 
@@ -376,19 +525,92 @@ export default function StudentsPage() {
                   <select
                     value={addDept}
                     onChange={(e) => setAddDept(e.target.value)}
-                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-white/30 transition-colors"
+                    className="w-full bg-bg-secondary border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
                   >
-                    <option value="Computer Science">Computer Science</option>
-                    <option value="Electrical Eng">Electrical Eng</option>
-                    <option value="Mechanical Eng">Mechanical Eng</option>
-                    <option value="Business">Business</option>
-                    <option value="Design">Design</option>
+                    {MOCK_DEPARTMENTS.map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
                   </select>
                 </div>
 
                 <div className="flex justify-end gap-2 pt-2">
-                  <button className="px-3 py-1.5 rounded-lg text-text-secondary hover:text-white text-xs cursor-pointer" type="button" onClick={() => setIsAddModalOpen(false)}>Cancel</button>
+                  <button className="px-3 py-1.5 rounded-lg text-text-secondary hover:text-text-primary text-xs cursor-pointer" type="button" onClick={() => setIsAddModalOpen(false)}>Cancel</button>
                   <button type="submit" className="px-4 py-1.5 rounded-lg bg-blue-600 text-white font-semibold text-xs hover:bg-blue-500 cursor-pointer">Create Account</button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Edit Student Modal */}
+      <AnimatePresence>
+        {isEditModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setIsEditModalOpen(false)} />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-bg-secondary/95 border border-glass-border rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl backdrop-blur-xl"
+            >
+              <button 
+                className="absolute top-4 right-4 text-text-muted hover:text-text-primary p-1 rounded-lg hover:bg-glass-light transition-colors" 
+                onClick={() => setIsEditModalOpen(false)}
+              >
+                <X className="w-5 h-5" />
+              </button>
+              
+              <h3 className="text-base font-bold text-text-primary uppercase tracking-wider mb-1">Edit Student Profile</h3>
+              <p className="text-xs text-text-muted mb-4">Update details for <strong className="text-text-primary">{editTargetEmail}</strong>.</p>
+
+              {editError && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-xl mb-4">
+                  {editError}
+                </div>
+              )}
+
+              <form onSubmit={handleEditStudentSubmit} className="space-y-4 text-xs">
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Student Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Department</label>
+                  <select
+                    value={editDept}
+                    onChange={(e) => setEditDept(e.target.value)}
+                    className="w-full bg-bg-secondary border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
+                  >
+                    {MOCK_DEPARTMENTS.map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Semester</label>
+                  <select
+                    value={editSemester}
+                    onChange={(e) => setEditSemester(Number(e.target.value))}
+                    className="w-full bg-bg-secondary border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                      <option key={s} value={s}>Semester {s}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button className="px-3 py-1.5 rounded-lg text-text-secondary hover:text-text-primary text-xs cursor-pointer" type="button" onClick={() => setIsEditModalOpen(false)}>Cancel</button>
+                  <button type="submit" className="px-4 py-1.5 rounded-lg bg-blue-600 text-white font-semibold text-xs hover:bg-blue-500 cursor-pointer">Save Changes</button>
                 </div>
               </form>
             </motion.div>
@@ -399,15 +621,18 @@ export default function StudentsPage() {
       {/* Reset Password Modal */}
       <AnimatePresence>
         {isResetModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsResetModalOpen(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setIsResetModalOpen(false)} />
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-[#111111] border border-white/10 rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl"
+              className="bg-bg-secondary/95 border border-glass-border rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl backdrop-blur-xl"
             >
-              <button className="absolute top-4 right-4 text-text-muted hover:text-text-primary" onClick={() => setIsResetModalOpen(false)}>
+              <button 
+                className="absolute top-4 right-4 text-text-muted hover:text-text-primary p-1 rounded-lg hover:bg-glass-light transition-colors" 
+                onClick={() => setIsResetModalOpen(false)}
+              >
                 <X className="w-5 h-5" />
               </button>
               
@@ -415,8 +640,8 @@ export default function StudentsPage() {
                 <ShieldAlert className="w-4 h-4" />
                 <span className="text-xs uppercase tracking-wider font-mono">Administrative Control</span>
               </div>
-              <h3 className="text-base font-semibold text-text-primary font-mono uppercase tracking-wider mb-2">Direct Reset Password</h3>
-              <p className="text-xs text-text-muted mb-4">Directly change password for student <strong className="text-text-primary">{resetTargetEmail}</strong>. This updates their credentials directly.</p>
+              <h3 className="text-base font-bold text-text-primary uppercase tracking-wider mb-1">Direct Reset Password</h3>
+              <p className="text-xs text-text-muted mb-4">Directly change password for student <strong className="text-text-primary">{resetTargetEmail}</strong>.</p>
 
               {resetError && (
                 <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-xl mb-4">
@@ -440,7 +665,7 @@ export default function StudentsPage() {
                     value={resetPassword}
                     onChange={(e) => setResetPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors"
+                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
                   />
                 </div>
 
@@ -452,12 +677,12 @@ export default function StudentsPage() {
                     value={resetConfirm}
                     onChange={(e) => setResetConfirm(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors"
+                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
                   />
                 </div>
 
                 <div className="flex justify-end gap-2 pt-2">
-                  <button className="px-3 py-1.5 rounded-lg text-text-secondary hover:text-white text-xs cursor-pointer" type="button" onClick={() => setIsResetModalOpen(false)}>Cancel</button>
+                  <button className="px-3 py-1.5 rounded-lg text-text-secondary hover:text-text-primary text-xs cursor-pointer" type="button" onClick={() => setIsResetModalOpen(false)}>Cancel</button>
                   <button type="submit" className="px-4 py-1.5 rounded-lg bg-blue-600 text-white font-semibold text-xs hover:bg-blue-500 cursor-pointer">Update Password</button>
                 </div>
               </form>

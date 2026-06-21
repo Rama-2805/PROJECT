@@ -22,6 +22,8 @@ import { PrivacyModule } from "./privacy/privacy.module";
 import { MlopsModule } from "./mlops/mlops.module";
 import { MobileModule } from "./mobile/mobile.module";
 import { CampusModule } from "./campus/campus.module";
+import { DashboardModule } from "./dashboard/dashboard.module";
+import { DemoRequestsModule } from "./demo-requests/demo-requests.module";
 
 @Module({
   imports: [
@@ -49,6 +51,8 @@ import { CampusModule } from "./campus/campus.module";
     MlopsModule,
     MobileModule,
     CampusModule,
+    DashboardModule,
+    DemoRequestsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

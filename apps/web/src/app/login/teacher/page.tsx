@@ -16,6 +16,7 @@ function LoginContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   // Compulsory Password Reset States
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -56,7 +57,7 @@ function LoginContent() {
           localStorage.setItem("user-role", user.role);
           localStorage.setItem("currentUserEmail", loggedInEmail);
           
-          if (user.role === "admin") {
+          if (user.role === "admin" || user.role === "hod") {
             router.push("/dashboard");
           } else if (user.role === "teacher") {
             router.push("/teacher/dashboard");
@@ -76,6 +77,7 @@ function LoginContent() {
   }, [router]);
 
   useEffect(() => {
+    setMounted(true);
     // Initialize the user database on load
     initializeUserStore();
   }, []);
@@ -321,6 +323,27 @@ function LoginContent() {
                   </div>
                   Sign in with Microsoft
                 </button>
+
+                {mounted && (
+                  <div className="mt-5 p-3.5 rounded-xl bg-white/[0.02] border border-white/5 text-[11px] text-gray-400 space-y-1 text-left">
+                    <div className="font-semibold text-gray-300 uppercase tracking-wider text-[9px]">
+                      {isDemoMode() ? "Demo Faculty Credentials" : "Live Database Faculty Credentials"}
+                    </div>
+                    <div className="text-[10px] text-gray-400">
+                      <p className="mb-1">Use the following credentials for testing:</p>
+                      <div className="space-y-1 font-mono text-xs font-semibold">
+                        <div>
+                          <span className="text-blue-400">Email:</span>{" "}
+                          {isDemoMode() ? "teacher@collegename.edu.in" : "teacher@smartcampus.edu"}
+                        </div>
+                        <div>
+                          <span className="text-blue-400">Password:</span>{" "}
+                          {isDemoMode() ? "admin123" : "teacher123"}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </motion.div>
             ) : (
               <motion.div

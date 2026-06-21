@@ -26,7 +26,7 @@ function generateMockClassrooms(): Classroom[] {
       const roomsPerFloor = building === "Library" ? 2 : 3 + Math.floor(Math.random() * 3);
       for (let r = 1; r <= roomsPerFloor; r++) {
         const type = ROOM_TYPES[Math.floor(Math.random() * ROOM_TYPES.length)];
-        const deptNames = ["Computer Science & Engineering", "Electronics & Communication", "Mechanical Engineering", "Civil Engineering", "Electrical Engineering", "Biotechnology", "Management Studies"];
+        const deptNames = ["CSE", "ISE", "ECE", "EEE", "AIML", "CSE(AI)", "MECH", "CIVIL"];
         const dept = deptNames[Math.floor(Math.random() * deptNames.length)];
         const deviceCount = Math.floor(Math.random() * 4) + 2;
         const deviceNames = ["Camera", "Smart Board", "Projector", "Speaker", "Edge Node", "WiFi AP"];
@@ -39,7 +39,7 @@ function generateMockClassrooms(): Classroom[] {
           building,
           floor,
           capacity: type === "Lecture Hall" ? 60 + Math.floor(Math.random() * 40) : type === "LAB" ? 30 + Math.floor(Math.random() * 20) : 20 + Math.floor(Math.random() * 20),
-          departmentId: `dept-${dept.split(" ")[0].toLowerCase().slice(0, 3)}`,
+          departmentId: `dept-${dept.toLowerCase()}`,
           departmentName: dept,
           devices,
           deviceOnline: online,
@@ -55,15 +55,70 @@ function generateMockClassrooms(): Classroom[] {
   return classrooms;
 }
 
-const mockClassrooms = generateMockClassrooms();
+const CLASSROOM_STORE_KEY = "smartcampus-classrooms";
+
+export function initializeClassrooms() {
+  if (typeof window === "undefined") return;
+  const existing = localStorage.getItem(CLASSROOM_STORE_KEY);
+  if (!existing) {
+    const defaults = generateMockClassrooms();
+    localStorage.setItem(CLASSROOM_STORE_KEY, JSON.stringify(defaults));
+  }
+}
+
+export function getClassroomsFromStorage(): Classroom[] {
+  if (typeof window === "undefined") return [];
+  initializeClassrooms();
+  const data = localStorage.getItem(CLASSROOM_STORE_KEY);
+  return data ? JSON.parse(data) : [];
+}
+
+export function saveClassroomsToStorage(rooms: Classroom[]) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(CLASSROOM_STORE_KEY, JSON.stringify(rooms));
+}
 
 export function getClassrooms(departmentId?: string): Promise<Classroom[]> {
+  const rooms = getClassroomsFromStorage();
   const filtered = departmentId
-    ? mockClassrooms.filter((c) => c.departmentId === departmentId)
-    : mockClassrooms;
+    ? rooms.filter((c) => c.departmentId === departmentId || c.departmentName === departmentId)
+    : rooms;
   return Promise.resolve(filtered);
 }
 
 export function getClassroomById(id: string): Promise<Classroom | undefined> {
-  return Promise.resolve(mockClassrooms.find((c) => c.id === id));
+  const rooms = getClassroomsFromStorage();
+  return Promise.resolve(rooms.find((c) => c.id === id));
+}
+
+export function createClassroom(room: Omit<Classroom, "id" | "deviceOnline" | "deviceTotal">): Promise<Classroom> {
+  const rooms = getClassroomsFromStorage();
+  const nextId = `room-${String(rooms.length + 1).padStart(3, "0")}`;
+  const newRoom: Classroom = {
+    ...room,
+    id: nextId,
+    deviceOnline: 3,
+    deviceTotal: 3,
+  };
+  rooms.push(newRoom);
+  saveClassroomsToStorage(rooms);
+  return Promise.resolve(newRoom);
+}
+
+export function updateClassroom(id: string, updated: Partial<Classroom>): Promise<Classroom> {
+  const rooms = getClassroomsFromStorage();
+  const idx = rooms.findIndex((c) => c.id === id);
+  if (idx === -1) {
+    return Promise.reject(new Error("Classroom not found"));
+  }
+  rooms[idx] = { ...rooms[idx], ...updated };
+  saveClassroomsToStorage(rooms);
+  return Promise.resolve(rooms[idx]);
+}
+
+export function deleteClassroom(id: string): Promise<boolean> {
+  const rooms = getClassroomsFromStorage();
+  const filtered = rooms.filter((c) => c.id !== id);
+  saveClassroomsToStorage(filtered);
+  return Promise.resolve(true);
 }

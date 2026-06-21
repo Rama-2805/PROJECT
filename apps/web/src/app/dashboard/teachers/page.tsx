@@ -8,7 +8,7 @@ import { TeacherCard } from "@/components/teachers/TeacherCard";
 import { getTeachers, type Teacher } from "@/lib/mock/teachers";
 import { getDepartments, type Department } from "@/lib/mock/departments";
 import { cn } from "@/lib/utils/cn";
-import { initializeUserStore, getUsers, createUser, updateUserPassword, hashPassword } from "@/lib/userStore";
+import { initializeUserStore, getUsers, saveUsers, createUser, updateUserPassword, hashPassword } from "@/lib/userStore";
 import { X, ShieldAlert } from "lucide-react";
 
 export default function TeachersPage() {
@@ -19,13 +19,20 @@ export default function TeachersPage() {
 
   // Modal States
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
   
   // Add Teacher Form States
   const [addName, setAddName] = useState("");
   const [addEmail, setAddEmail] = useState("");
-  const [addDept, setAddDept] = useState("Computer Science & Engineering");
+  const [addDept, setAddDept] = useState("CSE");
   const [addError, setAddError] = useState<string | null>(null);
+
+  // Edit Teacher Form States
+  const [editTargetEmail, setEditTargetEmail] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editDept, setEditDept] = useState("CSE");
+  const [editError, setEditError] = useState<string | null>(null);
 
   // Reset Password Form States
   const [resetTargetEmail, setResetTargetEmail] = useState("");
@@ -42,19 +49,26 @@ export default function TeachersPage() {
       const users = getUsers();
       const customTeachers: Teacher[] = Object.values(users)
         .filter((u) => u.role === "teacher")
-        .map((u, idx) => ({
-          id: `teacher-custom-${idx}`,
-          employeeId: `EMP-${1200 + idx}`,
-          fullName: u.fullName,
-          email: u.email,
-          phone: "+91-9988776655",
-          departmentId: "dept-com", // default mapping
-          departmentName: u.department || "Computer Science & Engineering",
-          specialization: "Software Engineering",
-          subjectsCount: 2,
-          classSessionsCount: 6,
-          isActive: true,
-        }));
+        .map((u, idx) => {
+          const wasDetectedToday = (idx % 2 === 0);
+          const startedSessionToday = (idx % 3 === 0);
+          const isActive = wasDetectedToday || startedSessionToday;
+
+          return {
+            id: `teacher-custom-${idx}`,
+            employeeId: `EMP-${1200 + idx}`,
+            fullName: u.fullName,
+            email: u.email,
+            phone: "+91-9988776655",
+            departmentId: u.department === "CSE" ? "dept-com" : u.department || "dept-com",
+            departmentName: u.department || "CSE",
+            specialization: "Artificial Intelligence & Software Systems",
+            subjectsCount: 2,
+            classSessionsCount: 6,
+            isActive: isActive,
+            isCustom: true
+          } as any;
+        });
 
       // Avoid duplication by email
       const uniqueMock = teachersData.filter(t => !customTeachers.some(ct => ct.email === t.email));
@@ -69,7 +83,7 @@ export default function TeachersPage() {
   }, []);
 
   const filtered = selectedDept
-    ? teachers.filter((t) => t.departmentId === selectedDept)
+    ? teachers.filter((t) => t.departmentId === selectedDept || t.departmentName === selectedDept)
     : teachers;
 
   const activeTeachers = filtered.filter((t) => t.isActive).length;
@@ -93,6 +107,46 @@ export default function TeachersPage() {
       loadData(); // Reload teacher list
     } catch (err: any) {
       setAddError(err.message || "Failed to create teacher account");
+    }
+  };
+
+  // Handle Edit Teacher Submission
+  const handleEditTeacherSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setEditError(null);
+
+    const users = getUsers();
+    if (users[editTargetEmail]) {
+      users[editTargetEmail].fullName = editName;
+      users[editTargetEmail].department = editDept;
+      saveUsers(users);
+      setIsEditModalOpen(false);
+      loadData();
+    } else {
+      setEditError("Faculty member not found");
+    }
+  };
+
+  // Handle Delete Teacher
+  const handleDeleteTeacher = (email: string) => {
+    if (confirm(`Are you sure you want to delete teacher ${email}?`)) {
+      const users = getUsers();
+      delete users[email];
+      saveUsers(users);
+      loadData();
+    }
+  };
+
+  // Trigger Edit Modal
+  const triggerEditTeacher = (email: string) => {
+    const users = getUsers();
+    const u = users[email];
+    if (u) {
+      setEditTargetEmail(email);
+      setEditName(u.fullName);
+      setEditDept(u.department || "CSE");
+      setEditError(null);
+      setIsEditModalOpen(true);
     }
   };
 
@@ -211,6 +265,8 @@ export default function TeachersPage() {
               <TeacherCard 
                 teacher={teacher} 
                 onResetPassword={triggerResetPassword}
+                onEdit={triggerEditTeacher}
+                onDelete={handleDeleteTeacher}
               />
             </motion.div>
           ))}
@@ -220,19 +276,22 @@ export default function TeachersPage() {
       {/* Add Teacher Modal */}
       <AnimatePresence>
         {isAddModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsAddModalOpen(false)} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setIsAddModalOpen(false)} />
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-[#111111] border border-white/10 rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl"
+              className="bg-bg-secondary/95 border border-glass-border rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl backdrop-blur-xl"
             >
-              <button className="absolute top-4 right-4 text-text-muted hover:text-text-primary" onClick={() => setIsAddModalOpen(false)}>
+              <button 
+                className="absolute top-4 right-4 text-text-muted hover:text-text-primary p-1 rounded-lg hover:bg-glass-light transition-colors" 
+                onClick={() => setIsAddModalOpen(false)}
+              >
                 <X className="w-5 h-5" />
               </button>
               
-              <h3 className="text-base font-semibold text-text-primary font-mono uppercase tracking-wider mb-2">Add New Faculty</h3>
+              <h3 className="text-base font-bold text-text-primary uppercase tracking-wider mb-1">Add New Faculty</h3>
               <p className="text-xs text-text-muted mb-4">Create a new teacher account. The default temporary password will be <code className="text-amber-400 font-mono">demo123</code>.</p>
 
               {addError && (
@@ -250,7 +309,7 @@ export default function TeachersPage() {
                     value={addName}
                     onChange={(e) => setAddName(e.target.value)}
                     placeholder="e.g. Dr. Rajesh Kumar"
-                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors"
+                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
                   />
                 </div>
 
@@ -262,7 +321,7 @@ export default function TeachersPage() {
                     value={addEmail}
                     onChange={(e) => setAddEmail(e.target.value)}
                     placeholder="e.g. r.kumar@collegename.edu.in"
-                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors"
+                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
                   />
                 </div>
 
@@ -271,12 +330,11 @@ export default function TeachersPage() {
                   <select
                     value={addDept}
                     onChange={(e) => setAddDept(e.target.value)}
-                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-white/30 transition-colors"
+                    className="w-full bg-bg-secondary border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
                   >
-                    <option value="Computer Science & Engineering">Computer Science & Engineering</option>
-                    <option value="Electronics & Communication">Electronics & Communication</option>
-                    <option value="Mechanical Engineering">Mechanical Engineering</option>
-                    <option value="Civil Engineering">Civil Engineering</option>
+                    {["CSE", "ISE", "ECE", "EEE", "AIML", "CSE(AI)", "MECH", "CIVIL"].map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -290,27 +348,92 @@ export default function TeachersPage() {
         )}
       </AnimatePresence>
 
-      {/* Reset Password Modal */}
+      {/* Edit Teacher Modal */}
       <AnimatePresence>
-        {isResetModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setIsResetModalOpen(false)} />
+        {isEditModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setIsEditModalOpen(false)} />
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-[#111111] border border-white/10 rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl"
+              className="bg-bg-secondary/95 border border-glass-border rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl backdrop-blur-xl"
             >
-              <button className="absolute top-4 right-4 text-text-muted hover:text-text-primary" onClick={() => setIsResetModalOpen(false)}>
+              <button 
+                className="absolute top-4 right-4 text-text-muted hover:text-text-primary p-1 rounded-lg hover:bg-glass-light transition-colors" 
+                onClick={() => setIsEditModalOpen(false)}
+              >
+                <X className="w-5 h-5" />
+              </button>
+              
+              <h3 className="text-base font-bold text-text-primary uppercase tracking-wider mb-1">Edit Faculty Profile</h3>
+              <p className="text-xs text-text-muted mb-4">Update details for <strong className="text-text-primary">{editTargetEmail}</strong>.</p>
+
+              {editError && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-xl mb-4">
+                  {editError}
+                </div>
+              )}
+
+              <form onSubmit={handleEditTeacherSubmit} className="space-y-4 text-xs">
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Department</label>
+                  <select
+                    value={editDept}
+                    onChange={(e) => setEditDept(e.target.value)}
+                    className="w-full bg-bg-secondary border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
+                  >
+                    {["CSE", "ISE", "ECE", "EEE", "AIML", "CSE(AI)", "MECH", "CIVIL"].map((d) => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button size="sm" variant="ghost" type="button" onClick={() => setIsEditModalOpen(false)}>Cancel</Button>
+                  <Button size="sm" type="submit">Save Changes</Button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Reset Password Modal */}
+      <AnimatePresence>
+        {isResetModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setIsResetModalOpen(false)} />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-bg-secondary/95 border border-glass-border rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl backdrop-blur-xl"
+            >
+              <button 
+                className="absolute top-4 right-4 text-text-muted hover:text-text-primary p-1 rounded-lg hover:bg-glass-light transition-colors" 
+                onClick={() => setIsResetModalOpen(false)}
+              >
                 <X className="w-5 h-5" />
               </button>
               
               <div className="flex items-center gap-2 text-amber-500 font-semibold mb-2">
                 <ShieldAlert className="w-4 h-4" />
-                <span className="text-xs uppercase tracking-wider font-mono">Administrative Access Control</span>
+                <span className="text-xs uppercase tracking-wider font-mono">Administrative Control</span>
               </div>
-              <h3 className="text-base font-semibold text-text-primary font-mono uppercase tracking-wider mb-2">Direct Reset Password</h3>
-              <p className="text-xs text-text-muted mb-4">Directly change password for <strong className="text-text-primary">{resetTargetEmail}</strong>. This bypasses forced resets on login.</p>
+              <h3 className="text-base font-bold text-text-primary uppercase tracking-wider mb-1">Direct Reset Password</h3>
+              <p className="text-xs text-text-muted mb-4">Directly change password for <strong className="text-text-primary">{resetTargetEmail}</strong>.</p>
 
               {resetError && (
                 <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-xl mb-4">
@@ -333,7 +456,7 @@ export default function TeachersPage() {
                     value={resetPassword}
                     onChange={(e) => setResetPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors"
+                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
                   />
                 </div>
 
@@ -345,7 +468,7 @@ export default function TeachersPage() {
                     value={resetConfirm}
                     onChange={(e) => setResetConfirm(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 transition-colors"
+                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
                   />
                 </div>
 

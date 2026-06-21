@@ -1469,3 +1469,22 @@ model DeviceLocation {
 
   device Device @relation(fields: [deviceId], references: [id], onDelete: Cascade)
 }
+
+model DemoRequest {
+  id              String   @id @default(cuid())
+  collegeName     String
+  contactPerson   String
+  designation     String
+  officialEmail   String
+  phoneNumber     String
+  department      String
+  numStudents     Int
+  numTeachers     Int
+  numClassrooms   Int
+  numCameras      Int
+  city            String
+  state           String
+  requirements    String?
+  status          String   @default("NEW") // NEW, CONTACTED, DEMO_SCHEDULED, CONVERTED, REJECTED
+  createdAt       DateTime @default(now())
+}

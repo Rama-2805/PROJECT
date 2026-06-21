@@ -4,8 +4,11 @@ import React from "react";
 import { motion } from "framer-motion";
 import { ArrowUpRight, Cloud } from "lucide-react";
 import { ContainerScroll } from "@/components/ui/container-scroll-animation";
+import { useUIStore } from "@/store/uiStore";
 
 export function HeroSection() {
+  const setDemoModalOpen = useUIStore((s) => s.setDemoModalOpen);
+
   return (
     <section className="relative w-full pt-20 pb-20 flex flex-col items-center justify-start overflow-hidden bg-[#060814]">
       {/* Cyber Grid Overlay */}
@@ -34,7 +37,10 @@ export function HeroSection() {
               Real-time face recognition, automatic attendance, and behavioral analytics for universities finally in one place.
             </p>
 
-            <button className="bg-white hover:bg-gray-200 text-black px-6 py-3 rounded-xl text-[15px] font-semibold transition-colors flex items-center gap-2 cursor-pointer shadow-[0_4px_12px_rgba(255,255,255,0.1)] hover:shadow-[0_6px_20px_rgba(255,255,255,0.2)] mb-10">
+            <button 
+              onClick={() => setDemoModalOpen(true)}
+              className="bg-white hover:bg-gray-200 text-black px-6 py-3 rounded-xl text-[15px] font-semibold transition-colors flex items-center gap-2 cursor-pointer shadow-[0_4px_12px_rgba(255,255,255,0.1)] hover:shadow-[0_6px_20px_rgba(255,255,255,0.2)] mb-10"
+            >
               Book a demo <ArrowUpRight className="w-5 h-5" />
             </button>
           </div>

@@ -4,28 +4,45 @@ import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Camera, Upload, ShieldCheck, AlertTriangle, 
-  CheckCircle2, XCircle, ChevronRight, Fingerprint, Focus, Sun, ScanFace
+  CheckCircle2, XCircle, ChevronRight, Fingerprint, Focus, Sun, ScanFace, Loader2
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { Button } from "@/components/ui/Button";
 
-type EnrollmentStep = "METHOD_SELECTION" | "LIVE_CAPTURE" | "QUALITY_ANALYSIS" | "SUCCESS";
+type EnrollmentStep = "METHOD_SELECTION" | "LIVE_CAPTURE" | "PROCESSING" | "QUALITY_ANALYSIS" | "SUCCESS";
 
 export default function FaceEnrollmentWizard() {
   const [step, setStep] = useState<EnrollmentStep>("METHOD_SELECTION");
   const [quality, setQuality] = useState({ lighting: 0, sharpness: 0, pose: 0, overall: 0 });
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Upload state
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [uploadedFileUrl, setUploadedFileUrl] = useState<string | null>(null);
+
+  // Pipeline simulation states
+  const [pipelineProgress, setPipelineProgress] = useState(0);
+  const [pipelineStep, setPipelineStep] = useState(1);
 
   // Clean up camera on unmount or step change
   useEffect(() => {
     return () => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(track => track.stop());
-      }
+      stopCamera();
     };
   }, []);
 
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+  };
+
   const startCamera = async () => {
+    setUploadedFile(null);
+    setUploadedFileUrl(null);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
       streamRef.current = stream;
@@ -33,28 +50,63 @@ export default function FaceEnrollmentWizard() {
         videoRef.current.srcObject = stream;
       }
       setStep("LIVE_CAPTURE");
-      simulateQualityAnalysis();
+      // Pre-populate slight fluctuating telemetry before capture
+      setQuality({ lighting: 82, sharpness: 78, pose: 85, overall: 81 });
     } catch (err) {
       console.error("Camera access denied", err);
-      // Fallback logic could go here
+      alert("Could not access camera. Please verify permission settings or upload a file instead.");
     }
   };
 
-  const simulateQualityAnalysis = () => {
-    // Simulate fluctuating quality metrics over time
-    const interval = setInterval(() => {
-      setQuality({
-        lighting: 70 + Math.random() * 25,
-        sharpness: 80 + Math.random() * 15,
-        pose: 85 + Math.random() * 10,
-        overall: 80 + Math.random() * 18
-      });
-    }, 500);
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
 
-    setTimeout(() => {
-      clearInterval(interval);
-      setStep("QUALITY_ANALYSIS");
-    }, 4000); // 4 seconds of live capture before moving to analysis
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    stopCamera();
+    setUploadedFile(file);
+    const url = URL.createObjectURL(file);
+    setUploadedFileUrl(url);
+    
+    startPipelineSimulation();
+  };
+
+  const triggerCaptureScan = () => {
+    startPipelineSimulation();
+  };
+
+  const startPipelineSimulation = () => {
+    setStep("PROCESSING");
+    setPipelineProgress(0);
+    setPipelineStep(1);
+    
+    const interval = setInterval(() => {
+      setPipelineProgress((prev) => {
+        const next = prev + 5;
+        if (next >= 100) {
+          clearInterval(interval);
+          setTimeout(() => {
+            setQuality({
+              lighting: 85 + Math.floor(Math.random() * 12),
+              sharpness: 88 + Math.floor(Math.random() * 10),
+              pose: 87 + Math.floor(Math.random() * 8),
+              overall: 86 + Math.floor(Math.random() * 8)
+            });
+            setStep("QUALITY_ANALYSIS");
+          }, 400);
+          return 100;
+        }
+
+        if (next >= 75) setPipelineStep(4);
+        else if (next >= 50) setPipelineStep(3);
+        else if (next >= 25) setPipelineStep(2);
+
+        return next;
+      });
+    }, 120);
   };
 
   const getQualityColor = (score: number) => {
@@ -63,21 +115,39 @@ export default function FaceEnrollmentWizard() {
     return "text-red-400 bg-red-500/10 border-red-500/20";
   };
 
+  const resetWizard = () => {
+    stopCamera();
+    setUploadedFile(null);
+    setUploadedFileUrl(null);
+    setPipelineProgress(0);
+    setPipelineStep(1);
+    setStep("METHOD_SELECTION");
+  };
+
   return (
     <div className="flex flex-col h-[calc(100vh-120px)] max-w-5xl mx-auto w-full space-y-6">
       
       {/* Header */}
       <div className="text-center space-y-2 mt-4">
-        <div className="inline-flex items-center justify-center p-3 rounded-full bg-blue-500/10 mb-2">
+        <div className="inline-flex items-center justify-center p-3 rounded-full bg-blue-500/10 mb-2 border border-blue-500/20">
           <ScanFace className="w-8 h-8 text-blue-400" />
         </div>
-        <h1 className="text-3xl font-bold text-white tracking-wide">AI Identity Enrollment</h1>
-        <p className="text-gray-400">Generate a highly secure, encrypted facial embedding for SmartCampus AI.</p>
+        <h1 className="text-2xl font-bold text-text-primary tracking-wide">AI Identity Enrollment</h1>
+        <p className="text-xs text-text-muted">Generate a secure, encrypted 512-dimensional facial embedding for SmartCampus AI.</p>
       </div>
 
       {/* Main Container */}
-      <div className="flex-1 rounded-2xl border border-white/10 bg-[#0A0F1E]/80 backdrop-blur-xl overflow-hidden relative flex flex-col shadow-[0_0_40px_rgba(0,0,0,0.5)]">
+      <div className="flex-1 rounded-2xl border border-glass-border bg-[#0A0F1E]/80 backdrop-blur-xl overflow-hidden relative flex flex-col shadow-[0_0_40px_rgba(0,0,0,0.5)]">
         
+        {/* Hidden Input File */}
+        <input 
+          type="file" 
+          ref={fileInputRef} 
+          className="hidden" 
+          accept="image/*,video/*" 
+          onChange={handleFileChange} 
+        />
+
         <AnimatePresence mode="wait">
           
           {/* STEP 1: METHOD SELECTION */}
@@ -89,29 +159,33 @@ export default function FaceEnrollmentWizard() {
               exit={{ opacity: 0, x: -50 }}
               className="flex-1 flex flex-col items-center justify-center p-8 space-y-8"
             >
-              <h2 className="text-xl font-semibold text-white">Select Enrollment Method</h2>
+              <h2 className="text-lg font-bold text-text-primary uppercase tracking-wider">Select Enrollment Method</h2>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 w-full max-w-2xl">
                 {/* Live Camera Option */}
                 <button 
                   onClick={startCamera}
-                  className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-8 text-left hover:bg-white/10 hover:border-blue-500/50 transition-all"
+                  className="group relative overflow-hidden rounded-2xl border border-glass-border bg-glass-light p-8 text-left hover:bg-glass-medium hover:border-ai-blue/50 transition-all cursor-pointer"
                 >
                   <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <ChevronRight className="w-6 h-6 text-blue-400" />
+                    <ChevronRight className="w-5 h-5 text-ai-blue" />
                   </div>
-                  <Camera className="w-10 h-10 text-blue-400 mb-4" />
-                  <h3 className="text-lg font-bold text-white mb-2">Live Camera Enrollment</h3>
-                  <p className="text-sm text-gray-400">Use your device's camera to capture a 3D facial mesh in real-time. Recommended for highest accuracy.</p>
+                  <Camera className="w-10 h-10 text-ai-blue mb-4" />
+                  <h3 className="text-base font-bold text-text-primary mb-2">Live Camera Capture</h3>
+                  <p className="text-xs text-text-muted leading-relaxed">Use device camera to capture face details. Processes live frames for high fidelity meshes.</p>
                 </button>
 
                 {/* Upload Option */}
                 <button 
-                  className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 p-8 text-left hover:bg-white/10 hover:border-purple-500/50 transition-all opacity-70"
+                  onClick={handleUploadClick}
+                  className="group relative overflow-hidden rounded-2xl border border-glass-border bg-glass-light p-8 text-left hover:bg-glass-medium hover:border-ai-purple/50 transition-all cursor-pointer"
                 >
-                  <Upload className="w-10 h-10 text-purple-400 mb-4" />
-                  <h3 className="text-lg font-bold text-white mb-2">Image/Video Upload</h3>
-                  <p className="text-sm text-gray-400">Upload a high-resolution portrait or short video. AI will extract the best frames automatically.</p>
+                  <div className="absolute top-0 right-0 p-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <ChevronRight className="w-5 h-5 text-ai-purple" />
+                  </div>
+                  <Upload className="w-10 h-10 text-ai-purple mb-4" />
+                  <h3 className="text-base font-bold text-text-primary mb-2">Upload Photo / Video</h3>
+                  <p className="text-xs text-text-muted leading-relaxed">Upload a clear portrait file or short MP4 video clips. AI will automatically select the best frame.</p>
                 </button>
               </div>
             </motion.div>
@@ -126,9 +200,9 @@ export default function FaceEnrollmentWizard() {
               exit={{ opacity: 0, scale: 1.05 }}
               className="flex-1 flex flex-col relative"
             >
-              <div className="absolute top-4 left-4 z-10 px-4 py-2 rounded-full bg-black/50 backdrop-blur-md border border-white/10 flex items-center gap-2">
+              <div className="absolute top-4 left-4 z-10 px-4 py-2 rounded-full bg-black/70 backdrop-blur-md border border-glass-border flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-white text-sm font-medium tracking-wide">SCANNING MESH</span>
+                <span className="text-white text-xs font-semibold tracking-wider">CCTV STREAM LIVE</span>
               </div>
 
               {/* Video Feed */}
@@ -142,131 +216,175 @@ export default function FaceEnrollmentWizard() {
                 />
                 
                 {/* HUD Overlay */}
-                <div className="absolute inset-0 pointer-events-none border-[1px] border-blue-500/30 m-8 rounded-3xl" />
+                <div className="absolute inset-0 pointer-events-none border border-ai-blue/30 m-8 rounded-3xl" />
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  {/* Focus reticle */}
-                  <div className="w-64 h-64 border-2 border-dashed border-white/40 rounded-full animate-[spin_10s_linear_infinite]" />
-                  <div className="absolute w-64 h-64 border-2 border-emerald-400/80 rounded-full scale-90" />
+                  <div className="w-64 h-64 border-2 border-dashed border-white/20 rounded-full animate-[spin_20s_linear_infinite]" />
+                  <div className="absolute w-64 h-64 border-2 border-ai-blue/70 rounded-full scale-95" />
                 </div>
               </div>
 
-              {/* Live Telemetry Panel */}
-              <div className="h-32 bg-[#0A0F1E] border-t border-white/10 p-6 flex items-center justify-between">
+              {/* Telemetry Control Panel */}
+              <div className="bg-bg-secondary border-t border-glass-border p-5 flex items-center justify-between">
                 <div>
-                  <h3 className="text-white font-semibold">Generating Neural Embedding...</h3>
-                  <p className="text-sm text-gray-400">Please look directly at the camera and slowly turn your head.</p>
+                  <h3 className="text-text-primary font-bold text-sm">Align Face in the Circle</h3>
+                  <p className="text-xs text-text-muted mt-0.5">Please look straight at the lens and keep neutral facial expression.</p>
                 </div>
-                <div className="flex gap-4">
-                  <div className="flex flex-col items-end">
-                    <span className="text-xs text-gray-500 uppercase tracking-wider">Lighting</span>
-                    <span className={cn("text-lg font-bold", quality.lighting > 80 ? "text-emerald-400" : "text-yellow-400")}>
-                      {quality.lighting.toFixed(1)}%
-                    </span>
+                <div className="flex items-center gap-4">
+                  <Button size="sm" variant="ghost" onClick={resetWizard}>
+                    Back
+                  </Button>
+                  <Button size="sm" onClick={triggerCaptureScan} className="bg-ai-blue text-black font-semibold">
+                    <ScanFace className="w-4 h-4 mr-1.5" />
+                    Process Scan
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {/* STEP 3: PROCESSING PIPELINE ANIMATION */}
+          {step === "PROCESSING" && (
+            <motion.div 
+              key="processing"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex-1 flex flex-col items-center justify-center p-8 bg-black/95 text-xs"
+            >
+              <div className="w-full max-w-md space-y-6">
+                <div className="text-center space-y-2">
+                  <Loader2 className="w-10 h-10 text-ai-blue animate-spin mx-auto" />
+                  <h3 className="text-base font-bold text-text-primary uppercase tracking-wider">AI Recognition Pipeline</h3>
+                  <p className="text-text-muted">Analyzing source biometric data against the institutional grid.</p>
+                </div>
+
+                {/* Progress bar */}
+                <div className="w-full h-2 bg-glass-heavy rounded-full overflow-hidden border border-glass-border">
+                  <div 
+                    className="h-full bg-gradient-to-r from-ai-blue to-ai-purple transition-all duration-150"
+                    style={{ width: `${pipelineProgress}%` }}
+                  />
+                </div>
+
+                {/* Pipeline Checklist */}
+                <div className="space-y-3 pt-2">
+                  <div className={cn("flex items-center justify-between p-2.5 rounded-lg border", pipelineStep >= 1 ? "bg-ai-blue/5 border-ai-blue/20 text-ai-blue" : "bg-glass-light border-glass-border text-text-muted")}>
+                    <span>1. Face Detection (MTCNN Frame Scan)</span>
+                    <span className="font-semibold">{pipelineStep > 1 ? "✓ COMPLETE" : pipelineStep === 1 ? "PROCESSING..." : "PENDING"}</span>
                   </div>
-                  <div className="flex flex-col items-end border-l border-white/10 pl-4">
-                    <span className="text-xs text-gray-500 uppercase tracking-wider">Confidence</span>
-                    <span className="text-lg font-bold text-blue-400">{quality.overall.toFixed(1)}%</span>
+                  <div className={cn("flex items-center justify-between p-2.5 rounded-lg border", pipelineStep >= 2 ? "bg-ai-blue/5 border-ai-blue/20 text-ai-blue" : "bg-glass-light border-glass-border text-text-muted")}>
+                    <span>2. Recognition (512-D InsightFace Embedding)</span>
+                    <span className="font-semibold">{pipelineStep > 2 ? "✓ COMPLETE" : pipelineStep === 2 ? "PROCESSING..." : "PENDING"}</span>
+                  </div>
+                  <div className={cn("flex items-center justify-between p-2.5 rounded-lg border", pipelineStep >= 3 ? "bg-ai-blue/5 border-ai-blue/20 text-ai-blue" : "bg-glass-light border-glass-border text-text-muted")}>
+                    <span>3. FAISS Vector Database Index Search</span>
+                    <span className="font-semibold">{pipelineStep > 3 ? "✓ COMPLETE" : pipelineStep === 3 ? "PROCESSING..." : "PENDING"}</span>
+                  </div>
+                  <div className={cn("flex items-center justify-between p-2.5 rounded-lg border", pipelineStep >= 4 ? "bg-ai-blue/5 border-ai-blue/20 text-ai-blue" : "bg-glass-light border-glass-border text-text-muted")}>
+                    <span>4. DB Clustering & Centroid Density Check</span>
+                    <span className="font-semibold">{pipelineProgress === 100 ? "✓ COMPLETE" : pipelineStep === 4 ? "PROCESSING..." : "PENDING"}</span>
                   </div>
                 </div>
               </div>
             </motion.div>
           )}
 
-          {/* STEP 3: QUALITY ANALYSIS RESULTS */}
+          {/* STEP 4: QUALITY ANALYSIS RESULTS */}
           {step === "QUALITY_ANALYSIS" && (
             <motion.div 
               key="analysis"
               initial={{ opacity: 0, x: 50 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="flex-1 flex flex-col p-8 items-center justify-center"
+              className="flex-1 flex flex-col p-8 items-center justify-center text-xs"
             >
-              <div className="w-full max-w-3xl space-y-8">
-                <div className="text-center mb-10">
-                  <ShieldCheck className="w-16 h-16 text-emerald-400 mx-auto mb-4" />
-                  <h2 className="text-2xl font-bold text-white">Scan Complete</h2>
-                  <p className="text-gray-400 mt-2">The AI has analyzed your facial mesh. Review the quality scores below.</p>
+              <div className="w-full max-w-3xl space-y-6">
+                <div className="text-center mb-6">
+                  <CheckCircle2 className="w-12 h-12 text-success mx-auto mb-2" />
+                  <h2 className="text-lg font-bold text-text-primary uppercase tracking-wider">Quality Analysis Complete</h2>
+                  <p className="text-text-muted mt-1">Review generated vector embedding diagnostics metrics below.</p>
                 </div>
 
+                {/* Display capture source */}
+                {uploadedFileUrl && (
+                  <div className="flex justify-center mb-6">
+                    <div className="relative rounded-xl overflow-hidden border border-glass-border max-w-[240px] aspect-video">
+                      {uploadedFile?.type.startsWith("video") ? (
+                        <video src={uploadedFileUrl} autoPlay loop muted className="w-full h-full object-cover" />
+                      ) : (
+                        <img src={uploadedFileUrl} alt="Uploaded source" className="w-full h-full object-cover" />
+                      )}
+                      <div className="absolute bottom-0 inset-x-0 bg-black/60 py-1 text-center font-mono text-[9px] text-text-secondary">
+                        {uploadedFile?.name}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Quality Metrics Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {/* Lighting */}
-                  <div className={cn("p-6 rounded-xl border flex flex-col items-center justify-center text-center", getQualityColor(quality.lighting))}>
-                    <Sun className="w-8 h-8 mb-3 opacity-80" />
-                    <div className="text-3xl font-black mb-1">{Math.round(quality.lighting)}</div>
-                    <div className="text-xs uppercase tracking-wider font-semibold opacity-80">Lighting & Contrast</div>
+                  <div className={cn("p-5 rounded-xl border flex flex-col items-center justify-center text-center", getQualityColor(quality.lighting))}>
+                    <Sun className="w-7 h-7 mb-2 opacity-80" />
+                    <div className="text-2xl font-black mb-0.5">{Math.round(quality.lighting)}%</div>
+                    <div className="text-[9px] uppercase tracking-wider font-semibold opacity-80">Lighting Uniformity</div>
                   </div>
                   {/* Sharpness */}
-                  <div className={cn("p-6 rounded-xl border flex flex-col items-center justify-center text-center", getQualityColor(quality.sharpness))}>
-                    <Focus className="w-8 h-8 mb-3 opacity-80" />
-                    <div className="text-3xl font-black mb-1">{Math.round(quality.sharpness)}</div>
-                    <div className="text-xs uppercase tracking-wider font-semibold opacity-80">Sharpness</div>
+                  <div className={cn("p-5 rounded-xl border flex flex-col items-center justify-center text-center", getQualityColor(quality.sharpness))}>
+                    <Focus className="w-7 h-7 mb-2 opacity-80" />
+                    <div className="text-2xl font-black mb-0.5">{Math.round(quality.sharpness)}%</div>
+                    <div className="text-[9px] uppercase tracking-wider font-semibold opacity-80">Image Sharpness</div>
                   </div>
                   {/* Overall Quality */}
-                  <div className={cn("p-6 rounded-xl border flex flex-col items-center justify-center text-center bg-blue-500/10 border-blue-500/30 text-blue-400")}>
-                    <Fingerprint className="w-8 h-8 mb-3 opacity-80" />
-                    <div className="text-3xl font-black mb-1">{Math.round(quality.overall)}</div>
-                    <div className="text-xs uppercase tracking-wider font-semibold opacity-80">Embedding Quality</div>
+                  <div className={cn("p-5 rounded-xl border flex flex-col items-center justify-center text-center bg-blue-500/10 border-blue-500/30 text-blue-400")}>
+                    <Fingerprint className="w-7 h-7 mb-2 opacity-80" />
+                    <div className="text-2xl font-black mb-0.5">{Math.round(quality.overall)}%</div>
+                    <div className="text-[9px] uppercase tracking-wider font-semibold opacity-80">Vector Quality Index</div>
                   </div>
                 </div>
 
                 {/* Feedback Panel */}
-                <div className="p-6 rounded-xl bg-white/5 border border-white/10 flex items-start gap-4">
-                  {quality.overall >= 80 ? (
-                    <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0 mt-0.5" />
-                  ) : (
-                    <AlertTriangle className="w-6 h-6 text-yellow-400 shrink-0 mt-0.5" />
-                  )}
+                <div className="p-4 rounded-xl bg-glass-light border border-glass-border flex items-start gap-3">
+                  <ShieldCheck className="w-5 h-5 text-success shrink-0 mt-0.5" />
                   <div>
-                    <h4 className="text-white font-medium">
-                      {quality.overall >= 80 ? "Face quality excellent. Enrollment can continue." : "Quality is acceptable but could be improved. Consider retaking in better light."}
-                    </h4>
-                    <p className="text-sm text-gray-400 mt-1">
-                      A high-quality 512-dimensional vector embedding has been generated. This data is heavily encrypted and stored securely within your institution's isolated database.
+                    <h4 className="text-text-primary font-bold">Biometric Mesh Verified</h4>
+                    <p className="text-[11px] text-text-muted mt-0.5">
+                      A robust 512-dimensional vector embedding was extracted successfully. This signature is encrypted using SHA-256 and stored isolated.
                     </p>
                   </div>
                 </div>
 
                 {/* Actions */}
-                <div className="flex justify-end gap-4 pt-4 border-t border-white/5">
-                  <button 
-                    onClick={startCamera}
-                    className="px-6 py-3 rounded-xl border border-white/10 text-white font-medium hover:bg-white/5 transition-colors"
-                  >
-                    Retake Scan
-                  </button>
-                  <button 
-                    onClick={() => setStep("SUCCESS")}
-                    className="px-8 py-3 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-500 transition-all shadow-[0_0_20px_rgba(16,185,129,0.4)]"
-                  >
+                <div className="flex justify-end gap-3 pt-4 border-t border-glass-border">
+                  <Button variant="ghost" onClick={resetWizard}>
+                    Discard & Retake
+                  </Button>
+                  <Button onClick={() => setStep("SUCCESS")} className="bg-success text-black font-semibold">
                     Finalize Enrollment
-                  </button>
+                  </Button>
                 </div>
               </div>
             </motion.div>
           )}
 
-          {/* STEP 4: SUCCESS */}
+          {/* STEP 5: SUCCESS */}
           {step === "SUCCESS" && (
             <motion.div 
               key="success"
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              className="flex-1 flex flex-col items-center justify-center p-8 text-center"
+              className="flex-1 flex flex-col items-center justify-center p-8 text-center text-xs"
             >
-              <div className="w-24 h-24 rounded-full bg-emerald-500/20 border-2 border-emerald-500 flex items-center justify-center mb-6">
-                <CheckCircle2 className="w-12 h-12 text-emerald-400" />
+              <div className="w-16 h-16 rounded-full bg-success/20 border border-success flex items-center justify-center mb-4">
+                <CheckCircle2 className="w-9 h-9 text-success" />
               </div>
-              <h2 className="text-3xl font-bold text-white mb-4">Identity Secured</h2>
-              <p className="text-gray-400 max-w-md mb-8">
-                The face profile has been securely enrolled and linked to the student ID. Real-time attendance tracking is now active.
+              <h2 className="text-lg font-bold text-text-primary uppercase tracking-wider mb-2">Identity Enrolled</h2>
+              <p className="text-text-muted max-w-sm mb-6 leading-relaxed">
+                Biometric mapping has been written to the institutional database. Live recognition systems will now recognize this student on class cameras.
               </p>
-              <button 
-                onClick={() => setStep("METHOD_SELECTION")}
-                className="px-8 py-3 rounded-xl bg-white/10 text-white font-medium hover:bg-white/20 transition-colors"
-              >
-                Enroll Another Student
-              </button>
+              <Button onClick={resetWizard}>
+                Enroll Another Face Profile
+              </Button>
             </motion.div>
           )}
 

@@ -18,7 +18,8 @@ import {
   Cloud,
   Activity,
   ScanFace,
-  LogOut
+  LogOut,
+  ShieldCheck
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 
@@ -26,6 +27,7 @@ const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/dashboard/students", label: "Students", icon: Users },
   { href: "/dashboard/teachers", label: "Teachers", icon: GraduationCap },
+  { href: "/dashboard/hod", label: "HODs", icon: ShieldCheck },
   { href: "/dashboard/classrooms", label: "Classes", icon: BookOpen },
   { href: "/dashboard/attendance", label: "Attendance", icon: CheckSquare },
   { href: "/dashboard/live-monitoring", label: "Live Monitoring", icon: Activity },

@@ -13,6 +13,8 @@ interface UIState {
   theme: "light" | "dark";
   setTheme: (theme: "light" | "dark") => void;
   toggleTheme: () => void;
+  demoModalOpen: boolean;
+  setDemoModalOpen: (open: boolean) => void;
 }
 
 const getInitialTheme = (): "light" | "dark" => {
@@ -52,4 +54,7 @@ export const useUIStore = create<UIState>((set) => ({
     }
     return { theme: nextTheme };
   }),
+
+  demoModalOpen: false,
+  setDemoModalOpen: (open) => set({ demoModalOpen: open }),
 }));

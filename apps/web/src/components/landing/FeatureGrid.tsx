@@ -3,8 +3,10 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { ScanFace, Activity, ShieldAlert, Laptop, Eye, Network, ArrowUpRight } from "lucide-react";
+import { useUIStore } from "@/store/uiStore";
 
 export function FeatureGrid() {
+  const setDemoModalOpen = useUIStore((s) => s.setDemoModalOpen);
   const features = [
     {
       icon: <ScanFace className="w-6 h-6 text-white" />,
@@ -48,7 +50,10 @@ export function FeatureGrid() {
           <h2 className="text-5xl md:text-6xl font-medium text-white leading-[1.1] tracking-tight mb-8">
             Power your institution with real-time AI
           </h2>
-          <button className="bg-white hover:bg-gray-200 text-black px-6 py-3 rounded-xl text-[15px] font-semibold transition-colors flex items-center gap-2">
+          <button 
+            onClick={() => setDemoModalOpen(true)}
+            className="bg-white hover:bg-gray-200 text-black px-6 py-3 rounded-xl text-[15px] font-semibold transition-colors flex items-center gap-2 cursor-pointer"
+          >
             Book a demo <ArrowUpRight className="w-5 h-5" />
           </button>
         </div>

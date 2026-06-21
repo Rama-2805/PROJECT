@@ -17,6 +17,7 @@ async function main() {
   const roleDefinitions = [
     { name: "SUPER_ADMIN", label: "Super Admin" },
     { name: "INSTITUTION_ADMIN", label: "Institution Admin" },
+    { name: "HOD", label: "Head of Department" },
     { name: "TEACHER", label: "Teacher" },
     { name: "DEVICE_MANAGER", label: "Device Manager" },
     { name: "RESEARCH_ANALYST", label: "Research Analyst" },
@@ -148,6 +149,35 @@ async function main() {
     });
   }
   console.log(`✅ Admin user seeded: ${adminUser.email}`);
+
+  // ─── 7.5 HOD User ──────────────────────────────────────────────
+  const hodPwHash = await argon2.hash("hod123");
+  const hodUser = await prisma.user.upsert({
+    where: { email: "hod@smartcampus.edu" },
+    update: { passwordHash: hodPwHash },
+    create: {
+      institutionId: institution.id,
+      fullName: "Dr. Rajesh Kumar",
+      email: "hod@smartcampus.edu",
+      passwordHash: hodPwHash,
+      emailVerified: true,
+    },
+  });
+
+  await prisma.userRole.upsert({
+    where: {
+      userId_roleId: {
+        userId: hodUser.id,
+        roleId: roles["HOD"].id,
+      },
+    },
+    update: {},
+    create: {
+      userId: hodUser.id,
+      roleId: roles["HOD"].id,
+    },
+  });
+  console.log(`✅ HOD user seeded: ${hodUser.email}`);
 
   // ─── 8. Teacher User + Profile ─────────────────────────────────
   const teacherUser = await prisma.user.upsert({
@@ -339,6 +369,7 @@ async function main() {
   console.log("   Login credentials:");
   console.log("   ─────────────────────────────────────");
   console.log("   Admin:   admin@smartcampus.edu / admin123");
+  console.log("   HOD:     hod@smartcampus.edu / hod123");
   console.log("   Teacher: teacher@smartcampus.edu / teacher123");
   console.log("   Student: student@smartcampus.edu / student123");
   console.log("   ─────────────────────────────────────\n");

@@ -3,15 +3,17 @@
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
 import type { Teacher } from "@/lib/mock/teachers";
-import { Key } from "lucide-react";
+import { Key, X } from "lucide-react";
 
 interface TeacherCardProps {
-  teacher: Teacher;
+  teacher: Teacher & { isCustom?: boolean };
   onView?: (id: string) => void;
   onResetPassword?: (email: string) => void;
+  onEdit?: (email: string) => void;
+  onDelete?: (email: string) => void;
 }
 
-export function TeacherCard({ teacher, onView, onResetPassword }: TeacherCardProps) {
+export function TeacherCard({ teacher, onView, onResetPassword, onEdit, onDelete }: TeacherCardProps) {
   const initials = teacher.fullName.replace("Dr. ", "").split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
 
   return (
@@ -59,21 +61,40 @@ export function TeacherCard({ teacher, onView, onResetPassword }: TeacherCardPro
       <div className="pt-3 border-t border-glass-border flex justify-between items-center">
         <a
           href={`mailto:${teacher.email}`}
-          className="text-[10px] text-ai-blue hover:underline"
+          className="text-[10px] text-ai-blue hover:underline truncate max-w-[120px]"
           onClick={(e) => e.stopPropagation()}
         >
           {teacher.email}
         </a>
-        <button
-          className="p-1 rounded hover:bg-glass-light transition-colors text-text-muted hover:text-amber-400"
-          onClick={(e) => {
-            e.stopPropagation();
-            onResetPassword?.(teacher.email);
-          }}
-          title="Reset Password directly"
-        >
-          <Key className="w-3.5 h-3.5" />
-        </button>
+        <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+          {teacher.isCustom && (
+            <>
+              <button
+                className="p-1 rounded hover:bg-glass-light transition-colors text-text-muted hover:text-blue-500"
+                onClick={() => onEdit?.(teacher.email)}
+                title="Edit Faculty Details"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+              </button>
+              <button
+                className="p-1 rounded hover:bg-glass-light transition-colors text-text-muted hover:text-red-500"
+                onClick={() => onDelete?.(teacher.email)}
+                title="Delete Faculty Account"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </>
+          )}
+          <button
+            className="p-1 rounded hover:bg-glass-light transition-colors text-text-muted hover:text-amber-400"
+            onClick={() => onResetPassword?.(teacher.email)}
+            title="Reset Password directly"
+          >
+            <Key className="w-3.5 h-3.5" />
+          </button>
+        </div>
       </div>
     </motion.div>
   );

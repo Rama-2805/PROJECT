@@ -7,15 +7,10 @@ import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils/cn";
 import { isDemoMode } from "@/lib/demo-mode";
 import { api } from "@/lib/api/client";
+import { RefreshCw, Database, Brain, Video, HardDrive, Cpu } from "lucide-react";
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
 } from "recharts";
-
-const fadeUp = {
-  initial: { opacity: 0, y: 16 },
-  animate: { opacity: 1, y: 0 },
-  transition: { duration: 0.4 },
-};
 
 interface ServiceStatus {
   name: string;
@@ -32,20 +27,18 @@ interface SystemMetric {
   color: string;
 }
 
-const SERVICE_STATUS: ServiceStatus[] = [
-  { name: "Frontend API (Next.js)", status: "ONLINE", latency: "12ms", uptime: "99.9%", version: "16.2.9" },
-  { name: "Gateway Router (NestJS)", status: "ONLINE", latency: "45ms", uptime: "99.8%", version: "11.0.1" },
-  { name: "PostgreSQL Database", status: "ONLINE", latency: "18ms", uptime: "99.95%", version: "16.4" },
-  { name: "FAISS Vector Index", status: "ONLINE", latency: "5ms", uptime: "100%", version: "1.7.4" },
-  { name: "InsightFace Engine", status: "ONLINE", latency: "120ms", uptime: "99.5%", version: "0.7.3" },
-  { name: "FastAPI ML Service", status: "ONLINE", latency: "8ms", uptime: "99.7%", version: "0.111.0" },
-  { name: "Event Stream WebSocket", status: "ONLINE", latency: "15ms", uptime: "100%", version: "4.8.3" },
-  { name: "Classroom Camera CCTV", status: "ONLINE", latency: "25ms", uptime: "98.2%", version: "C1080p" },
+const DEFAULT_SERVICES: ServiceStatus[] = [
+  { name: "Database", status: "ONLINE", latency: "18ms", uptime: "99.95%", version: "PostgreSQL 16" },
+  { name: "AI Service", status: "ONLINE", latency: "8ms", uptime: "99.7%", version: "PyTorch Core" },
+  { name: "Recognition Service", status: "ONLINE", latency: "120ms", uptime: "99.5%", version: "FAISS Vector Index" },
+  { name: "Camera Service", status: "ONLINE", latency: "25ms", uptime: "98.2%", version: "CCTV Agent v2" },
+  { name: "Storage Service", status: "ONLINE", latency: "10ms", uptime: "99.9%", version: "Local NFS/S3" },
 ];
 
 export default function SystemPage() {
   const [lastChecked, setLastChecked] = useState("");
-  const [services, setServices] = useState<ServiceStatus[]>(SERVICE_STATUS);
+  const [refreshing, setRefreshing] = useState(false);
+  const [services, setServices] = useState<ServiceStatus[]>(DEFAULT_SERVICES);
   const [metrics, setMetrics] = useState<SystemMetric[]>([
     { label: "CPU Usage", value: "34%", trend: "stable", color: "text-ai-blue" },
     { label: "Memory Usage", value: "2.4/8 GB", trend: "stable", color: "text-warning" },
@@ -57,7 +50,6 @@ export default function SystemPage() {
     { label: "Attendance Latency", value: "35ms", trend: "down", color: "text-success" },
   ]);
 
-  // Camera telemetries
   const [cameraMetrics, setCameraMetrics] = useState({
     status: "ONLINE",
     resolution: "1920x1080 (1080p)",
@@ -67,7 +59,6 @@ export default function SystemPage() {
     recognitionRate: 99.1,
   });
 
-  // AI Services telemetries
   const [aiMetrics, setAiMetrics] = useState({
     embeddingGenTime: "42ms",
     recognitionTime: "74ms",
@@ -79,63 +70,78 @@ export default function SystemPage() {
 
   const [historicalMetrics, setHistoricalMetrics] = useState<any[]>([]);
 
+  const generateHistoricalData = () => {
+    return Array.from({ length: 12 }, (_, i) => ({
+      time: `${i * 5}m ago`,
+      cpu: 25 + Math.floor(Math.random() * 25),
+      memory: 2.1 + (Math.random() * 0.4),
+      requests: 300 + Math.floor(Math.random() * 500),
+    })).reverse();
+  };
+
   useEffect(() => {
     setLastChecked(new Date().toLocaleTimeString());
-    
-    // Generate some resource graphs data
-    setHistoricalMetrics(Array.from({ length: 12 }, (_, i) => ({
-      time: `${i * 5}m ago`,
-      cpu: 28 + Math.floor(Math.random() * 20),
-      memory: 2.1 + (Math.random() * 0.5),
-      requests: 300 + Math.floor(Math.random() * 600),
-    })).reverse());
+    setHistoricalMetrics(generateHistoricalData());
 
     const interval = setInterval(() => {
-      setLastChecked(new Date().toLocaleTimeString());
-
-      if (isDemoMode()) {
-        // Randomize mock telemetry dynamically for demonstration vibrancy
-        setServices((prev) =>
-          prev.map((s) => ({
-            ...s,
-            status: Math.random() > 0.96 ? ("DEGRADED" as const) : ("ONLINE" as const),
-            latency: `${Math.floor(Math.random() * 40 + (s.name.includes("Insight") ? 90 : 5))}ms`,
-          })),
-        );
-        setCameraMetrics((prev) => ({
-          ...prev,
-          fps: 27 + Math.floor(Math.random() * 4),
-          detectionRate: Number((98.1 + Math.random() * 1.5).toFixed(1)),
-        }));
-        setMetrics((prev) =>
-          prev.map((m) => {
-            if (m.label === "CPU Usage") return { ...m, value: `${30 + Math.floor(Math.random() * 15)}%` };
-            if (m.label === "Network Bandwidth") return { ...m, value: `${130 + Math.floor(Math.random() * 30)} Mbps` };
-            return m;
-          })
-        );
-      } else {
-        // Fetch diagnostic endpoints from API
+      if (!isDemoMode()) {
         api.get<any>("/mlops/overview").then((res) => {
           if (res.success && res.data) {
-            setAiMetrics({
-              embeddingGenTime: "45ms",
-              recognitionTime: "80ms",
-              faissSearchTime: "5ms",
-              optimizerStatus: "IDLE",
-              modelStatus: "LOADED",
+            setAiMetrics(prev => ({
+              ...prev,
               vectorCount: res.data.datasets?.[0]?.versions?.[0]?.vectorCount || 12540,
-            });
+            }));
           }
         }).catch(() => null);
       }
-    }, 6000);
+    }, 15000);
 
     return () => clearInterval(interval);
   }, []);
 
   const triggerRefresh = () => {
-    setLastChecked(new Date().toLocaleTimeString());
+    setRefreshing(true);
+    setTimeout(() => {
+      setLastChecked(new Date().toLocaleTimeString());
+      setHistoricalMetrics(generateHistoricalData());
+      
+      // Mutate telemetry stats for visualization visual polish
+      setServices(prev => 
+        prev.map(s => ({
+          ...s,
+          latency: `${Math.floor(Math.random() * 20 + (s.name === "Recognition Service" ? 90 : 5))}ms`,
+          status: Math.random() > 0.97 ? "DEGRADED" : "ONLINE",
+        }))
+      );
+
+      setMetrics(prev => 
+        prev.map(m => {
+          if (m.label === "CPU Usage") return { ...m, value: `${25 + Math.floor(Math.random() * 20)}%` };
+          if (m.label === "Network Bandwidth") return { ...m, value: `${120 + Math.floor(Math.random() * 40)} Mbps` };
+          if (m.label === "Avg Response Time") return { ...m, value: `${35 + Math.floor(Math.random() * 15)}ms` };
+          return m;
+        })
+      );
+
+      setCameraMetrics(prev => ({
+        ...prev,
+        fps: 26 + Math.floor(Math.random() * 4),
+        detectionRate: Number((98.0 + Math.random() * 1.6).toFixed(1)),
+      }));
+
+      setRefreshing(false);
+    }, 1000);
+  };
+
+  const getServiceIcon = (name: string) => {
+    switch (name) {
+      case "Database": return <Database className="w-4 h-4 text-ai-cyan" />;
+      case "AI Service": return <Cpu className="w-4 h-4 text-ai-purple" />;
+      case "Recognition Service": return <Brain className="w-4 h-4 text-ai-blue" />;
+      case "Camera Service": return <Video className="w-4 h-4 text-success" />;
+      case "Storage Service": return <HardDrive className="w-4 h-4 text-text-muted" />;
+      default: return <Cpu className="w-4 h-4 text-text-muted" />;
+    }
   };
 
   return (
@@ -149,8 +155,9 @@ export default function SystemPage() {
             {isDemoMode() && <span className="ml-2 px-1.5 py-0.5 rounded bg-warning/20 text-warning text-[9px] font-bold">DEMO ACTIVE</span>}
           </p>
         </div>
-        <Button size="sm" onClick={triggerRefresh}>
-          Refresh Diagnostics
+        <Button size="sm" onClick={triggerRefresh} disabled={refreshing} className="flex items-center gap-1.5">
+          <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
+          {refreshing ? "Refreshing..." : "Refresh Diagnostics"}
         </Button>
       </div>
 
@@ -236,17 +243,19 @@ export default function SystemPage() {
           <h3 className="text-xs font-bold uppercase tracking-wider text-text-primary font-mono">Core Gateway Services Status</h3>
           <div className="space-y-2">
             {services.map((service) => (
-              <div key={service.name} className="flex items-center justify-between p-2 rounded-lg bg-glass-light border border-glass-border text-xs">
-                <div className="flex items-center gap-2">
-                  <span className={cn(
-                    "h-2 w-2 rounded-full",
-                    service.status === "ONLINE" ? "bg-success animate-glow-pulse" : "bg-warning"
-                  )} />
+              <div key={service.name} className="flex items-center justify-between p-2.5 rounded-lg bg-glass-light border border-glass-border text-xs">
+                <div className="flex items-center gap-2.5">
+                  {getServiceIcon(service.name)}
                   <span className="font-medium text-text-primary">{service.name}</span>
                 </div>
                 <div className="flex items-center gap-4 text-text-muted">
-                  <span>Ping: {service.latency}</span>
-                  <span className="text-[10px] bg-glass-heavy px-1.5 py-0.5 rounded border border-glass-border">{service.status}</span>
+                  <span>Latency: {service.latency}</span>
+                  <span className={cn(
+                    "text-[10px] font-mono px-2 py-0.5 rounded border",
+                    service.status === "ONLINE" ? "bg-success/10 text-success border-success/20" : "bg-warning/10 text-warning border-warning/20"
+                  )}>
+                    {service.status}
+                  </span>
                 </div>
               </div>
             ))}

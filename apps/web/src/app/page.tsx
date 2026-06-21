@@ -14,6 +14,7 @@ import { Testimonials } from "@/components/landing/Testimonials";
 import { Pricing } from "@/components/landing/Pricing";
 import { FAQ } from "@/components/landing/FAQ";
 import { Footer } from "@/components/landing/Footer";
+import { BookDemoModal } from "@/components/landing/BookDemoModal";
 
 export default function Home() {
   return (
@@ -32,6 +33,7 @@ export default function Home() {
       <Pricing />
       <FAQ />
       <Footer />
+      <BookDemoModal />
     </main>
   );
 }

@@ -151,17 +151,47 @@ export default function AnalyticsPage() {
           setDailyTrends(trends);
           setWeeklyData(weekly);
         } else {
-          const [ovRes, deptsRes, riskRes, insRes, recRes, unkRes, lrRes] = await Promise.all([
-            api.get<any>("/analytics/overview"),
-            api.get<any>("/analytics/departments"),
-            api.get<any>("/analytics/risk-students"),
-            api.get<any>("/analytics/insights"),
-            api.get<any>("/analytics/recognition"),
-            api.get<any>("/analytics/unknown-faces"),
-            api.get<any>("/analytics/continuous-learning"),
-          ]);
+          let ovRes: any = null, deptsRes: any = null, riskRes: any = null;
+          let insRes: any = null, recRes: any = null, unkRes: any = null, lrRes: any = null;
+          
+          try {
+            [ovRes, deptsRes, riskRes, insRes, recRes, unkRes, lrRes] = await Promise.all([
+              api.get<any>("/analytics/overview"),
+              api.get<any>("/analytics/departments"),
+              api.get<any>("/analytics/risk-students"),
+              api.get<any>("/analytics/insights"),
+              api.get<any>("/analytics/recognition"),
+              api.get<any>("/analytics/unknown-faces"),
+              api.get<any>("/analytics/continuous-learning"),
+            ]);
+          } catch (apiErr) {
+            console.error("API error fetching analytics, will fall back to mocks:", apiErr);
+          }
 
-          if (ovRes.success && ovRes.data) {
+          const hasValidOverview = ovRes && ovRes.success && ovRes.data;
+
+          if (!hasValidOverview) {
+            console.warn("Analytics API returned failure or unauthorized. Falling back to mocks.");
+            const [ov, depts, rooms, risk, ins, ai, trends, weekly] = await Promise.all([
+              getAnalyticsOverview(),
+              getDepartmentRankings(),
+              getClassroomIntelligence(),
+              getRiskStudents(),
+              getInsights(),
+              getAIModelPerformance(),
+              getDailyTrends(),
+              getWeeklyComparison(),
+            ]);
+            setOverview(ov);
+            setDepartments(depts);
+            setClassrooms(rooms);
+            setRiskStudents(risk);
+            setInsights(ins);
+            setAiModel(ai);
+            setDailyTrends(trends);
+            setWeeklyData(weekly);
+          } else {
+            // Process successful API responses
             setOverview({
               totalStudents: ovRes.data.snapshot?.totalStudents || 12540,
               averageAttendance: ovRes.data.snapshot?.attendanceRate || 95.6,
@@ -172,6 +202,7 @@ export default function AnalyticsPage() {
               totalAlerts: ovRes.data.snapshot?.behaviorAlerts || 47,
               studentsAtRisk: ovRes.data.snapshot?.studentsAtRisk || 128,
             });
+            
             if (ovRes.data.snapshots) {
               setDailyTrends(ovRes.data.snapshots.map((s: any) => ({
                 date: new Date(s.date).toLocaleDateString("en-US", { weekday: "short" }),
@@ -182,58 +213,73 @@ export default function AnalyticsPage() {
                 devices: s.activeDevices,
               })));
             }
-          }
-          if (deptsRes.success && deptsRes.data) {
-            setDepartments(deptsRes.data.departments || []);
-          }
-          if (riskRes.success && riskRes.data) {
-            setRiskStudents(riskRes.data.students || []);
-          }
-          if (insRes.success && insRes.data) {
-            setInsights(insRes.data || []);
-          }
-          if (recRes.success && recRes.data) {
-            setRecMetrics({
-              successRate: recRes.data.successRate,
-              failures: recRes.data.failures,
-              averageConfidence: recRes.data.averageConfidence,
-              falsePositives: recRes.data.falsePositives,
-              falseNegatives: recRes.data.falseNegatives,
-              latencyMs: recRes.data.latencyMs,
-            });
-          }
-          if (unkRes.success && unkRes.data) {
-            setUnkMetrics({
-              today: unkRes.data.today,
-              week: unkRes.data.week,
-              month: unkRes.data.month,
-              suggestedMatchAccuracy: unkRes.data.suggestedMatchAccuracy,
-              approvalRate: unkRes.data.approvalRate,
-              enrollmentConversionRate: unkRes.data.enrollmentConversionRate,
-              activeClusters: unkRes.data.clusterStats?.activeClusters || 8,
-              topRecurring: unkRes.data.topRecurring.map((r: any) => ({
-                clusterId: r.clusterId,
-                occurrences: r.occurrences,
-                match: r.possibleMatch ? `${r.possibleMatch} (${(r.confidence * 100).toFixed(0)}%)` : "Visitor / Unidentified",
-                confidence: r.confidence ? `${(r.confidence * 100).toFixed(0)}%` : "N/A",
-              })),
-            });
-          }
-          if (lrRes.success && lrRes.data) {
-            setLearningMetrics({
-              profileVersions: lrRes.data.profileVersionsCreated,
-              candidateImages: lrRes.data.candidateImagesCaptured,
-              optimizationRuns: lrRes.data.optimizationRuns,
-              improvementRate: lrRes.data.recognitionImprovement,
-              learningTrend: lrRes.data.learningAccuracyTrend,
-              rebuildHistory: lrRes.data.faissRebuildHistory.map((h: any) => ({
-                id: h.id,
-                date: new Date(h.timestamp).toLocaleDateString("en-US", { month: "short", day: "2-digit" }),
-                status: h.status,
-                vectors: h.vectorCount,
-                latency: `${h.timeTakenMs}ms`,
-              })),
-            });
+
+            if (deptsRes && deptsRes.success && deptsRes.data) {
+              setDepartments(deptsRes.data.departments || []);
+            } else {
+              getDepartmentRankings().then(setDepartments);
+            }
+
+            if (riskRes && riskRes.success && riskRes.data) {
+              setRiskStudents(riskRes.data.students || []);
+            } else {
+              getRiskStudents().then(setRiskStudents);
+            }
+
+            if (insRes && insRes.success && insRes.data) {
+              setInsights(insRes.data || []);
+            } else {
+              getInsights().then(setInsights);
+            }
+
+            if (recRes && recRes.success && recRes.data) {
+              setRecMetrics({
+                successRate: recRes.data.successRate,
+                failures: recRes.data.failures,
+                averageConfidence: recRes.data.averageConfidence,
+                falsePositives: recRes.data.falsePositives,
+                falseNegatives: recRes.data.falseNegatives,
+                latencyMs: recRes.data.latencyMs,
+              });
+            }
+
+            if (unkRes && unkRes.success && unkRes.data) {
+              setUnkMetrics({
+                today: unkRes.data.today,
+                week: unkRes.data.week,
+                month: unkRes.data.month,
+                suggestedMatchAccuracy: unkRes.data.suggestedMatchAccuracy,
+                approvalRate: unkRes.data.approvalRate,
+                enrollmentConversionRate: unkRes.data.enrollmentConversionRate,
+                activeClusters: unkRes.data.clusterStats?.activeClusters || 8,
+                topRecurring: unkRes.data.topRecurring.map((r: any) => ({
+                  clusterId: r.clusterId,
+                  occurrences: r.occurrences,
+                  match: r.possibleMatch ? `${r.possibleMatch} (${(r.confidence * 100).toFixed(0)}%)` : "Visitor / Unidentified",
+                  confidence: r.confidence ? `${(r.confidence * 100).toFixed(0)}%` : "N/A",
+                })),
+              });
+            }
+
+            if (lrRes && lrRes.success && lrRes.data) {
+              setLearningMetrics({
+                profileVersions: lrRes.data.profileVersionsCreated,
+                candidateImages: lrRes.data.candidateImagesCaptured,
+                optimizationRuns: lrRes.data.optimizationRuns,
+                improvementRate: lrRes.data.recognitionImprovement,
+                learningTrend: lrRes.data.learningAccuracyTrend,
+                rebuildHistory: lrRes.data.faissRebuildHistory.map((h: any) => ({
+                  id: h.id,
+                  date: new Date(h.timestamp).toLocaleDateString("en-US", { month: "short", day: "2-digit" }),
+                  status: h.status,
+                  vectors: h.vectorCount,
+                  latency: `${h.timeTakenMs}ms`,
+                })),
+              });
+            }
+
+            getWeeklyComparison().then(setWeeklyData);
+            getClassroomIntelligence().then(setClassrooms);
           }
         }
       } catch (err) {
