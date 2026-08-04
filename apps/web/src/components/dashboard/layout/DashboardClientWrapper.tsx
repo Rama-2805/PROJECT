@@ -15,9 +15,19 @@ export function DashboardClientWrapper({ children }: { children: React.ReactNode
   const [mounted, setMounted] = useState(false);
   const [showIntro, setShowIntro] = useState(false);
 
-  // Avoid hydration mismatch by waiting for mount
+  // Avoid hydration mismatch by waiting for mount & enforce admin role guard
   useEffect(() => {
     setMounted(true);
+    if (typeof window !== "undefined") {
+      const role = localStorage.getItem("user-role");
+      if (role === "student") {
+        window.location.href = "/student/dashboard";
+        return;
+      } else if (role === "teacher") {
+        window.location.href = "/teacher/dashboard";
+        return;
+      }
+    }
     const hasShown = sessionStorage.getItem("admin-intro-shown");
     if (!hasShown) {
       setShowIntro(true);

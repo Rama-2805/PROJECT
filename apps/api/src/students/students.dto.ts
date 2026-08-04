@@ -1,4 +1,5 @@
-import { IsString, IsOptional, IsEmail, IsNumber, IsBoolean, IsDateString, Min, Max } from "class-validator";
+import { IsString, IsOptional, IsEmail, IsNumber, IsDateString, Min, Max } from "class-validator";
+import { Type } from "class-transformer";
 
 export class CreateStudentDto {
   @IsString() institutionId: string;
@@ -13,7 +14,7 @@ export class CreateStudentDto {
   @IsOptional() @IsDateString() dateOfBirth?: string;
   @IsOptional() @IsString() semester?: string;
   @IsOptional() @IsString() section?: string;
-  @IsOptional() @IsNumber() batchYear?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() batchYear?: number;
   @IsOptional() @IsString() status?: string;
 }
 
@@ -39,8 +40,8 @@ export class StudentQueryDto {
   @IsOptional() @IsString() section?: string;
   @IsOptional() @IsString() status?: string;
   @IsOptional() @IsString() search?: string;
-  @IsOptional() @IsNumber() @Min(1) page?: number;
-  @IsOptional() @IsNumber() @Min(1) @Max(100) limit?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) page?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) @Max(1000) limit?: number;
   @IsOptional() @IsString() sortBy?: string;
   @IsOptional() @IsString() sortOrder?: "asc" | "desc";
 }

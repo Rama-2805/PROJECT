@@ -25,16 +25,86 @@ export class UsersService {
   }
 
   async create(dto: CreateUserDto) {
-    const passwordHash = await argon2.hash(dto.password);
-    return this.prisma.user.create({
+    const passwordHash = await argon2.hash(dto.password || "demo123");
+
+    const user = await this.prisma.user.create({
       data: {
         institutionId: dto.institutionId,
         fullName: dto.fullName,
         email: dto.email,
         passwordHash,
+        mustChangePassword: true,
       },
-      include: { userRoles: { include: { role: true } } },
     });
+
+    const roleName = dto.role?.toUpperCase();
+    if (roleName) {
+      const roleRecord = await this.prisma.role.upsert({
+        where: { name: roleName },
+        update: {},
+        create: { name: roleName, label: roleName },
+      });
+      await this.prisma.userRole.upsert({
+        where: { userId_roleId: { userId: user.id, roleId: roleRecord.id } },
+        update: {},
+        create: { userId: user.id, roleId: roleRecord.id },
+      });
+    }
+
+    if (roleName === "STUDENT") {
+      const existingStudent = await this.prisma.student.findFirst({ where: { email: dto.email } });
+      if (!existingStudent) {
+        const dept = await this.prisma.department.findFirst({ where: { institutionId: dto.institutionId } });
+        const course = await this.prisma.course.findFirst({ where: { institutionId: dto.institutionId } });
+        if (dept && course) {
+          const studentCount = await this.prisma.student.count();
+          const studentId = `STU${String(studentCount + 1).padStart(4, "0")}`;
+          await this.prisma.student.create({
+            data: {
+              institutionId: dto.institutionId,
+              departmentId: dept.id,
+              courseId: course.id,
+              studentId,
+              fullName: dto.fullName,
+              email: dto.email,
+              userId: user.id,
+              semester: 1,
+            },
+          });
+        }
+      } else {
+        await this.prisma.student.update({
+          where: { id: existingStudent.id },
+          data: { userId: user.id },
+        });
+      }
+    } else if (roleName === "TEACHER" || roleName === "HOD") {
+      const existingTeacher = await this.prisma.teacher.findFirst({ where: { email: dto.email } });
+      if (!existingTeacher) {
+        const dept = await this.prisma.department.findFirst({ where: { institutionId: dto.institutionId } });
+        if (dept) {
+          const teacherCount = await this.prisma.teacher.count();
+          const employeeId = `EMP${String(teacherCount + 1).padStart(4, "0")}`;
+          await this.prisma.teacher.create({
+            data: {
+              institutionId: dto.institutionId,
+              departmentId: dept.id,
+              employeeId,
+              fullName: dto.fullName,
+              email: dto.email,
+              userId: user.id,
+            },
+          });
+        }
+      } else {
+        await this.prisma.teacher.update({
+          where: { id: existingTeacher.id },
+          data: { userId: user.id },
+        });
+      }
+    }
+
+    return user;
   }
 
   async update(id: string, dto: UpdateUserDto) {

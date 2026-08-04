@@ -80,6 +80,7 @@ model User {
   // --- NEW FIELDS ---
 
   phoneNumber           String?
+  mustChangePassword    Boolean                @default(true)
   passwordChangedAt     DateTime?
   emailVerified         Boolean                @default(false)
   twoFactorEnabled      Boolean                @default(false)
@@ -92,6 +93,7 @@ model User {
   deviceCommands        DeviceCommand[]
   reports               Report[]
   notifications         Notification[]
+  student               Student?
 
   @@index([institutionId])
   @@index([email])
@@ -333,12 +335,18 @@ model Student {
   department  Department  @relation(fields: [departmentId], references: [id], onDelete: Cascade)
   course      Course      @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
-  // --- NEW FIELDS ---
+  userId               String?   @unique
+  usn                  String?
+  programId            String?
+  sectionId            String?
+  primaryFaceImagePath String?
 
+  user              User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
   attendanceRecords AttendanceRecord[]
   behaviorEvents    BehaviorEvent[]
   faceProfile       FaceProfile?
   faceEmbeddings    FaceEmbedding[]
+  faceImages        FaceImage[]
   studentParents    StudentParent[]
 
   @@unique([institutionId, studentId])
@@ -1488,3 +1496,135 @@ model DemoRequest {
   status          String   @default("NEW") // NEW, CONTACTED, DEMO_SCHEDULED, CONVERTED, REJECTED
   createdAt       DateTime @default(now())
 }
+
+/**
+ * ─── ENROLLMENT PIPELINE MODELS ─────────────────────────────────
+ */
+
+model EnrollmentSession {
+  id                 String   @id @default(cuid())
+  institutionId      String
+  name               String
+  classroomId        String?
+  departmentId       String?
+  programId          String?
+  semesterId         String?
+  sectionId          String?
+  subjectId          String?
+  teacherId          String?
+  lectureDate        String?
+  lectureTime        String?
+  status             String   @default("PENDING")
+  totalVideos        Int      @default(0)
+  progressPercentage Float    @default(0)
+  processedFrames    Int      @default(0)
+  detectedFacesCount Int      @default(0)
+  generatedClusters  Int      @default(0)
+  errorMessage       String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  videos          EnrollmentVideo[]
+  studentClusters StudentCluster[]
+  audits          EnrollmentAudit[]
+}
+
+model EnrollmentVideo {
+  id                  String   @id @default(cuid())
+  enrollmentSessionId String
+  fileName            String
+  filePath            String
+  fileSize            Int?
+  duration            Float?
+  fps                 Float?
+  totalFrames         Int?
+  status              String   @default("QUEUED")
+  errorMessage        String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  session EnrollmentSession @relation(fields: [enrollmentSessionId], references: [id], onDelete: Cascade)
+}
+
+model StudentCluster {
+  id                  String   @id @default(cuid())
+  enrollmentSessionId String
+  clusterNumber       Int
+  sampleCount         Int      @default(0)
+  qualityAvg          Float    @default(0)
+  confidence          Float    @default(0)
+  bestImagePath       String?
+  firstSeenTime       String?
+  lastSeenTime        String?
+  status              String   @default("UNASSIGNED")
+  assignedStudentId   String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  session     EnrollmentSession   @relation(fields: [enrollmentSessionId], references: [id], onDelete: Cascade)
+  images      ClusterImage[]
+  assignments ClusterAssignment[]
+}
+
+model ClusterImage {
+  id               String   @id @default(cuid())
+  studentClusterId String
+  frameNumber      Int      @default(0)
+  videoFileName    String?
+  timestampSec     Float    @default(0)
+  qualityScore     Float    @default(0)
+  isBest           Boolean  @default(false)
+  imagePath        String?
+  thumbnailPath    String?
+  createdAt        DateTime @default(now())
+
+  cluster StudentCluster @relation(fields: [studentClusterId], references: [id], onDelete: Cascade)
+}
+
+model ClusterAssignment {
+  id               String   @id @default(cuid())
+  studentClusterId String
+  studentId        String
+  confidence       Float    @default(1.0)
+  assignedBy       String?
+  assignedAt       DateTime @default(now())
+
+  cluster StudentCluster @relation(fields: [studentClusterId], references: [id], onDelete: Cascade)
+}
+
+model EnrollmentAudit {
+  id                  String   @id @default(cuid())
+  enrollmentSessionId String
+  action              String
+  details             String?
+  performedBy         String?
+  createdAt           DateTime @default(now())
+
+  session EnrollmentSession @relation(fields: [enrollmentSessionId], references: [id], onDelete: Cascade)
+}
+
+model FaceImage {
+  id           String   @id @default(cuid())
+  studentId    String
+  imagePath    String
+  qualityScore Float    @default(0)
+  isPrimary    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+}
+
+model UnknownCluster {
+  id                 String   @id @default(cuid())
+  institutionId      String
+  clusterNumber      Int
+  sampleCount        Int      @default(0)
+  qualityAvg         Float    @default(0)
+  bestImagePath      String?
+  status             String   @default("UNASSIGNED")
+  assignedStudentId  String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+

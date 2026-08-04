@@ -1,0 +1,3 @@
+student_id,saved_images_count,avg_quality_score,first_seen_timestamp,last_seen_timestamp,first_seen_video,last_seen_video
+Student_001,11681,1.0,00:00:00,01:31:33,1.mp4,5.mp4
+Student_002,8,1.0,00:55:43,01:12:37,1.mp4,5.mp4

@@ -12,7 +12,7 @@ export class TeachersController {
   constructor(private teachers: TeachersService) {}
 
   @Get()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
   findAll(
     @Query("institutionId") institutionId?: string,
     @Query("departmentId") departmentId?: string,
@@ -21,7 +21,7 @@ export class TeachersController {
   }
 
   @Get(":id")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
   findById(@Param("id") id: string) {
     return this.teachers.findById(id);
   }

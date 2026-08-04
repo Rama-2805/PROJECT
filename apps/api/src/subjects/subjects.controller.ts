@@ -12,7 +12,7 @@ export class SubjectsController {
   constructor(private subjects: SubjectsService) {}
 
   @Get()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
   findAll(
     @Query("institutionId") institutionId?: string,
     @Query("courseId") courseId?: string,
@@ -22,7 +22,7 @@ export class SubjectsController {
   }
 
   @Get(":id")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
   findById(@Param("id") id: string) {
     return this.subjects.findById(id);
   }

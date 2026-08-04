@@ -1,695 +1,588 @@
 "use client";
 
-import { useRef, useState, useMemo, useEffect } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useRef, useState, useMemo, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Filter, MoreHorizontal, Download, UserPlus, ShieldAlert, X, Key, ShieldCheck } from "lucide-react";
+import {
+  Search, Filter, Download, UserPlus, X,
+  Loader2, RefreshCw, Mail, Phone, User,
+  GraduationCap, ChevronLeft, ChevronRight,
+  Users, CheckCircle2, AlertCircle, BadgeCheck, Key, ShieldCheck
+} from "lucide-react";
 import { cn } from "@/lib/utils/cn";
-import { useRouter } from "next/navigation";
-import { initializeUserStore, getUsers, saveUsers, createUser, updateUserPassword, hashPassword } from "@/lib/userStore";
+import { apiRequest } from "@/lib/api/client";
 
-// Mock Data Generator for standard students
-const MOCK_DEPARTMENTS = ["CSE", "ISE", "ECE", "EEE", "AIML", "CSE(AI)", "MECH", "CIVIL"];
-const generateMockStudents = (count: number) => {
-  return Array.from({ length: count }, (_, i) => ({
-    id: `mock-stu-${10000 + i}`,
-    studentId: `STU-${10000 + i}`,
-    name: `Student ${i + 1}`,
-    department: MOCK_DEPARTMENTS[Math.floor(Math.random() * MOCK_DEPARTMENTS.length)],
-    semester: Math.floor(Math.random() * 8) + 1,
-    attendance: Math.floor(Math.random() * 40) + 60,
-    engagement: Math.floor(Math.random() * 50) + 50,
-    riskLevel: Math.random() > 0.9 ? "HIGH" : Math.random() > 0.7 ? "MEDIUM" : "LOW",
-    status: "ACTIVE" as const,
-    isCustom: false
-  }));
+/* ═══════════════════════════════════════════════════════════════════
+   TYPES
+═══════════════════════════════════════════════════════════════════ */
+interface Department { id: string; name: string; code: string; }
+interface Course     { id: string; name: string; code: string; }
+
+interface Student {
+  id: string;
+  studentId: string;
+  rollNumber?: string | null;
+  fullName: string;
+  email?: string | null;
+  phone?: string | null;
+  gender?: string | null;
+  dateOfBirth?: string | null;
+  semester: number;
+  section?: string | null;
+  status: string;
+  faceEnrolled: boolean;
+  attendancePercentage: number;
+  department: Department;
+  course: Course;
+}
+
+interface ApiResponse {
+  data: Student[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+}
+
+const GENDER_COLORS: Record<string, string> = {
+  Male:   "text-blue-400 bg-blue-500/10 border-blue-500/30",
+  Female: "text-pink-400 bg-pink-500/10 border-pink-500/30",
 };
 
+const PAGE_SIZE = 1000;
+
+/* ═══════════════════════════════════════════════════════════════════
+   AVATAR
+═══════════════════════════════════════════════════════════════════ */
+function Avatar({ name, gender }: { name: string; gender?: string | null }) {
+  const letter = name?.charAt(0)?.toUpperCase() || "?";
+  const isFemale = gender?.toLowerCase().includes("f");
+  return (
+    <div className={cn(
+      "w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold border shrink-0",
+      isFemale
+        ? "bg-gradient-to-br from-pink-500/20 to-purple-500/20 border-pink-500/30 text-pink-300"
+        : "bg-gradient-to-br from-blue-500/20 to-cyan-500/20 border-blue-500/30 text-blue-300"
+    )}>
+      {letter}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   SKELETON ROW
+═══════════════════════════════════════════════════════════════════ */
+function SkeletonRow() {
+  return (
+    <div className="grid grid-cols-12 gap-3 px-4 py-3.5 border-b border-glass-border/30 items-center animate-pulse">
+      <div className="col-span-3 flex items-center gap-3">
+        <div className="w-9 h-9 rounded-full bg-glass-light" />
+        <div className="flex-1 space-y-1.5">
+          <div className="h-3 bg-glass-light rounded w-3/4" />
+          <div className="h-2.5 bg-glass-light/50 rounded w-1/2" />
+        </div>
+      </div>
+      <div className="col-span-2"><div className="h-3 bg-glass-light rounded w-5/6" /></div>
+      <div className="col-span-2"><div className="h-3 bg-glass-light rounded w-2/3" /></div>
+      <div className="col-span-2"><div className="h-3 bg-glass-light rounded w-3/4" /></div>
+      <div className="col-span-2"><div className="h-3 bg-glass-light rounded w-1/2" /></div>
+      <div className="col-span-1"><div className="h-5 bg-glass-light rounded-full w-12" /></div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   MAIN PAGE
+═══════════════════════════════════════════════════════════════════ */
 export default function StudentsPage() {
-  const parentRef = useRef<HTMLDivElement>(null);
-  const router = useRouter();
-  
+  const [students,    setStudents]    = useState<Student[]>([]);
+  const [total,       setTotal]       = useState(0);
+  const [totalPages,  setTotalPages]  = useState(1);
+  const [page,        setPage]        = useState(1);
+  const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState<string | null>(null);
+
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterRisk, setFilterRisk] = useState<string>("ALL");
-  const [refreshKey, setRefreshKey] = useState(0);
+  const [deptFilter,  setDeptFilter]  = useState("ALL");
+  const [semFilter,   setSemFilter]   = useState("ALL");
+  const [genderFilter,setGenderFilter]= useState("ALL");
 
-  // Modals
-  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [isResetModalOpen, setIsResetModalOpen] = useState(false);
+  const [departments, setDepartments] = useState<Department[]>([]);
 
-  // Add Form States
-  const [addName, setAddName] = useState("");
-  const [addEmail, setAddEmail] = useState("");
-  const [addDept, setAddDept] = useState("CSE");
-  const [emailManuallyEdited, setEmailManuallyEdited] = useState(false);
-  const [addError, setAddError] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Edit Form States
-  const [editTargetEmail, setEditTargetEmail] = useState("");
-  const [editName, setEditName] = useState("");
-  const [editDept, setEditDept] = useState("CSE");
-  const [editSemester, setEditSemester] = useState(1);
-  const [editError, setEditError] = useState<string | null>(null);
-
-  // Reset Password States
-  const [resetTargetEmail, setResetTargetEmail] = useState("");
-  const [resetPassword, setResetPassword] = useState("");
-  const [resetConfirm, setResetConfirm] = useState("");
-  const [resetError, setResetError] = useState<string | null>(null);
-  const [resetSuccess, setResetSuccess] = useState<string | null>(null);
-
+  // ── Load departments once ─────────────────────────────────────
   useEffect(() => {
-    initializeUserStore();
+    apiRequest<any>("/departments").then(res => {
+      if (res && !res.error && !(res as any).statusCode) {
+        const list = Array.isArray(res) 
+          ? res 
+          : (Array.isArray(res.data) ? res.data : (res.data?.data ?? []));
+        setDepartments(list);
+      }
+    });
   }, []);
 
-  // Dynamic email generation
-  useEffect(() => {
-    if (!emailManuallyEdited && addName) {
-      const sanitizedName = addName.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const deptMap: Record<string, string> = {
-        "CSE": "cs",
-        "ISE": "is",
-        "ECE": "ec",
-        "EEE": "ee",
-        "AIML": "ai",
-        "CSE(AI)": "csai",
-        "MECH": "mech",
-        "CIVIL": "civil"
-      };
-      const deptCode = deptMap[addDept] || "cs";
-      setAddEmail(`${sanitizedName}.${deptCode}2023@vemana.edu.in`);
-    }
-  }, [addName, addDept, emailManuallyEdited]);
-
-  // Generate Base Mock List
-  const mockStudentsBase = useMemo(() => generateMockStudents(100), []); // compaction to 100 for high performance rendering
-
-  const allStudents = useMemo(() => {
-    const users = getUsers();
-    const customStudents = Object.values(users)
-      .filter((u) => u.role === "student")
-      .map((u, idx) => ({
-        id: u.email, // Use email as unique ID to trigger password resets/edits
-        studentId: u.studentId || `1VI23CS${String(100 + idx).padStart(3, "0")}`,
-        name: u.fullName,
-        department: u.department || "CSE",
-        semester: u.semester || 1,
-        attendance: 94,
-        engagement: 90,
-        riskLevel: "LOW" as const,
-        status: "ACTIVE" as const,
-        isCustom: true
-      }));
-
-    return [...customStudents, ...mockStudentsBase];
-  }, [refreshKey, mockStudentsBase]);
-
-  const filteredStudents = useMemo(() => {
-    return allStudents.filter(student => {
-      const name = student.name || "";
-      const sId = student.studentId || "";
-      const emailId = student.id || "";
-      const dept = student.department || "";
-      const matchesSearch = name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                            sId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            emailId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                            dept.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesRisk = filterRisk === "ALL" || student.riskLevel === filterRisk;
-      return matchesSearch && matchesRisk;
-    });
-  }, [allStudents, searchQuery, filterRisk]);
-
-  const rowVirtualizer = useVirtualizer({
-    count: filteredStudents.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 64, // 64px row height
-    overscan: 10,
-  });
-
-  const handleAddStudentSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAddError(null);
-
-    if (!addEmail.endsWith(".edu.in")) {
-      setAddError("Student email must end with .edu.in");
-      return;
-    }
-
+  // ── Fetch students (Always sorted by USN / studentId ascending) ──
+  const fetchStudents = useCallback(async (
+    pageNum: number,
+    search: string,
+    deptId: string,
+    semesterVal: string,
+  ) => {
+    setLoading(true);
+    setError(null);
     try {
-      await createUser(addEmail, addName, "student", addDept);
-      setAddName("");
-      setAddEmail("");
-      setEmailManuallyEdited(false);
-      setIsAddModalOpen(false);
-      setRefreshKey(prev => prev + 1); // Trigger update
-    } catch (err: any) {
-      setAddError(err.message || "Failed to create student account");
-    }
-  };
-
-  const handleEditStudentSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setEditError(null);
-
-    const users = getUsers();
-    if (users[editTargetEmail]) {
-      users[editTargetEmail].fullName = editName;
-      users[editTargetEmail].department = editDept;
-      users[editTargetEmail].semester = Number(editSemester);
-      saveUsers(users);
-      setIsEditModalOpen(false);
-      setRefreshKey(prev => prev + 1);
-    } else {
-      setEditError("Student not found");
-    }
-  };
-
-  const handlePromoteAll = () => {
-    if (confirm("Are you sure you want to promote all students to the next semester? This will update their semester numbers without altering history, emails, or embeddings.")) {
-      const users = getUsers();
-      let count = 0;
-      Object.keys(users).forEach(email => {
-        if (users[email].role === "student") {
-          const currentSem = users[email].semester || 1;
-          if (currentSem < 8) {
-            users[email].semester = currentSem + 1;
-            count++;
-          }
-        }
+      const params = new URLSearchParams({
+        page: String(pageNum),
+        limit: String(PAGE_SIZE),
+        sortBy: "studentId",
+        sortOrder: "asc",
       });
-      saveUsers(users);
-      setRefreshKey(prev => prev + 1);
-      alert(`Successfully promoted ${count} students!`);
+      if (search)            params.set("search", search);
+      if (deptId !== "ALL")  params.set("departmentId", deptId);
+      if (semesterVal !== "ALL") params.set("semester", semesterVal);
+
+      const res = await apiRequest<any>(`/students?${params}`);
+      
+      // Check if response is valid (no error status)
+      if (res && !res.error && !(res as any).statusCode) {
+        // Extract student array (handles both raw NestJS response and wrapper)
+        let studentList: Student[] = [];
+        if (Array.isArray(res)) {
+          studentList = res;
+        } else if (Array.isArray(res.data)) {
+          studentList = res.data;
+        } else if (Array.isArray(res.data?.data)) {
+          studentList = res.data.data;
+        }
+
+        const totalCount = typeof (res as any).total === "number"
+          ? (res as any).total
+          : (typeof res.data?.total === "number" ? res.data.total : studentList.length);
+
+        const pagesCount = typeof (res as any).totalPages === "number"
+          ? (res as any).totalPages
+          : (typeof res.data?.totalPages === "number" ? res.data.totalPages : Math.ceil(totalCount / PAGE_SIZE));
+
+        setStudents(studentList);
+        setTotal(totalCount);
+        setTotalPages(Math.max(1, pagesCount));
+      } else {
+        const rawRes = res as any;
+        const errMsg = Array.isArray(rawRes?.message) ? rawRes.message.join(", ") : (rawRes?.message || rawRes?.error || "Failed to load students");
+        setError(errMsg);
+      }
+    } catch {
+      setError("Network error — could not reach the API.");
+    } finally {
+      setLoading(false);
     }
-  };
+  }, []);
 
-  const handleExportCSV = () => {
-    const headers = ["Student ID", "Name", "Email", "Department", "Semester", "Attendance", "AI Risk Level", "Status"];
-    const rows = filteredStudents.map(s => [
-      s.studentId,
-      s.name,
-      s.id,
-      s.department,
-      s.semester,
-      `${s.attendance}%`,
-      s.riskLevel,
-      s.status
-    ]);
-    
-    const csvContent = [headers.join(","), ...rows.map(r => r.map(val => `"${val}"`).join(","))].join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", "smartcampus_students.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  // Debounce search and filter triggers
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setPage(1);
+      fetchStudents(1, searchQuery, deptFilter, semFilter);
+    }, 350);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  }, [searchQuery, deptFilter, semFilter, fetchStudents]);
 
-  const triggerResetPassword = (email: string) => {
-    setResetTargetEmail(email);
-    setResetPassword("");
-    setResetConfirm("");
-    setResetError(null);
-    setResetSuccess(null);
-    setIsResetModalOpen(true);
-  };
+  useEffect(() => {
+    fetchStudents(page, searchQuery, deptFilter, semFilter);
+  }, [page]); // eslint-disable-line
 
-  const handleResetPasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setResetError(null);
-    setResetSuccess(null);
-
-    if (resetPassword.length < 6) {
-      setResetError("Password must be at least 6 characters long.");
-      return;
+  // Filter by gender and apply strict USN sorting
+  const displayStudents = useMemo(() => {
+    let list = students;
+    if (genderFilter !== "ALL") {
+      list = list.filter(s =>
+        s.gender?.toLowerCase().startsWith(genderFilter[0].toLowerCase())
+      );
     }
+    return [...list].sort((a, b) => {
+      const usnA = a.studentId || a.rollNumber || "";
+      const usnB = b.studentId || b.rollNumber || "";
+      return usnA.localeCompare(usnB, undefined, { numeric: true, sensitivity: "base" });
+    });
+  }, [students, genderFilter]);
 
-    if (resetPassword !== resetConfirm) {
-      setResetError("Passwords do not match.");
-      return;
-    }
+  const [resetModalStudent, setResetModalStudent] = useState<Student | null>(null);
+  const [resetting, setResetting] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  const handleConfirmResetPassword = async () => {
+    if (!resetModalStudent) return;
+    setResetting(true);
     try {
-      const hashedPass = await hashPassword(resetPassword);
-      await updateUserPassword(resetTargetEmail, hashedPass, false);
-      setResetSuccess(`Password updated successfully for ${resetTargetEmail}!`);
-      setResetPassword("");
-      setResetConfirm("");
-      setTimeout(() => {
-        setIsResetModalOpen(false);
-        setResetSuccess(null);
-      }, 1500);
-    } catch (err: any) {
-      setResetError(err.message || "Failed to reset password");
+      const res = await apiRequest<any>(`/students/${resetModalStudent.id}/reset-password`, {
+        method: "POST",
+      });
+      if (res && !res.error && !(res as any).statusCode) {
+        setToastMessage(`🔑 Password for ${resetModalStudent.fullName} (${resetModalStudent.studentId}) has been reset to demo123`);
+        setTimeout(() => setToastMessage(null), 6000);
+      } else {
+        alert((res as any)?.message || res?.error || "Failed to reset password");
+      }
+    } catch {
+      alert("Network error — could not reset password.");
+    } finally {
+      setResetting(false);
+      setResetModalStudent(null);
     }
+  };
+
+  // Stats
+  const maleCount   = students.filter(s => s.gender?.toLowerCase().startsWith("m")).length;
+  const femaleCount = students.filter(s => s.gender?.toLowerCase().startsWith("f")).length;
+  const enrolledCount = students.filter(s => s.faceEnrolled).length;
+
+  // Export CSV
+  const handleExportCSV = () => {
+    const headers = ["USN", "Name", "Gender", "College Email", "Mobile", "Department", "Semester", "Status"];
+    const rows = displayStudents.map(s => [
+      s.studentId || s.rollNumber || "",
+      s.fullName,
+      s.gender || "",
+      s.email || "",
+      s.phone || "",
+      s.department?.code || "",
+      s.semester,
+      s.status,
+    ]);
+    const csv = [headers, ...rows].map(r => r.map(v => `"${v}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `CSE_Students_${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)] space-y-6">
-      
-      {/* Header Actions */}
+    <div className="flex flex-col h-[calc(100vh-120px)] space-y-4">
+
+      {/* ── Header ─────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-text-primary tracking-wide">Student Directory</h1>
-          <p className="text-text-muted text-sm mt-1">Manage {filteredStudents.length.toLocaleString()} enrolled students</p>
+          <p className="text-text-muted text-sm mt-0.5">
+            {loading ? "Loading..." : `${total.toLocaleString()} students across all departments`}
+          </p>
         </div>
-        
-        <div className="flex items-center gap-3">
-          <button 
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => fetchStudents(page, searchQuery, deptFilter, semFilter)}
+            className="flex items-center gap-2 rounded-lg border border-glass-border bg-glass-light px-3 py-2 text-sm text-text-primary hover:bg-glass-medium transition-colors cursor-pointer"
+            title="Refresh"
+          >
+            <RefreshCw className={cn("w-4 h-4", loading && "animate-spin")} />
+          </button>
+          <button
             onClick={handleExportCSV}
             className="flex items-center gap-2 rounded-lg border border-glass-border bg-glass-light px-4 py-2 text-sm font-medium text-text-primary hover:bg-glass-medium transition-colors cursor-pointer"
           >
             <Download className="w-4 h-4" /> Export CSV
           </button>
-          <button 
-            onClick={handlePromoteAll}
-            className="flex items-center gap-2 rounded-lg border border-glass-border bg-glass-light px-4 py-2 text-sm font-medium text-text-primary hover:bg-glass-medium transition-colors cursor-pointer"
-          >
-            <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-            </svg>
-            Promote Semesters
-          </button>
-          <button 
-            onClick={() => setIsAddModalOpen(true)}
-            className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition-colors shadow-[0_0_15px_rgba(37,99,235,0.4)] cursor-pointer"
-          >
-            <UserPlus className="w-4 h-4" /> Add Student
-          </button>
         </div>
       </div>
 
-      {/* Advanced Search & Filters */}
-      <div className="flex flex-wrap items-center gap-4 p-4 rounded-xl border border-glass-border bg-glass-light backdrop-blur-md">
-        <div className="relative flex-1 min-w-[250px]">
+      {/* ── Stats Strip ────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[
+          { label: "Total Students",   value: total,         icon: Users,        color: "text-blue-400" },
+          { label: "Male",             value: maleCount,     icon: User,         color: "text-blue-400" },
+          { label: "Female",           value: femaleCount,   icon: User,         color: "text-pink-400" },
+          { label: "Face Enrolled",    value: enrolledCount, icon: BadgeCheck,   color: "text-emerald-400" },
+        ].map(({ label, value, icon: Icon, color }) => (
+          <div key={label} className="flex items-center gap-3 p-3 rounded-xl border border-glass-border bg-glass-light backdrop-blur-md">
+            <Icon className={cn("w-5 h-5 shrink-0", color)} />
+            <div>
+              <p className="text-lg font-bold text-text-primary leading-none">{value}</p>
+              <p className="text-[10px] text-text-muted uppercase tracking-wider mt-0.5">{label}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Search & Filters ───────────────────────────────── */}
+      <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl border border-glass-border bg-glass-light backdrop-blur-md">
+        <div className="relative flex-1 min-w-[220px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-          <input 
-            type="text" 
-            placeholder="Search by name, ID, or department..."
-            className="w-full bg-bg-primary/20 border border-glass-border rounded-lg pl-10 pr-4 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+          <input
+            type="text"
+            placeholder="Search name, USN, email..."
+            className="w-full bg-bg-primary/20 border border-glass-border rounded-lg pl-9 pr-4 py-2 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-blue-500/50"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={e => setSearchQuery(e.target.value)}
           />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
-        
-        <div className="flex items-center gap-2">
-          <Filter className="w-4 h-4 text-text-muted" />
-          <select 
-            value={filterRisk}
-            onChange={(e) => setFilterRisk(e.target.value)}
-            className="bg-bg-primary/20 border border-glass-border rounded-lg px-3 py-2 text-sm text-text-secondary focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Filter className="w-4 h-4 text-text-muted shrink-0" />
+
+          {/* Semester Filter */}
+          <select
+            value={semFilter}
+            onChange={e => { setSemFilter(e.target.value); setPage(1); }}
+            className="bg-bg-primary/20 border border-glass-border rounded-lg px-3 py-2 text-sm text-text-secondary focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer"
           >
-            <option value="ALL" className="bg-bg-secondary text-text-primary">All Risk Levels</option>
-            <option value="HIGH" className="bg-bg-secondary text-text-primary">High Risk</option>
-            <option value="MEDIUM" className="bg-bg-secondary text-text-primary">Medium Risk</option>
-            <option value="LOW" className="bg-bg-secondary text-text-primary">Low Risk</option>
+            <option value="ALL" className="bg-bg-secondary">All Semesters</option>
+            {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+              <option key={s} value={String(s)} className="bg-bg-secondary">Semester {s}</option>
+            ))}
+          </select>
+
+          {/* Department Filter */}
+          <select
+            value={deptFilter}
+            onChange={e => { setDeptFilter(e.target.value); setPage(1); }}
+            className="bg-bg-primary/20 border border-glass-border rounded-lg px-3 py-2 text-sm text-text-secondary focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer"
+          >
+            <option value="ALL" className="bg-bg-secondary">All Departments</option>
+            {departments.map(d => (
+              <option key={d.id} value={d.id} className="bg-bg-secondary">{d.code} — {d.name}</option>
+            ))}
+          </select>
+
+          {/* Gender Filter */}
+          <select
+            value={genderFilter}
+            onChange={e => setGenderFilter(e.target.value)}
+            className="bg-bg-primary/20 border border-glass-border rounded-lg px-3 py-2 text-sm text-text-secondary focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer"
+          >
+            <option value="ALL" className="bg-bg-secondary">All Genders</option>
+            <option value="Male"   className="bg-bg-secondary">Male</option>
+            <option value="Female" className="bg-bg-secondary">Female</option>
           </select>
         </div>
       </div>
 
-      {/* Virtualized Data Table */}
-      <div className="flex-1 rounded-xl border border-glass-border bg-glass-medium backdrop-blur-md overflow-hidden flex flex-col">
+      {/* ── Toast Notification Banner ─────────────────────── */}
+      {toastMessage && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -10 }}
+          className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs font-semibold flex items-center justify-between shadow-lg"
+        >
+          <div className="flex items-center gap-2">
+            <Key className="w-4 h-4 shrink-0" />
+            <span>{toastMessage}</span>
+          </div>
+          <button onClick={() => setToastMessage(null)} className="text-amber-400 hover:text-white">
+            <X className="w-4 h-4" />
+          </button>
+        </motion.div>
+      )}
+
+      {/* ── Table ──────────────────────────────────────────── */}
+      <div className="flex-1 rounded-xl border border-glass-border bg-glass-medium backdrop-blur-md overflow-hidden flex flex-col min-h-0">
+
         {/* Table Header */}
-        <div className="grid grid-cols-12 gap-4 p-4 border-b border-glass-border bg-glass-light text-xs font-semibold text-text-muted uppercase tracking-wider">
-          <div className="col-span-3">Student</div>
+        <div className="grid grid-cols-12 gap-3 px-4 py-3 border-b border-glass-border bg-glass-light text-[10px] font-semibold text-text-muted uppercase tracking-wider shrink-0">
+          <div className="col-span-3">Student / USN</div>
+          <div className="col-span-1">Gender</div>
+          <div className="col-span-3">College Email</div>
+          <div className="col-span-2">Mobile</div>
           <div className="col-span-2">Department</div>
-          <div className="col-span-1">Sem</div>
-          <div className="col-span-2">Attendance</div>
-          <div className="col-span-2">AI Risk Level</div>
-          <div className="col-span-1 text-center">Status</div>
-          <div className="col-span-1 text-right">Actions</div>
+          <div className="col-span-1 text-center">Reset Pw</div>
         </div>
 
-        {/* Virtualized Body */}
-        <div 
-          ref={parentRef} 
-          className="flex-1 overflow-auto custom-scrollbar"
-        >
-          <div
-            style={{
-              height: `${rowVirtualizer.getTotalSize()}px`,
-              width: '100%',
-              position: 'relative',
-            }}
-          >
-            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-              const student = filteredStudents[virtualRow.index];
-              return (
-                <div
-                  key={virtualRow.index}
-                  className="absolute top-0 left-0 w-full grid grid-cols-12 gap-4 p-4 border-b border-glass-border/30 hover:bg-glass-light/30 transition-colors items-center cursor-pointer"
-                  style={{
-                    height: `${virtualRow.size}px`,
-                    transform: `translateY(${virtualRow.start}px)`,
-                  }}
-                  onClick={() => {
-                    if (!student.isCustom) {
-                      router.push(`/dashboard/students/${student.studentId}`);
-                    }
-                  }}
-                >
-                  {/* Student Info */}
-                  <div className="col-span-3 flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-glass-border flex items-center justify-center text-xs font-bold text-text-primary">
-                      {student.name.charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-text-primary truncate">{student.name}</div>
-                      <div className="text-xs text-text-muted truncate">{student.studentId}</div>
-                    </div>
-                  </div>
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
 
-                  {/* Department */}
-                  <div className="col-span-2 text-sm text-text-secondary truncate">
-                    {student.department}
-                  </div>
+          {/* Error state */}
+          {error && !loading && (
+            <div className="flex flex-col items-center justify-center h-40 gap-3 text-center">
+              <AlertCircle className="w-8 h-8 text-red-400" />
+              <p className="text-sm text-text-muted">{error}</p>
+              <button
+                onClick={() => fetchStudents(page, searchQuery, deptFilter, semFilter)}
+                className="text-xs text-blue-400 hover:underline"
+              >
+                Try again
+              </button>
+            </div>
+          )}
 
-                  {/* Semester */}
-                  <div className="col-span-1 text-sm text-text-secondary font-mono">
-                    {student.semester}
-                  </div>
+          {/* Skeleton loading */}
+          {loading && !error && Array.from({ length: 12 }).map((_, i) => <SkeletonRow key={i} />)}
 
-                  {/* Attendance */}
-                  <div className="col-span-2 flex items-center gap-2">
-                    <div className="w-full max-w-[100px] h-2 bg-glass-border rounded-full overflow-hidden">
-                      <div 
-                        className={cn("h-full rounded-full", student.attendance > 85 ? "bg-success" : student.attendance > 75 ? "bg-warning" : "bg-error")}
-                        style={{ width: `${student.attendance}%` }}
-                      />
-                    </div>
-                    <span className="text-xs text-text-muted font-mono">{student.attendance}%</span>
-                  </div>
+          {/* Empty state */}
+          {!loading && !error && displayStudents.length === 0 && (
+            <div className="flex flex-col items-center justify-center h-40 gap-3 text-center">
+              <GraduationCap className="w-8 h-8 text-text-muted" />
+              <p className="text-sm text-text-muted">No students found</p>
+              {searchQuery && (
+                <button onClick={() => setSearchQuery("")} className="text-xs text-blue-400 hover:underline">
+                  Clear search
+                </button>
+              )}
+            </div>
+          )}
 
-                  {/* Risk Level */}
-                  <div className="col-span-2 flex items-center gap-2">
-                    {student.riskLevel === 'HIGH' ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-error/10 text-error border border-error/20">
-                        <ShieldAlert className="w-3 h-3" /> High Risk
-                      </span>
-                    ) : student.riskLevel === 'MEDIUM' ? (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-warning/10 text-warning border border-warning/20">
-                        Medium Risk
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-success/10 text-success border border-success/20">
-                        Low Risk
-                      </span>
-                    )}
-                  </div>
+          {/* Student Rows */}
+          {!loading && !error && displayStudents.map((student, idx) => {
+            const usn    = student.studentId || student.rollNumber || "—";
+            const gender = student.gender?.trim() || null;
+            const gClass = gender ? (GENDER_COLORS[gender] || "text-text-muted bg-glass-light border-glass-border") : "";
 
-                  {/* Status */}
-                  <div className="col-span-1 text-center font-mono">
-                    <span className={cn("text-xs font-medium", student.status === 'ACTIVE' ? "text-success" : "text-text-muted")}>
-                      {student.status}
-                    </span>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="col-span-1 flex justify-end items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                    {student.isCustom ? (
-                      <>
-                        <button 
-                          onClick={() => {
-                            const users = getUsers();
-                            const u = users[student.id];
-                            if (u) {
-                              setEditTargetEmail(student.id);
-                              setEditName(u.fullName);
-                              setEditDept(u.department || "CSE");
-                              setEditSemester(u.semester || 1);
-                              setIsEditModalOpen(true);
-                            }
-                          }}
-                          className="p-1 rounded hover:bg-glass-light transition-colors text-text-muted hover:text-blue-500"
-                          title="Edit Student Profile"
-                        >
-                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                          </svg>
-                        </button>
-                        <button 
-                          onClick={() => triggerResetPassword(student.id)}
-                          className="p-1 rounded hover:bg-glass-light transition-colors text-text-muted hover:text-amber-400"
-                          title="Direct password reset"
-                        >
-                          <Key className="w-3.5 h-3.5" />
-                        </button>
-                        <button 
-                          onClick={() => {
-                            if (confirm(`Are you sure you want to delete student ${student.name}?`)) {
-                              const users = getUsers();
-                              delete users[student.id];
-                              saveUsers(users);
-                              setRefreshKey(prev => prev + 1);
-                            }
-                          }}
-                          className="p-1 rounded hover:bg-glass-light transition-colors text-text-muted hover:text-red-500"
-                          title="Delete Student"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </>
-                    ) : (
-                      <button className="p-1 text-text-muted hover:text-text-primary rounded hover:bg-glass-light transition-colors">
-                        <MoreHorizontal className="w-5 h-5" />
-                      </button>
-                    )}
+            return (
+              <motion.div
+                key={student.id}
+                initial={{ opacity: 0, y: 4 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: Math.min(idx * 0.015, 0.3) }}
+                className="grid grid-cols-12 gap-3 px-4 py-3.5 border-b border-glass-border/30 hover:bg-glass-light/40 transition-colors items-center group"
+              >
+                {/* Name + USN */}
+                <div className="col-span-3 flex items-center gap-3 min-w-0">
+                  <Avatar name={student.fullName} gender={gender} />
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-text-primary truncate leading-tight">
+                      {student.fullName}
+                    </p>
+                    <p className="text-[11px] text-text-muted font-mono truncate mt-0.5">
+                      {usn}
+                    </p>
                   </div>
                 </div>
-              );
-            })}
+
+                {/* Gender */}
+                <div className="col-span-1">
+                  {gender ? (
+                    <span className={cn(
+                      "inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border",
+                      gClass
+                    )}>
+                      {gender[0]}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-text-muted">—</span>
+                  )}
+                </div>
+
+                {/* College Email */}
+                <div className="col-span-3 flex items-center gap-1.5 min-w-0">
+                  {student.email ? (
+                    <>
+                      <Mail className="w-3 h-3 text-text-muted shrink-0" />
+                      <span className="text-xs text-text-secondary truncate font-mono">
+                        {student.email}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-xs text-text-muted">—</span>
+                  )}
+                </div>
+
+                {/* Mobile */}
+                <div className="col-span-2 flex items-center gap-1.5">
+                  {student.phone ? (
+                    <>
+                      <Phone className="w-3 h-3 text-text-muted shrink-0" />
+                      <span className="text-xs text-text-secondary font-mono">
+                        {student.phone}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-xs text-text-muted">—</span>
+                  )}
+                </div>
+
+                {/* Department */}
+                <div className="col-span-2">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/20">
+                    {student.department?.code || "—"}
+                  </span>
+                  <p className="text-[10px] text-text-muted mt-0.5 truncate">
+                    Sem {student.semester}
+                  </p>
+                </div>
+
+                {/* Reset Password Action */}
+                <div className="col-span-1 text-center">
+                  <button
+                    onClick={() => setResetModalStudent(student)}
+                    className="inline-flex items-center justify-center p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 transition-colors cursor-pointer"
+                    title={`Reset Password for ${student.fullName} (${usn}) to demo123`}
+                  >
+                    <Key className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </motion.div>
+            );
+          })}
+        </div>
+
+        {/* ── Single-Page Total Footer ─────────────────────────── */}
+        <div className="flex items-center justify-between px-4 py-2.5 border-t border-glass-border bg-glass-light shrink-0">
+          <p className="text-xs text-text-muted font-medium">
+            Showing all <span className="text-text-primary font-semibold font-mono">{displayStudents.length}</span> students
+          </p>
+          <div className="text-[11px] text-text-muted">
+            All records displayed on single page
           </div>
         </div>
       </div>
 
-      {/* Add Student Modal */}
-      <AnimatePresence>
-        {isAddModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setIsAddModalOpen(false)} />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-bg-secondary/95 border border-glass-border rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl backdrop-blur-xl"
-            >
-              <button 
-                className="absolute top-4 right-4 text-text-muted hover:text-text-primary p-1 rounded-lg hover:bg-glass-light transition-colors" 
-                onClick={() => setIsAddModalOpen(false)}
+      {/* ── Reset Password Modal ───────────────────────────── */}
+      {resetModalStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-[#111111] border border-glass-border rounded-2xl p-6 max-w-md w-full shadow-2xl relative overflow-hidden"
+          >
+            <div className="flex items-center gap-3 text-amber-400 mb-2">
+              <Key className="w-6 h-6 shrink-0" />
+              <h3 className="text-lg font-bold text-text-primary">Reset Student Account Password</h3>
+            </div>
+            <p className="text-sm text-text-secondary mb-4">
+              Are you sure you want to reset the login password for <span className="font-semibold text-text-primary">{resetModalStudent.fullName}</span> ({resetModalStudent.studentId || resetModalStudent.rollNumber})?
+            </p>
+            <div className="bg-glass-light p-3.5 rounded-xl border border-glass-border mb-5 text-xs text-text-muted space-y-1">
+              <p className="font-mono text-amber-300 font-semibold">
+                🔑 New Temp Password: <span className="underline">demo123</span>
+              </p>
+              <p className="text-[11px] text-text-muted">
+                The student account will require a password update upon their next login.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => setResetModalStudent(null)}
+                className="px-4 py-2 text-xs font-semibold text-text-muted hover:text-text-primary transition-colors cursor-pointer"
               >
-                <X className="w-5 h-5" />
+                Cancel
               </button>
-              
-              <h3 className="text-base font-bold text-text-primary uppercase tracking-wider mb-1">Enroll New Student</h3>
-              <p className="text-xs text-text-muted mb-4">Create a student account. The default temporary password is <code className="text-amber-400 font-mono">demo123</code>.</p>
-
-              {addError && (
-                <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-xl mb-4">
-                  {addError}
-                </div>
-              )}
-
-              <form onSubmit={handleAddStudentSubmit} className="space-y-4 text-xs">
-                <div className="flex flex-col gap-1.5">
-                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Student Full Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={addName}
-                    onChange={(e) => setAddName(e.target.value)}
-                    placeholder="e.g. Manjunatha Prasad"
-                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Student Email (.edu.in)</label>
-                  <input
-                    type="email"
-                    required
-                    value={addEmail}
-                    onChange={(e) => {
-                      setAddEmail(e.target.value);
-                      setEmailManuallyEdited(true);
-                    }}
-                    placeholder="e.g. manjunatha.cs2023@vemana.edu.in"
-                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Department</label>
-                  <select
-                    value={addDept}
-                    onChange={(e) => setAddDept(e.target.value)}
-                    className="w-full bg-bg-secondary border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
-                  >
-                    {MOCK_DEPARTMENTS.map((d) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <button className="px-3 py-1.5 rounded-lg text-text-secondary hover:text-text-primary text-xs cursor-pointer" type="button" onClick={() => setIsAddModalOpen(false)}>Cancel</button>
-                  <button type="submit" className="px-4 py-1.5 rounded-lg bg-blue-600 text-white font-semibold text-xs hover:bg-blue-500 cursor-pointer">Create Account</button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Edit Student Modal */}
-      <AnimatePresence>
-        {isEditModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setIsEditModalOpen(false)} />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-bg-secondary/95 border border-glass-border rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl backdrop-blur-xl"
-            >
-              <button 
-                className="absolute top-4 right-4 text-text-muted hover:text-text-primary p-1 rounded-lg hover:bg-glass-light transition-colors" 
-                onClick={() => setIsEditModalOpen(false)}
+              <button
+                onClick={handleConfirmResetPassword}
+                disabled={resetting}
+                className="px-5 py-2 bg-amber-500 hover:bg-amber-600 text-black font-bold text-xs rounded-xl transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
               >
-                <X className="w-5 h-5" />
+                {resetting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Resetting...
+                  </>
+                ) : (
+                  <>
+                    <ShieldCheck className="w-4 h-4" /> Confirm Reset
+                  </>
+                )}
               </button>
-              
-              <h3 className="text-base font-bold text-text-primary uppercase tracking-wider mb-1">Edit Student Profile</h3>
-              <p className="text-xs text-text-muted mb-4">Update details for <strong className="text-text-primary">{editTargetEmail}</strong>.</p>
-
-              {editError && (
-                <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-xl mb-4">
-                  {editError}
-                </div>
-              )}
-
-              <form onSubmit={handleEditStudentSubmit} className="space-y-4 text-xs">
-                <div className="flex flex-col gap-1.5">
-                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Student Full Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Department</label>
-                  <select
-                    value={editDept}
-                    onChange={(e) => setEditDept(e.target.value)}
-                    className="w-full bg-bg-secondary border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
-                  >
-                    {MOCK_DEPARTMENTS.map((d) => (
-                      <option key={d} value={d}>{d}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Semester</label>
-                  <select
-                    value={editSemester}
-                    onChange={(e) => setEditSemester(Number(e.target.value))}
-                    className="w-full bg-bg-secondary border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
-                      <option key={s} value={s}>Semester {s}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <button className="px-3 py-1.5 rounded-lg text-text-secondary hover:text-text-primary text-xs cursor-pointer" type="button" onClick={() => setIsEditModalOpen(false)}>Cancel</button>
-                  <button type="submit" className="px-4 py-1.5 rounded-lg bg-blue-600 text-white font-semibold text-xs hover:bg-blue-500 cursor-pointer">Save Changes</button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* Reset Password Modal */}
-      <AnimatePresence>
-        {isResetModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setIsResetModalOpen(false)} />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-bg-secondary/95 border border-glass-border rounded-2xl w-full max-w-md p-6 relative z-10 shadow-2xl backdrop-blur-xl"
-            >
-              <button 
-                className="absolute top-4 right-4 text-text-muted hover:text-text-primary p-1 rounded-lg hover:bg-glass-light transition-colors" 
-                onClick={() => setIsResetModalOpen(false)}
-              >
-                <X className="w-5 h-5" />
-              </button>
-              
-              <div className="flex items-center gap-2 text-amber-500 font-semibold mb-2">
-                <ShieldAlert className="w-4 h-4" />
-                <span className="text-xs uppercase tracking-wider font-mono">Administrative Control</span>
-              </div>
-              <h3 className="text-base font-bold text-text-primary uppercase tracking-wider mb-1">Direct Reset Password</h3>
-              <p className="text-xs text-text-muted mb-4">Directly change password for student <strong className="text-text-primary">{resetTargetEmail}</strong>.</p>
-
-              {resetError && (
-                <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-xl mb-4">
-                  {resetError}
-                </div>
-              )}
-
-              {resetSuccess && (
-                <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs p-3 rounded-xl mb-4 flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                  {resetSuccess}
-                </div>
-              )}
-
-              <form onSubmit={handleResetPasswordSubmit} className="space-y-4 text-xs">
-                <div className="flex flex-col gap-1.5">
-                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">New Password</label>
-                  <input
-                    type="password"
-                    required
-                    value={resetPassword}
-                    onChange={(e) => setResetPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
-                  />
-                </div>
-
-                <div className="flex flex-col gap-1.5">
-                  <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Confirm New Password</label>
-                  <input
-                    type="password"
-                    required
-                    value={resetConfirm}
-                    onChange={(e) => setResetConfirm(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
-                  />
-                </div>
-
-                <div className="flex justify-end gap-2 pt-2">
-                  <button className="px-3 py-1.5 rounded-lg text-text-secondary hover:text-text-primary text-xs cursor-pointer" type="button" onClick={() => setIsResetModalOpen(false)}>Cancel</button>
-                  <button type="submit" className="px-4 py-1.5 rounded-lg bg-blue-600 text-white font-semibold text-xs hover:bg-blue-500 cursor-pointer">Update Password</button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }

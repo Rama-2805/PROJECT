@@ -8,6 +8,9 @@ export class CreateTeacherDto {
   @IsEmail() email: string;
   @IsOptional() @IsString() phone?: string;
   @IsOptional() @IsString() specialization?: string;
+  @IsOptional() @IsString() designation?: string;
+  @IsOptional() @IsString() role?: string;
+  @IsOptional() @IsBoolean() isHod?: boolean;
 }
 
 export class UpdateTeacherDto {

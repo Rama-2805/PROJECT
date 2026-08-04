@@ -84,73 +84,64 @@ function LoginContent() {
 
     // Domain validation removed to allow seeded accounts like @smartcampus.edu
 
-    if (isDemoMode()) {
-      try {
-        const users = getUsers();
-        const user = users[email];
-
-        if (!user) {
-          setIsLoading(false);
-          setError("AccessDenied");
-          return;
-        }
-
-        if (user.role !== "admin" && user.role !== "hod") {
-          setIsLoading(false);
-          setError("IncorrectPortal");
-          return;
-        }
-
-        const inputHash = await hashPassword(password);
-        if (inputHash !== user.passwordHash) {
-          setIsLoading(false);
-          setError("IncorrectCredentials");
-          return;
-        }
-
-        // Successful login
-        setIsLoading(false);
-        document.cookie = "refreshToken=mock-token-123; path=/";
-        localStorage.setItem("user-role", user.role);
-        localStorage.setItem("currentUserEmail", email);
-        router.push("/dashboard");
-      } catch (err) {
-        setIsLoading(false);
-        setError("UnknownError");
-      }
-    } else {
-      // Live database authentication
+    try {
+      // 1. Try NestJS API Backend first for real JWT access tokens
       try {
         const res = await api.post<any>("/auth/login", { email, password });
-        if (!res.success || !res.data) {
+        if (res.success && res.data) {
+          const { user: apiUser, tokens } = res.data;
+          const userRoles = apiUser.roles || [];
+          const isAdminOrHod = userRoles.includes("SUPER_ADMIN") || userRoles.includes("INSTITUTION_ADMIN") || userRoles.includes("ADMIN") || userRoles.includes("HOD");
+
+          if (!isAdminOrHod) {
+            setIsLoading(false);
+            setError("IncorrectPortal");
+            return;
+          }
+
+          setIsLoading(false);
+          setAccessToken(tokens.accessToken);
+          document.cookie = `refreshToken=${tokens.refreshToken}; path=/; max-age=${7 * 24 * 60 * 60}`;
+          localStorage.setItem("user-role", "admin");
+          localStorage.setItem("currentUserEmail", email);
+          if (apiUser.fullName) localStorage.setItem("currentUserName", apiUser.fullName);
+          router.push("/dashboard");
+          return;
+        }
+      } catch (apiErr: any) {
+        if (apiErr?.status === 401 || apiErr?.status === 400) {
           setIsLoading(false);
           setError("IncorrectCredentials");
           return;
         }
+      }
 
-        const { user, tokens } = res.data;
-
-        // Map roles to lowercase
-        let mappedRole = "student";
-        if (user.roles?.includes("ADMIN")) mappedRole = "admin";
-        else if (user.roles?.includes("TEACHER")) mappedRole = "teacher";
-
-        if (mappedRole !== "admin") {
+      // 2. Fallback to local user store only if API is offline
+      const users = getUsers();
+      const user = users[email];
+      if (user) {
+        const inputHash = await hashPassword(password);
+        if (inputHash === user.passwordHash) {
+          if (user.role !== "admin" && user.role !== "hod") {
+            setIsLoading(false);
+            setError("IncorrectPortal");
+            return;
+          }
           setIsLoading(false);
-          setError("IncorrectPortal");
+          document.cookie = "refreshToken=mock-token-123; path=/";
+          localStorage.setItem("user-role", user.role);
+          localStorage.setItem("currentUserEmail", email);
+          if (user.fullName) localStorage.setItem("currentUserName", user.fullName);
+          router.push("/dashboard");
           return;
         }
-
-        setIsLoading(false);
-        setAccessToken(tokens.accessToken);
-        document.cookie = `refreshToken=${tokens.refreshToken}; path=/; max-age=${7 * 24 * 60 * 60}`;
-        localStorage.setItem("user-role", "admin");
-        localStorage.setItem("currentUserEmail", email);
-        router.push("/dashboard");
-      } catch (err) {
-        setIsLoading(false);
-        setError("UnknownError");
       }
+
+      setIsLoading(false);
+      setError("IncorrectCredentials");
+    } catch (err) {
+      setIsLoading(false);
+      setError("UnknownError");
     }
   };
 

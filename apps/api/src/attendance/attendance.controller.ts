@@ -39,25 +39,25 @@ export class AttendanceController {
   }
 
   @Get("live")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
   getLiveStatus(@Query("sessionId") sessionId: string) {
     return this.attendance.getLiveStatus(sessionId);
   }
 
   @Get("session/:sessionId")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
   getSessionHistory(@Param("sessionId") sessionId: string) {
     return this.attendance.getSessionHistory(sessionId);
   }
 
   @Get("student/:studentId")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.RESEARCH_ANALYST)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT, RoleName.RESEARCH_ANALYST)
   getStudentAnalytics(@Param("studentId") studentId: string) {
     return this.attendance.getStudentAnalytics(studentId);
   }
 
   @Get("records")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
   query(@Query() queryDto: AttendanceQueryDto) {
     return this.attendance.query(queryDto);
   }

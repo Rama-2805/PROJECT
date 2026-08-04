@@ -26,7 +26,59 @@ export class TeachersService {
   }
 
   async create(dto: CreateTeacherDto) {
-    return this.prisma.teacher.create({ data: dto, include: { department: true } });
+    const argon2 = await import("argon2");
+
+    const teacher = await this.prisma.teacher.create({
+      data: {
+        institutionId: dto.institutionId,
+        departmentId: dto.departmentId,
+        employeeId: dto.employeeId,
+        fullName: dto.fullName,
+        email: dto.email,
+        phone: dto.phone,
+        specialization: dto.specialization,
+      },
+      include: { department: true },
+    });
+
+    const isHod = dto.isHod || dto.role?.toUpperCase() === "HOD" || dto.designation?.toUpperCase().includes("HOD") || dto.designation?.toUpperCase().includes("HEAD");
+    const targetRoleName = isHod ? "HOD" : "TEACHER";
+    const roleRecord = await this.prisma.role.upsert({
+      where: { name: targetRoleName },
+      update: {},
+      create: { name: targetRoleName, label: targetRoleName },
+    });
+
+    const tempPassword = isHod ? "hod123" : "demo123";
+    const passwordHash = await argon2.hash(tempPassword);
+
+    const user = await this.prisma.user.upsert({
+      where: { email: dto.email },
+      update: {
+        fullName: dto.fullName,
+        mustChangePassword: true,
+      },
+      create: {
+        institutionId: dto.institutionId,
+        fullName: dto.fullName,
+        email: dto.email,
+        passwordHash,
+        mustChangePassword: true,
+      },
+    });
+
+    await this.prisma.userRole.upsert({
+      where: { userId_roleId: { userId: user.id, roleId: roleRecord.id } },
+      update: {},
+      create: { userId: user.id, roleId: roleRecord.id },
+    });
+
+    await this.prisma.teacher.update({
+      where: { id: teacher.id },
+      data: { userId: user.id },
+    });
+
+    return { ...teacher, userId: user.id };
   }
 
   async update(id: string, dto: UpdateTeacherDto) {

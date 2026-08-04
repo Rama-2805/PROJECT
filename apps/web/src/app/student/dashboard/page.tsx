@@ -17,29 +17,68 @@ import {
   TrendingUp
 } from "lucide-react";
 
+import { apiRequest } from "@/lib/api/client";
+
 export default function StudentDashboardPage() {
   const [studentInfo, setStudentInfo] = useState({
-    fullName: "John Doe",
-    email: "student@collegename.edu.in",
-    department: "Computer Science",
-    semester: "6th Semester",
-    id: "STU-10024"
+    fullName: "",
+    email: "",
+    department: "Computer Science & Engineering",
+    semester: "Semester 4",
+    id: "—"
   });
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const email = localStorage.getItem("currentUserEmail") || "student@collegename.edu.in";
-      const users = getUsers();
-      if (users[email]) {
-        setStudentInfo({
-          fullName: users[email].fullName,
-          email: users[email].email,
-          department: users[email].department || "Computer Science",
-          semester: "6th Semester",
-          id: "STU-10024"
-        });
+    async function loadStudentProfile() {
+      try {
+        const res = await apiRequest<any>("/auth/profile");
+        if (res && res.success && res.data) {
+          const user = res.data;
+          const stu = user.student || {};
+          const name = stu.fullName || user.fullName || "Student";
+          const usn = stu.studentId || user.studentId || "—";
+          const dept = stu.department?.name || user.department || "Computer Science & Engineering";
+          const sem = stu.semester ? `Semester ${stu.semester}` : "Semester 4";
+
+          setStudentInfo({
+            fullName: name,
+            email: user.email,
+            department: dept,
+            semester: sem,
+            id: usn
+          });
+          localStorage.setItem("currentUserName", name);
+          localStorage.setItem("currentUserEmail", user.email);
+          localStorage.setItem("currentUserUSN", usn);
+          return;
+        }
+      } catch (err) {}
+
+      if (typeof window !== "undefined") {
+        const email = localStorage.getItem("currentUserEmail") || "";
+        const name = localStorage.getItem("currentUserName");
+        const usn = localStorage.getItem("currentUserUSN");
+        const users = getUsers();
+        if (email && users[email]) {
+          setStudentInfo({
+            fullName: users[email].fullName,
+            email: users[email].email,
+            department: users[email].department || "Computer Science & Engineering",
+            semester: users[email].semester ? `Semester ${users[email].semester}` : "Semester 4",
+            id: users[email].studentId || "—"
+          });
+        } else if (email) {
+          setStudentInfo({
+            fullName: name || "Student",
+            email: email,
+            department: "Computer Science & Engineering",
+            semester: "Semester 4",
+            id: usn || "—"
+          });
+        }
       }
     }
+    loadStudentProfile();
   }, []);
 
   const stats = [

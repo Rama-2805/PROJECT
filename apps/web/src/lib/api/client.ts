@@ -8,9 +8,19 @@ let accessToken: string | null = null;
 
 export function setAccessToken(token: string | null) {
   accessToken = token;
+  if (typeof window !== "undefined") {
+    if (token) {
+      localStorage.setItem("smartcampus_access_token", token);
+    } else {
+      localStorage.removeItem("smartcampus_access_token");
+    }
+  }
 }
 
 export function getAccessToken() {
+  if (!accessToken && typeof window !== "undefined") {
+    accessToken = localStorage.getItem("smartcampus_access_token");
+  }
   return accessToken;
 }
 
@@ -43,8 +53,9 @@ export async function apiRequest<T = unknown>(
     ...(fetchOptions.headers as Record<string, string>),
   };
 
-  if (!skipAuth && accessToken) {
-    headers["Authorization"] = `Bearer ${accessToken}`;
+  const token = getAccessToken();
+  if (!skipAuth && token) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
 
   let res = await fetch(`${API_BASE}${endpoint}`, {

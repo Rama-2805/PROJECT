@@ -31,7 +31,7 @@ const NAV_ITEMS = [
   { href: "/dashboard/classrooms", label: "Classes", icon: BookOpen },
   { href: "/dashboard/attendance", label: "Attendance", icon: CheckSquare },
   { href: "/dashboard/live-monitoring", label: "Live Monitoring", icon: Activity },
-  { href: "/dashboard/face-enrollment", label: "Unknown Faces", icon: ScanFace },
+  { href: "/dashboard/face-enrollment", label: "AI Enrollment", icon: ScanFace },
   { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
   { href: "/dashboard/system", label: "System Health", icon: Cpu },
   { href: "/dashboard/settings", label: "Settings", icon: Settings },

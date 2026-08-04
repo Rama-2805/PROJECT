@@ -1,0 +1,31 @@
+{
+  "stats": {
+    "total_videos": 5,
+    "total_sampled_frames": 24684,
+    "total_faces_detected": 24684,
+    "total_faces_accepted": 24684,
+    "total_unique_retained": 24684,
+    "enrolled_student_count": 2,
+    "processing_time_sec": 3124.88
+  },
+  "roster": [
+    {
+      "student_id": "Student_001",
+      "saved_images_count": 11681,
+      "avg_quality_score": 1.0,
+      "first_seen_timestamp": "00:00:00",
+      "last_seen_timestamp": "01:31:33",
+      "first_seen_video": "1.mp4",
+      "last_seen_video": "5.mp4"
+    },
+    {
+      "student_id": "Student_002",
+      "saved_images_count": 8,
+      "avg_quality_score": 1.0,
+      "first_seen_timestamp": "00:55:43",
+      "last_seen_timestamp": "01:12:37",
+      "first_seen_video": "1.mp4",
+      "last_seen_video": "5.mp4"
+    }
+  ]
+}

@@ -202,31 +202,79 @@ model AttendanceSession {
 ---
 
 
-## 🚀 Quick Start Guide
+## 🚀 Quick Start Guide & Terminal Commands
 
-### Developer Setup & Startup
+### 1️⃣ Run the Complete Application Stack
 
-To run the complete stack locally (runs dependencies, configures databases, generates Prisma client, and launches Next.js + NestJS watch modes):
+To launch the full platform (NestJS API Gateway + Next.js Web App):
 
 ```bash
-# 1. Clone & enter repository
+# Clone & enter repository
 git clone <repo-url>
-cd smart-campus-ai
+cd PROJECT
 
-# 2. Run the main launcher script (handles automated environment copy and configuration)
+# Run the complete stack concurrently
 npm start
 ```
 
-### 👤 Local Demo Testing Credentials
+---
 
-For local testing, the database is pre-seeded with the following live user credentials:
+### 2️⃣ Run Services Individually (Recommended for Development)
 
-| Role | Username / Email | Password | Scope |
+#### **Terminal 1 — NestJS API Backend (`apps/api`)**
+```bash
+# 1. Install NestJS API dependencies
+npm install --prefix apps/api
+
+# 2. Generate Prisma Database Client
+npx prisma generate --schema=apps/api/prisma/schema.prisma
+
+# 3. Start NestJS API Gateway server (Runs at http://localhost:3001)
+npm run dev:api
+```
+
+#### **Terminal 2 — Next.js Frontend App (`apps/web`)**
+```bash
+# 1. Install Next.js Web dependencies
+npm install --prefix apps/web --legacy-peer-deps
+
+# 2. Start Next.js App Router dev server (Runs at http://localhost:3000)
+npm run dev
+```
+
+#### **Terminal 3 — Streaming AI Pipeline Engine (`apps/ai-service`)**
+```bash
+# 1. Activate Python Virtual Environment
+source .venv/bin/activate
+
+# 2. Execute 100% In-Memory Streaming AI Pipeline on footage/
+python main.py
+```
+
+---
+
+### 3️⃣ Run Unit & Integration Test Suites
+
+```bash
+# Run Pytest suite for face detection, quality filter, FAISS & deduplication
+PYTHONPATH=. .venv/bin/pytest tests/ -v
+```
+
+---
+
+### 👤 Verified Local Testing Login Credentials
+
+Access the login portal at **`http://localhost:3000/login`**:
+
+| Role | Email | Password | Redirect Target |
 |:---|:---|:---|:---|
-| **College Admin** | `admin@smartcampus.edu` | `admin123` | SmartCampus Academy Administration |
-| **HOD** | `hod@smartcampus.edu` | `hod123` | Computer Science Department Head |
-| **Teacher** | `teacher@smartcampus.edu` | `teacher123` | Prof. Meera Iyer (CSE Subject teacher) |
-| **Student** | `student@smartcampus.edu` | `student123` | Siddharth Saxena (6th Sem CSE Roll 02) |
+| **Super Admin** | `admin@smartcampus.edu` | `admin123` | **`/dashboard`** |
+| **College Admin** | `college@smartcampus.edu` | `admin123` | **`/dashboard`** |
+| **Department HOD** | `hod.cse@smartcampus.edu` | `hod123` | **`/dashboard`** |
+| **Teacher / Faculty** | `teacher@smartcampus.edu` | `admin123` | **`/teacher/dashboard`** |
+| **Student** | `student@smartcampus.edu` | `admin123` | **`/student/dashboard`** |
+
+*(Alternative domain credentials `admin@collegename.edu.in`, `teacher@collegename.edu.in`, and `student@collegename.edu.in` with password `admin123` are also active).*
 
 ---
 

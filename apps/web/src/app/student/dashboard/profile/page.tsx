@@ -4,17 +4,18 @@ import React, { useState, useEffect } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { User, Mail, Shield, BookOpen, Clock, Calendar, Key, ShieldCheck } from "lucide-react";
+import { apiRequest } from "@/lib/api/client";
 import { getUsers, hashPassword, updateUserPassword } from "@/lib/userStore";
 
 export default function StudentProfilePage() {
   const [student, setStudent] = useState({
-    fullName: "John Doe",
-    email: "student@collegename.edu.in",
+    fullName: "",
+    email: "",
     department: "Computer Science & Engineering",
     joiningDate: "August 18, 2023",
-    semester: "6th Semester",
-    id: "STU-10024",
-    phone: "+91 99887 76655",
+    semester: "Semester 4",
+    id: "—",
+    phone: "—",
     campusCardStatus: "Active"
   });
 
@@ -25,22 +26,66 @@ export default function StudentProfilePage() {
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const email = localStorage.getItem("currentUserEmail") || "student@collegename.edu.in";
-      const users = getUsers();
-      if (users[email]) {
-        setStudent({
-          fullName: users[email].fullName,
-          email: users[email].email,
-          department: users[email].department || "Computer Science & Engineering",
-          joiningDate: "August 18, 2023",
-          semester: "6th Semester",
-          id: "STU-10024",
-          phone: "+91 99887 76655",
-          campusCardStatus: "Active"
-        });
+    async function loadProfile() {
+      try {
+        const res = await apiRequest<any>("/auth/profile");
+        if (res && res.success && res.data) {
+          const u = res.data;
+          const stu = u.student || {};
+          const name = stu.fullName || u.fullName || "Student";
+          const usn = stu.studentId || u.studentId || "—";
+          const dept = stu.department?.name || u.department || "Computer Science & Engineering";
+          const sem = stu.semester ? `Semester ${stu.semester}` : "Semester 4";
+          const phone = stu.phone || u.phoneNumber || "—";
+
+          setStudent({
+            fullName: name,
+            email: u.email,
+            department: dept,
+            joiningDate: "August 18, 2023",
+            semester: sem,
+            id: usn,
+            phone: phone,
+            campusCardStatus: "Active"
+          });
+          localStorage.setItem("currentUserName", name);
+          localStorage.setItem("currentUserEmail", u.email);
+          localStorage.setItem("currentUserUSN", usn);
+          return;
+        }
+      } catch (err) {}
+
+      if (typeof window !== "undefined") {
+        const email = localStorage.getItem("currentUserEmail") || "";
+        const name = localStorage.getItem("currentUserName");
+        const usn = localStorage.getItem("currentUserUSN");
+        const users = getUsers();
+        if (email && users[email]) {
+          setStudent({
+            fullName: users[email].fullName,
+            email: users[email].email,
+            department: users[email].department || "Computer Science & Engineering",
+            joiningDate: "August 18, 2023",
+            semester: users[email].semester ? `Semester ${users[email].semester}` : "Semester 4",
+            id: users[email].studentId || "—",
+            phone: "—",
+            campusCardStatus: "Active"
+          });
+        } else if (email) {
+          setStudent({
+            fullName: name || "Student",
+            email: email,
+            department: "Computer Science & Engineering",
+            joiningDate: "August 18, 2023",
+            semester: "Semester 4",
+            id: usn || "—",
+            phone: "—",
+            campusCardStatus: "Active"
+          });
+        }
       }
     }
+    loadProfile();
   }, []);
 
   const handleChangePassword = async (e: React.FormEvent) => {

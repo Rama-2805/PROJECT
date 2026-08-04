@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
 import { getUsers } from "@/lib/userStore";
+import { apiRequest } from "@/lib/api/client";
 
 /* ─── Header Component ─────────────────────────────────────────── */
 export interface HeaderProps {
@@ -18,20 +19,44 @@ export function Header({ title, breadcrumbs }: HeaderProps) {
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   useEffect(() => {
-    if (typeof window !== "undefined") {
+    let isMounted = true;
+    async function loadUser() {
+      if (typeof window === "undefined") return;
       const email = localStorage.getItem("currentUserEmail");
+      const name = localStorage.getItem("currentUserName");
       const role = localStorage.getItem("user-role") || "admin";
-      const users = getUsers();
-      if (email && users[email]) {
-        setCurrentUser(users[email]);
-      } else {
-        setCurrentUser({
-          email: email || "admin@collegename.edu.in",
-          fullName: role === "admin" ? "System Admin" : role === "teacher" ? "Dr. Sarah Jenkins" : "John Doe",
-          role: role
-        });
+
+      try {
+        const res = await apiRequest<any>("/auth/profile");
+        if (res && res.success && res.data && isMounted) {
+          const u = res.data;
+          const stu = u.student || {};
+          const displayName = stu.fullName || u.fullName || name || "User";
+          setCurrentUser({
+            email: u.email,
+            fullName: displayName,
+            role: role
+          });
+          localStorage.setItem("currentUserName", displayName);
+          return;
+        }
+      } catch (e) {}
+
+      if (isMounted) {
+        const users = getUsers();
+        if (email && users[email]) {
+          setCurrentUser(users[email]);
+        } else {
+          setCurrentUser({
+            email: email || "admin@collegename.edu.in",
+            fullName: name || (role === "admin" ? "System Admin" : role === "teacher" ? "Dr. Sarah Jenkins" : "Student"),
+            role: role
+          });
+        }
       }
     }
+    loadUser();
+    return () => { isMounted = false; };
   }, []);
 
   const [searchQuery, setSearchQuery] = useState("");

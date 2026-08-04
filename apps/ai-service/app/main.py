@@ -24,6 +24,7 @@ from .grounding.routes import router as grounding_router
 from .api.camera import router as camera_router
 from .dashboard.routes import router as dashboard_router
 from .api.learning import router as learning_router
+from .api.session_enrollment import router as session_enrollment_router
 
 
 @asynccontextmanager
@@ -81,6 +82,11 @@ async def lifespan(app: FastAPI):
     # Ensure data directories exist
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     Path(settings.face_data_dir).mkdir(parents=True, exist_ok=True)
+
+    # Ensure enrollment storage directory exists
+    enrollment_storage = Path(os.getcwd()) / "storage" / "enrollment"
+    enrollment_storage.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Enrollment storage directory: {enrollment_storage}")
 
     # Background scheduler function for Weekly Face Optimizer
     def start_optimizer_scheduler():
@@ -152,6 +158,7 @@ app.include_router(grounding_router)
 app.include_router(camera_router)
 app.include_router(dashboard_router)
 app.include_router(learning_router)
+app.include_router(session_enrollment_router)
 
 # Serve storage folder statically
 from fastapi.staticfiles import StaticFiles

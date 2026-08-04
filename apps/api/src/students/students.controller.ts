@@ -22,19 +22,19 @@ export class StudentsController {
   constructor(private students: StudentsService) {}
 
   @Get()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.RESEARCH_ANALYST)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT, RoleName.RESEARCH_ANALYST)
   findAll(@Query() query: StudentQueryDto) {
     return this.students.findAll(query);
   }
 
   @Get("stats")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
   getStats(@Query("institutionId") institutionId?: string) {
     return this.students.getStats(institutionId);
   }
 
   @Get(":id")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.RESEARCH_ANALYST)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT, RoleName.RESEARCH_ANALYST)
   findById(@Param("id") id: string) {
     return this.students.findById(id);
   }
@@ -55,5 +55,11 @@ export class StudentsController {
   @Roles(RoleName.SUPER_ADMIN)
   remove(@Param("id") id: string) {
     return this.students.remove(id);
+  }
+
+  @Post(":id/reset-password")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
+  resetPassword(@Param("id") id: string, @Body("password") password?: string) {
+    return this.students.resetStudentPassword(id, password);
   }
 }

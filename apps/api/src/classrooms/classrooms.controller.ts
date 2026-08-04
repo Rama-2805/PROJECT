@@ -12,7 +12,7 @@ export class ClassroomsController {
   constructor(private classrooms: ClassroomsService) {}
 
   @Get()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.DEVICE_MANAGER)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT, RoleName.DEVICE_MANAGER)
   findAll(
     @Query("institutionId") institutionId?: string,
     @Query("departmentId") departmentId?: string,
@@ -21,7 +21,7 @@ export class ClassroomsController {
   }
 
   @Get(":id")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.DEVICE_MANAGER)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT, RoleName.DEVICE_MANAGER)
   findById(@Param("id") id: string) {
     return this.classrooms.findById(id);
   }

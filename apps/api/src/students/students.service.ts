@@ -62,7 +62,9 @@ export class StudentsService {
   }
 
   async create(dto: CreateStudentDto) {
-    return this.prisma.student.create({
+    const argon2 = await import("argon2");
+
+    const student = await this.prisma.student.create({
       data: {
         institutionId: dto.institutionId,
         departmentId: dto.departmentId,
@@ -81,6 +83,42 @@ export class StudentsService {
       },
       include: { department: true, course: true },
     });
+
+    const emailToUse = dto.email || `${dto.studentId.toLowerCase()}.cs2023@vemanait.edu.in`;
+    const studentRole = await this.prisma.role.upsert({
+      where: { name: "STUDENT" },
+      update: {},
+      create: { name: "STUDENT", label: "Student" },
+    });
+    const passwordHash = await argon2.hash("demo123");
+
+    const user = await this.prisma.user.upsert({
+      where: { email: emailToUse },
+      update: {
+        fullName: dto.fullName,
+        mustChangePassword: true,
+      },
+      create: {
+        institutionId: dto.institutionId,
+        fullName: dto.fullName,
+        email: emailToUse,
+        passwordHash,
+        mustChangePassword: true,
+      },
+    });
+
+    await this.prisma.userRole.upsert({
+      where: { userId_roleId: { userId: user.id, roleId: studentRole.id } },
+      update: {},
+      create: { userId: user.id, roleId: studentRole.id },
+    });
+
+    await this.prisma.student.update({
+      where: { id: student.id },
+      data: { userId: user.id, email: emailToUse },
+    });
+
+    return { ...student, email: emailToUse, userId: user.id };
   }
 
   async update(id: string, dto: UpdateStudentDto) {
@@ -122,6 +160,53 @@ export class StudentsService {
       pendingEnrollment: total - faceEnrolled,
       averageAttendance: parseFloat(avgAttendance.toFixed(1)),
       averageEngagement: parseFloat(avgEngagement.toFixed(1)),
+    };
+  }
+
+  async resetStudentPassword(id: string, customPassword?: string) {
+    const student = await this.prisma.student.findUnique({
+      where: { id },
+      include: { user: true },
+    });
+    if (!student) throw new NotFoundException("Student not found");
+
+    const argon2 = await import("argon2");
+    const newPass = customPassword || "demo123";
+    const passwordHash = await argon2.hash(newPass);
+
+    if (student.userId) {
+      await this.prisma.user.update({
+        where: { id: student.userId },
+        data: {
+          passwordHash,
+          mustChangePassword: true,
+          passwordChangedAt: null,
+        },
+      });
+    } else if (student.email) {
+      const studentRole = await this.prisma.role.findUnique({ where: { name: "STUDENT" } });
+      const user = await this.prisma.user.upsert({
+        where: { email: student.email },
+        update: { passwordHash, mustChangePassword: true },
+        create: {
+          institutionId: student.institutionId,
+          fullName: student.fullName,
+          email: student.email,
+          passwordHash,
+          mustChangePassword: true,
+          userRoles: studentRole ? { create: { roleId: studentRole.id } } : undefined,
+        },
+      });
+      await this.prisma.student.update({
+        where: { id: student.id },
+        data: { userId: user.id },
+      });
+    }
+
+    return {
+      success: true,
+      message: `Password for ${student.fullName} has been reset to "${newPass}".`,
+      tempPassword: newPass,
     };
   }
 }

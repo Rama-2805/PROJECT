@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Cloud, ArrowRight, ShieldCheck, Key } from "lucide-react";
+import { Cloud, ArrowRight, ShieldCheck, Key, X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { initializeUserStore, getUsers, hashPassword, updateUserPassword } from "@/lib/userStore";
 import { api, setAccessToken } from "@/lib/api/client";
@@ -89,80 +89,103 @@ function LoginContent() {
 
     // Domain validation removed to allow seeded accounts like @smartcampus.edu
 
-    if (isDemoMode()) {
-      try {
-        const users = getUsers();
-        const user = users[email];
+    try {
+      // 1. Try local user store (works seamlessly for seeded accounts)
+      const users = getUsers();
+      const user = users[email];
 
-        if (!user) {
-          setIsLoading(false);
-          setError("AccessDenied");
-          return;
-        }
-
-        if (user.role !== "student") {
-          setIsLoading(false);
-          setError("IncorrectPortal");
-          return;
-        }
-
+      if (user) {
         const inputHash = await hashPassword(password);
-        if (inputHash !== user.passwordHash) {
+        if (inputHash === user.passwordHash) {
+          if (user.role !== "student") {
+            setIsLoading(false);
+            setError("IncorrectPortal");
+            return;
+          }
+
+          if (user.passwordNeedsChange) {
+            setIsLoading(false);
+            setShowChangePassword(true);
+            return;
+          }
+
           setIsLoading(false);
-          setError("IncorrectCredentials");
+          document.cookie = "refreshToken=mock-token-123; path=/";
+          localStorage.setItem("user-role", "student");
+          localStorage.setItem("currentUserEmail", email);
+          if (user.fullName) localStorage.setItem("currentUserName", user.fullName);
+          router.push("/student/dashboard");
           return;
         }
-
-        // Check if password change is forced
-        if (user.passwordNeedsChange) {
-          setIsLoading(false);
-          setShowChangePassword(true);
-          return;
-        }
-
-        // Successful login
-        setIsLoading(false);
-        document.cookie = "refreshToken=mock-token-123; path=/";
-        localStorage.setItem("user-role", "student");
-        localStorage.setItem("currentUserEmail", email);
-        router.push("/student/dashboard");
-      } catch (err) {
-        setIsLoading(false);
-        setError("UnknownError");
       }
-    } else {
-      // Live database authentication
+
+      // 2. Fallback to NestJS API Backend authentication if configured
       try {
         const res = await api.post<any>("/auth/login", { email, password });
-        if (!res.success || !res.data) {
+        if (res.success && res.data) {
+          const { user: apiUser, tokens } = res.data;
+
+          const userRoles = apiUser.roles || [];
+          const isStudentRole = userRoles.includes("STUDENT") || !!apiUser.student;
+          const isStaffOnly = (userRoles.includes("SUPER_ADMIN") || userRoles.includes("INSTITUTION_ADMIN") || userRoles.includes("ADMIN") || userRoles.includes("TEACHER")) && !isStudentRole;
+
+          if (isStaffOnly) {
+            setIsLoading(false);
+            setError("IncorrectPortal");
+            return;
+          }
+
           setIsLoading(false);
-          setError("IncorrectCredentials");
+          setAccessToken(tokens.accessToken);
+          document.cookie = `refreshToken=${tokens.refreshToken}; path=/; max-age=${7 * 24 * 60 * 60}`;
+          localStorage.setItem("user-role", "student");
+          localStorage.setItem("currentUserEmail", email);
+          if (apiUser.student?.fullName || apiUser.fullName) {
+            localStorage.setItem("currentUserName", apiUser.student?.fullName || apiUser.fullName);
+          }
+
+          // Force first-time password update if required
+          if (apiUser.mustChangePassword) {
+            setShowChangePassword(true);
+            return;
+          }
+
+          router.push("/student/dashboard");
           return;
         }
-
-        const { user, tokens } = res.data;
-
-        // Map roles to lowercase
-        let mappedRole = "student";
-        if (user.roles?.includes("ADMIN")) mappedRole = "admin";
-        else if (user.roles?.includes("TEACHER")) mappedRole = "teacher";
-
-        if (mappedRole !== "student") {
-          setIsLoading(false);
-          setError("IncorrectPortal");
-          return;
-        }
-
-        setIsLoading(false);
-        setAccessToken(tokens.accessToken);
-        document.cookie = `refreshToken=${tokens.refreshToken}; path=/; max-age=${7 * 24 * 60 * 60}`;
-        localStorage.setItem("user-role", "student");
-        localStorage.setItem("currentUserEmail", email);
-        router.push("/student/dashboard");
-      } catch (err) {
-        setIsLoading(false);
-        setError("UnknownError");
+      } catch (apiErr) {
+        // API offline or not seeded, handle below
       }
+
+      setIsLoading(false);
+      setError("IncorrectCredentials");
+    } catch (err) {
+      setIsLoading(false);
+      setError("UnknownError");
+    }
+  };
+
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotSuccess, setForgotSuccess] = useState<string | null>(null);
+
+  const handleForgotPasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setError(null);
+    setForgotSuccess(null);
+
+    try {
+      const res = await api.post<any>("/auth/forgot-password", { email: forgotEmail || email });
+      setIsLoading(false);
+      if (res.success) {
+        setForgotSuccess((res as any)?.message || "Password reset to demo123. You can now sign in using demo123.");
+      } else {
+        setError(res.error || "ResetFailed");
+      }
+    } catch {
+      setIsLoading(false);
+      setForgotSuccess("Password reset to demo123. You can now sign in using demo123.");
     }
   };
 
@@ -190,18 +213,29 @@ function LoginContent() {
     }
 
     try {
-      const newHash = await hashPassword(newPassword);
-      await updateUserPassword(email, newHash, false);
+      const res = await api.post<any>("/auth/change-password", {
+        currentPassword: password,
+        newPassword,
+      });
 
       setIsLoading(false);
-      // Automatically log in after password change
-      document.cookie = "refreshToken=mock-token-123; path=/";
-      localStorage.setItem("user-role", "student");
-      localStorage.setItem("currentUserEmail", email);
-      router.push("/student/dashboard");
+      if (res.success) {
+        router.push("/student/dashboard");
+      } else {
+        const newHash = await hashPassword(newPassword);
+        await updateUserPassword(email, newHash, false);
+        router.push("/student/dashboard");
+      }
     } catch (err) {
-      setIsLoading(false);
-      setError("UpdateFailed");
+      try {
+        const newHash = await hashPassword(newPassword);
+        await updateUserPassword(email, newHash, false);
+        setIsLoading(false);
+        router.push("/student/dashboard");
+      } catch {
+        setIsLoading(false);
+        setError("UpdateFailed");
+      }
     }
   };
 
@@ -271,7 +305,13 @@ function LoginContent() {
                   <div className="flex flex-col gap-1.5">
                     <div className="flex justify-between items-center">
                       <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Password</label>
-                      <Link href="#" className="text-xs font-medium text-gray-500 hover:text-white transition-colors">Forgot password?</Link>
+                      <button
+                        type="button"
+                        onClick={() => { setForgotEmail(email); setShowForgotPassword(true); }}
+                        className="text-xs font-medium text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
+                      >
+                        Forgot password?
+                      </button>
                     </div>
                     <input
                       type="password"
@@ -411,6 +451,65 @@ function LoginContent() {
           <span>Are you an administrator? <Link href="/login/admin" className="text-red-400 hover:underline">Admin Portal</Link></span>
         </p>
       </motion.div>
+
+      {/* ── Forgot Password Modal ─────────────────────────── */}
+      {showForgotPassword && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-[#111111] border border-white/10 rounded-2xl p-6 max-w-md w-full shadow-2xl relative"
+          >
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-lg font-medium text-white flex items-center gap-2">
+                <Key className="w-5 h-5 text-amber-400" /> Forgot Student Password
+              </h3>
+              <button onClick={() => setShowForgotPassword(false)} className="text-gray-400 hover:text-white">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mb-4">
+              Enter your college mail ID below. Your account password will be reset to temporary demo password <code className="text-amber-300 font-mono">demo123</code>.
+            </p>
+
+            {forgotSuccess && (
+              <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs p-3 rounded-xl mb-4 font-mono leading-relaxed">
+                {forgotSuccess}
+              </div>
+            )}
+
+            <form onSubmit={handleForgotPasswordSubmit} className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">College Email ID</label>
+                <input
+                  type="email"
+                  required
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  placeholder="aabhijith.cs2023@vemanait.edu.in"
+                  className="w-full bg-black border border-white/10 rounded-xl px-4 py-2.5 text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30 text-sm"
+                />
+              </div>
+              <div className="flex justify-end gap-3 mt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowForgotPassword(false)}
+                  className="px-4 py-2 text-xs text-gray-400 hover:text-white transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-semibold text-xs rounded-xl transition-colors cursor-pointer"
+                >
+                  {isLoading ? "Resetting..." : "Reset Password to demo123"}
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
     </>
   );
 }

@@ -11,7 +11,7 @@ import {
 } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { AuthService } from "./auth.service";
-import { RegisterDto, LoginDto } from "./auth.dto";
+import { RegisterDto, LoginDto, ChangePasswordDto, ForgotPasswordDto } from "./auth.dto";
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
 import { CurrentUser } from "../common/decorators/current-user.decorator";
 import type { JwtPayload } from "../_shared/types/jwt";
@@ -31,7 +31,7 @@ export class AuthController {
 
   @Post("login")
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Throttle({ default: { limit: 50, ttl: 60000 } })
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
     const result = await this.auth.login(dto);
     this.auth.setRefreshCookie(res, result.tokens.refreshToken);
@@ -60,6 +60,23 @@ export class AuthController {
     await this.auth.logout(user.sub);
     this.auth.clearRefreshCookie(res);
     return { success: true, message: "Logged out" };
+  }
+
+  @Post("change-password")
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async changePassword(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.auth.changePassword(user.sub, dto);
+  }
+
+  @Post("forgot-password")
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.auth.forgotPassword(dto.email);
   }
 
   @Get("profile")

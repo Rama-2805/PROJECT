@@ -2,6 +2,7 @@ import {
   Injectable,
   UnauthorizedException,
   ConflictException,
+  BadRequestException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import * as argon2 from "argon2";
@@ -66,7 +67,11 @@ export class AuthService {
   async login(dto: LoginDto) {
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
-      include: { userRoles: { include: { role: true } }, institution: true },
+      include: {
+        userRoles: { include: { role: true } },
+        institution: true,
+        student: { include: { department: true, course: true } },
+      },
     });
 
     if (!user || !user.isActive) {
@@ -105,11 +110,12 @@ export class AuthService {
         include: {
           userRoles: { include: { role: true } },
           institution: true,
+          student: { include: { department: true, course: true } },
         },
       });
 
       if (!user || !user.isActive) {
-        throw new UnauthorizedException("User not found or inactive");
+        throw new UnauthorizedException("User inactive or missing");
       }
 
       return this.buildAuthResponse(user);
@@ -122,7 +128,11 @@ export class AuthService {
   async getProfile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { userRoles: { include: { role: true } }, institution: true },
+      include: {
+        userRoles: { include: { role: true } },
+        institution: true,
+        student: { include: { department: true, course: true } },
+      },
     });
 
     if (!user) throw new UnauthorizedException("User not found");
@@ -147,7 +157,7 @@ export class AuthService {
   /* ─── Helpers ──────────────────────────────────────────────── */
   private generateTokens(payload: JwtPayload) {
     const accessToken = this.jwt.sign(payload, {
-      secret: process.env.JWT_ACCESS_SECRET || "access-secret-dev-only",
+      secret: process.env.JWT_ACCESS_SECRET || "sc-ai-access-secret-dev-only",
       expiresIn: "15m",
     });
 
@@ -194,5 +204,50 @@ export class AuthService {
 
   clearRefreshCookie(res: Response) {
     res.clearCookie("refreshToken", { path: "/api/auth/refresh" });
+  }
+
+  /* ─── Password Management ──────────────────────────────────── */
+  async changePassword(userId: string, dto: any) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new BadRequestException("User not found");
+
+    if (dto.currentPassword) {
+      const valid = await argon2.verify(user.passwordHash, dto.currentPassword);
+      if (!valid) throw new BadRequestException("Current password is incorrect");
+    }
+
+    const newPasswordHash = await argon2.hash(dto.newPassword);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: newPasswordHash,
+        mustChangePassword: false,
+        passwordChangedAt: new Date(),
+      },
+    });
+
+    return { success: true, message: "Password changed successfully" };
+  }
+
+  async forgotPassword(email: string) {
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return { success: true, message: "If account exists, password reset instructions have been set." };
+    }
+
+    const newHash = await argon2.hash("demo123");
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: newHash,
+        mustChangePassword: true,
+      },
+    });
+
+    return {
+      success: true,
+      message: "Password reset to temporary password 'demo123'. Please log in and set a new password.",
+      tempPassword: "demo123",
+    };
   }
 }
