@@ -24,6 +24,29 @@ class FaceQualityService:
     def __init__(self):
         self.min_quality_score = settings.min_quality_score
 
+    def align_face(self, image: np.ndarray, landmarks: Any) -> np.ndarray:
+        """Align face to ArcFace standard 112x112 template using 5 facial landmarks."""
+        if image is None or image.size == 0:
+            return image
+        if landmarks is None or len(landmarks) < 5:
+            return cv2.resize(image, (112, 112))
+
+        arcface_dst = np.array([
+            [38.2946, 51.6963],
+            [73.5318, 51.5014],
+            [56.0252, 71.7366],
+            [41.5493, 92.3655],
+            [70.7299, 92.2041]
+        ], dtype=np.float32)
+
+        src = np.array(landmarks, dtype=np.float32)
+        M, _ = cv2.estimateAffinePartial2D(src, arcface_dst, method=cv2.LMEDS)
+        if M is None:
+            return cv2.resize(image, (112, 112))
+
+        aligned = cv2.warpAffine(image, M, (112, 112), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0))
+        return aligned
+
     def estimate_pose_from_landmarks(self, landmarks: np.ndarray) -> Tuple[float, float, float]:
         """Estimate pitch, yaw, and roll from 5 facial landmarks as a fallback.
 

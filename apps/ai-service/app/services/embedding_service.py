@@ -7,7 +7,7 @@ Calculates and normalizes average embeddings for students during enrollment.
 import logging
 import cv2
 import numpy as np
-from typing import List, Optional
+from typing import List, Optional, Any
 from .face_detector import face_detector
 
 logger = logging.getLogger("smartcampus.embedding")
@@ -19,37 +19,32 @@ class EmbeddingService:
     def __init__(self):
         self.embedding_size = 512
 
-    def generate_embedding(self, face_crop: np.ndarray) -> Optional[np.ndarray]:
-        """Extract a 512D ArcFace embedding from a cropped BGR face image.
-
-        Args:
-            face_crop: OpenCV BGR cropped face image
-
-        Returns:
-            L2-normalized 512D float array embedding, or None if no face is found
-        """
+    def generate_embedding(self, face_crop: np.ndarray, landmarks: Optional[Any] = None) -> Optional[np.ndarray]:
+        """Extract a 512D ArcFace embedding from a cropped BGR face image with 5-point landmark alignment."""
         if face_crop is None or face_crop.size == 0:
             return None
 
-        # Convert crop to RGB
-        rgb_crop = cv2.cvtColor(face_crop, cv2.COLOR_BGR2RGB)
-
         try:
-            # Reuses the FaceAnalysis model from the detector to prevent double loading
-            faces = face_detector.model.get(rgb_crop)
-            
-            if not faces:
-                # If direct crop detection fails, try resizing to 112x112 (ArcFace standard size)
-                resized = cv2.resize(rgb_crop, (112, 112), interpolation=cv2.INTER_AREA)
-                faces = face_detector.model.get(resized)
+            from .face_quality_service import face_quality_service
+            aligned = face_quality_service.align_face(face_crop, landmarks)
 
+            # Get recognition model from detector singleton
+            rec_model = face_detector.model.models.get("recognition")
+            if rec_model is not None:
+                feat = rec_model.get_feat(aligned)
+                if feat is not None:
+                    emb = feat.flatten()
+                    norm = np.linalg.norm(emb)
+                    if norm > 0:
+                        emb = emb / norm
+                    return emb
+
+            # Fallback if recognition model is not directly accessible
+            faces = face_detector.model.get(rgb_crop)
             if faces:
-                # Select the face with the largest area/confidence in the crop
                 best_face = max(faces, key=lambda f: f.det_score)
                 if hasattr(best_face, "embedding") and best_face.embedding is not None:
                     emb = best_face.embedding.copy()
-                    
-                    # L2-normalize the embedding vector
                     norm = np.linalg.norm(emb)
                     if norm > 0:
                         emb = emb / norm

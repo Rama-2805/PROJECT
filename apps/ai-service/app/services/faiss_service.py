@@ -106,6 +106,29 @@ class FaissService:
         self.save_index()
         logger.info(f"Added embedding for student {student_usn} to FAISS index at ID {current_id}.")
 
+    def add_student_vectors(self, student_usn: str, embeddings: List[np.ndarray], dup_threshold: float = 0.95) -> int:
+        """Add multiple diverse embedding vectors for a student into FAISS with near-duplicate filtering."""
+        added = 0
+        for emb in embeddings:
+            if emb is None:
+                continue
+            vec = np.array(emb, dtype=np.float32)
+            norm = np.linalg.norm(vec)
+            if norm < 1e-6:
+                continue
+            vec = vec / norm
+
+            # Check if near duplicate vector already exists in FAISS for this student
+            if self.index.ntotal > 0:
+                query = np.array([vec], dtype=np.float32)
+                distances, indices = self.index.search(query, 1)
+                if float(distances[0][0]) >= dup_threshold and self.metadata.get(str(indices[0][0])) == student_usn:
+                    continue
+
+            self.add_student(student_usn, vec)
+            added += 1
+        return added
+
     def search_face(self, embedding: np.ndarray, threshold: float = 0.70) -> Optional[Tuple[str, float]]:
         """Search for the closest matching student in FAISS for a given embedding.
 

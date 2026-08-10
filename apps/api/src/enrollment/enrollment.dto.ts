@@ -56,13 +56,19 @@ export class BulkImportBiometricsDto {
 
 export class CreateAutomaticSessionDto {
   @IsString() name: string;
-  @IsString() institutionId: string;
+  @IsOptional() @IsString() institutionId?: string;
   @IsOptional() @IsString() departmentId?: string;
   @IsOptional() @IsString() programId?: string;
   @IsOptional() @IsString() semesterId?: string;
   @IsOptional() @IsString() sectionId?: string;
   @IsOptional() @IsString() subjectId?: string;
   @IsOptional() @IsString() teacherId?: string;
+  @IsOptional() @IsString() department?: string;
+  @IsOptional() @IsString() program?: string;
+  @IsOptional() @IsString() semester?: string;
+  @IsOptional() @IsString() section?: string;
+  @IsOptional() @IsString() subject?: string;
+  @IsOptional() @IsString() teacher?: string;
   @IsOptional() @IsString() classroomId?: string;
   @IsOptional() @IsString() lectureDate?: string;
   @IsOptional() @IsString() lectureTime?: string;

@@ -32,6 +32,16 @@ export class AttendanceController {
     return this.attendance.endSession(sessionId);
   }
 
+  @Post("sessions/:sessionId/process")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  processVideoAttendance(
+    @Param("sessionId") sessionId: string,
+    @Body("videoPath") videoPath: string,
+    @Body("classId") classId?: string,
+  ) {
+    return this.attendance.processVideoAttendance(sessionId, videoPath, classId);
+  }
+
   @Post("ingest")
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.DEVICE_MANAGER)
   ingest(@Body() dto: IngestAttendanceDto) {

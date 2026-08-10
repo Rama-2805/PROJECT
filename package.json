@@ -7,7 +7,9 @@
     "start": "node run.js",
     "dev": "cd apps/web && npm run dev",
     "dev:api": "cd apps/api && npm run start:dev",
-    "dev:all": "(npm run docker:dev || echo \"Docker not running or not found. Starting servers locally...\") && concurrently --kill-others \"npm run dev:api\" \"npm run dev\"",
+    "dev:ai": "bash apps/ai-service/start.sh",
+    "dev:all": "(npm run docker:dev || echo \"Docker not running or not found. Starting servers locally...\") && npx concurrently --kill-others \"npm run dev:api\" \"npm run dev\"",
+    "dev:full": "(npm run docker:dev || echo \"Docker not running\") && npx concurrently --kill-others --names \"API,WEB,AI\" --prefix-colors \"blue,green,yellow\" \"npm run dev:api\" \"npm run dev\" \"npm run dev:ai\"",
     "dev:demo": "cross-env DEMO_MODE=true npm run dev",
     "docker:start": "docker compose --env-file .env up -d",
     "docker:dev": "docker compose -f docker-compose.dev.yml up -d",
@@ -28,6 +30,13 @@
     "type": "git",
     "url": "https://github.com/smartcampus-ai/smart-campus-ai"
   },
-  "keywords": ["ai", "education", "campus", "face-recognition", "iot", "analytics"],
+  "keywords": [
+    "ai",
+    "education",
+    "campus",
+    "face-recognition",
+    "iot",
+    "analytics"
+  ],
   "license": "MIT"
 }

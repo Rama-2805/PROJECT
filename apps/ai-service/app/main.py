@@ -30,6 +30,7 @@ from .api.session_enrollment import router as session_enrollment_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan — startup and shutdown."""
+    import os
     from pathlib import Path
     import logging
     import threading

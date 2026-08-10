@@ -41,3 +41,20 @@ __pycache__/
 *.mp4
 videos/
 dataset/
+# Python virtual environment
+.venv/
+
+# AI model weights
+*.pt
+*.onnx
+*.faiss
+
+# AI service storage (debug frames, enrollment data, vectors)
+apps/ai-service/storage/debug_*
+apps/ai-service/storage/enrollment/
+apps/ai-service/vectors/
+apps/ai-service/smartcampus_dev.db
+
+# Debug output
+debug/
+AttendifyAI/

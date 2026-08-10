@@ -10,6 +10,20 @@ const nextConfig: NextConfig = {
 
   compress: true,
 
+  // Rewrites to proxy AI service storage images & WebSocket/HTTP endpoints
+  async rewrites() {
+    return [
+      {
+        source: "/storage/:path*",
+        destination: "http://localhost:8000/storage/:path*",
+      },
+      {
+        source: "/api/v1/:path*",
+        destination: "http://localhost:8000/api/v1/:path*",
+      },
+    ];
+  },
+
   // HTTP headers for security
   async headers() {
     return [

@@ -7,7 +7,10 @@ import {
   Param,
   Query,
   UseGuards,
+  UseInterceptors,
+  UploadedFiles,
 } from "@nestjs/common";
+import { FilesInterceptor } from "@nestjs/platform-express";
 import { EnrollmentService } from "./enrollment.service";
 import {
   CreateEnrollmentJobDto,
@@ -144,6 +147,15 @@ export class EnrollmentController {
     return this.enrollment.rejectUnknownCluster(clusterId);
   }
 
+  @Get("sessions")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  getSessions(
+    @Query("institutionId") institutionId?: string,
+    @Query("status") status?: string,
+  ) {
+    return this.enrollment.getSessions(institutionId, status);
+  }
+
   @Post("sessions")
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
   createAutomaticSession(@Body() dto: CreateAutomaticSessionDto) {
@@ -159,10 +171,29 @@ export class EnrollmentController {
     return this.enrollment.uploadSessionVideos(id, videoPaths);
   }
 
+  @Post("sessions/:id/upload")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  @UseInterceptors(FilesInterceptor("videos", 20))
+  uploadVideoFiles(
+    @Param("id") id: string,
+    @UploadedFiles() files: Express.Multer.File[]
+  ) {
+    return this.enrollment.uploadVideoFiles(id, files);
+  }
+
+  @Get("sessions/:id/status")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  getSessionStatus(@Param("id") id: string) {
+    return this.enrollment.getSessionStatus(id);
+  }
+
   @Post("sessions/:id/start")
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
-  startSessionProcessing(@Param("id") id: string) {
-    return this.enrollment.startSessionProcessing(id);
+  startSessionProcessing(
+    @Param("id") id: string,
+    @Body("detector") detector?: string
+  ) {
+    return this.enrollment.startSessionProcessing(id, detector);
   }
 
   @Get("sessions/:id")
@@ -178,6 +209,12 @@ export class EnrollmentController {
     @Query("status") status?: string
   ) {
     return this.enrollment.getSessionClusters(id, status);
+  }
+
+  @Get("sessions/:id/diagnostics")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  getSessionDiagnostics(@Param("id") id: string) {
+    return this.enrollment.getSessionDiagnostics(id);
   }
 
   @Post("clusters/assign-student")
@@ -202,5 +239,23 @@ export class EnrollmentController {
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
   syncAiClusters(@Param("id") id: string) {
     return this.enrollment.syncAiClusters(id);
+  }
+
+  @Post("sessions/:id/stop")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  stopSessionProcessing(@Param("id") id: string) {
+    return this.enrollment.stopSessionProcessing(id);
+  }
+
+  @Delete("sessions/:id")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
+  deleteEnrollmentSession(@Param("id") id: string) {
+    return this.enrollment.deleteEnrollmentSession(id);
+  }
+
+  @Post("clusters/:id/reject")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  rejectCluster(@Param("id") id: string) {
+    return this.enrollment.rejectStudentCluster(id);
   }
 }

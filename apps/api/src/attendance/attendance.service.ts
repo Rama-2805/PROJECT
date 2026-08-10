@@ -648,4 +648,83 @@ export class AttendanceService {
       throw err;
     }
   }
+
+  async processVideoAttendance(sessionId: string, videoPath: string, classId?: string) {
+    const session = await this.prisma.attendanceSession.findUnique({
+      where: { sessionId },
+    });
+    if (!session) throw new NotFoundException("Attendance session not found");
+
+    const aiServiceUrl = process.env.AI_SERVICE_URL || "http://localhost:8000";
+    const res = await fetch(`${aiServiceUrl}/api/v1/attendance/process-video`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        video_path: videoPath,
+        class_id: classId || session.classroomId || "CSE_7A",
+        confidence_threshold: 0.58,
+        required_confirmations: 3,
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`AI service video attendance failed: ${errText}`);
+    }
+
+    const aiResult = await res.json();
+    const data = aiResult.data || {};
+    const confirmedList = data.confirmed_attendance || [];
+
+    let createdRecords = 0;
+    for (const item of confirmedList) {
+      const student = await this.prisma.student.findFirst({
+        where: {
+          OR: [
+            { rollNumber: item.usn },
+            { usn: item.usn },
+            { studentId: item.usn },
+          ],
+        },
+      });
+
+      if (student) {
+        const existing = await this.prisma.attendanceRecord.findFirst({
+          where: {
+            sessionId: session.id,
+            studentId: student.id,
+          },
+        });
+
+        if (!existing) {
+          await this.prisma.attendanceRecord.create({
+            data: {
+              sessionId: session.id,
+              studentId: student.id,
+              studentName: student.fullName,
+              confidence: item.confidence,
+              method: "FACE_RECOGNITION",
+            },
+          });
+          createdRecords++;
+        }
+      }
+    }
+
+    await this.prisma.attendanceSession.update({
+      where: { sessionId },
+      data: {
+        totalPresent: createdRecords,
+        status: "COMPLETED",
+        endedAt: new Date(),
+      },
+    });
+
+    return {
+      sessionId,
+      aiSummary: data,
+      createdRecords,
+      message: `Processed video attendance. Marked ${createdRecords} students PRESENT.`,
+    };
+  }
 }

@@ -34,12 +34,23 @@ class Settings(BaseSettings):
     target_frame_size: tuple = (640, 480)
     blur_threshold: float = 50.0  # Laplacian variance threshold for blur detection
 
-    # Face Detection
-    detection_confidence_threshold: float = 0.8
-    max_faces_per_frame: int = 20
+    # Face Detection & Safety Filtering
+    detection_model: str = "scrfd"                 # Options: "scrfd", "yolo11", "combined"
+    yolo_model_path: str = "yolo11n-face.pt"       # Default YOLO11 face model weight
+    yolo_confidence_threshold: float = 0.35        # YOLO11 confidence threshold for back-row faces
+    yolo_iou_threshold: float = 0.45               # YOLO11 NMS IoU threshold
+    yolo_imgsz: int = 1024                         # YOLO11 input resolution for high pixel detail
+    detection_confidence_threshold: float = 0.70  # Reject false positive detections < 0.70
+    min_face_width: int = 25                       # Minimum face crop width in pixels
+    min_face_height: int = 25                      # Minimum face crop height in pixels
+    min_face_area_ratio: float = 0.0001            # Minimum face area / frame area ratio
+    max_face_aspect_ratio: float = 2.2            # Max aspect ratio (w/h or h/w)
+    min_brightness: float = 20.0                   # Min average pixel intensity (0-255)
+    max_brightness: float = 240.0                  # Max average pixel intensity (0-255)
+    max_faces_per_frame: int = 40
 
     # Face Recognition
-    recognition_confidence_threshold: float = 0.55
+    recognition_confidence_threshold: float = 0.58
     embedding_size: int = 512  # ArcFace embedding dimension
 
     # Clustering
@@ -47,6 +58,9 @@ class Settings(BaseSettings):
     cluster_selection_epsilon: float = 0.5
     min_samples: int = 2
     clustering_eps: float = 0.3  # Cosine distance threshold for DBSCAN
+    hdbscan_min_cluster_size: int = 5  # Configurable HDBSCAN min_cluster_size
+    hdbscan_min_samples: int = 2       # Configurable HDBSCAN min_samples
+    duplicate_cluster_threshold: float = 0.75  # Cosine similarity threshold for candidate duplicates
 
     # Database
     database_url: str = "postgresql://smartcampus:smartcampus_dev@localhost:5432/smartcampus"

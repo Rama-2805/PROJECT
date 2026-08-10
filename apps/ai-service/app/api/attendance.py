@@ -58,8 +58,33 @@ def stop_attendance_loop(request: StopAttendanceRequest):
 
     return {
         "status": "success",
-        "message": f"Real-time attendance loop stopped successfully for camera '{request.camera_id}'."
+        "message": f"Real-time attendance loop stopped for camera '{request.camera_id}'."
     }
+
+
+class ProcessVideoAttendanceRequest(BaseModel):
+    video_path: str = Field(..., description="Path to classroom video file")
+    class_id: str = Field("CSE_7A", description="Target class/lecture identifier")
+    confidence_threshold: float = Field(0.58, description="Minimum cosine similarity score")
+    required_confirmations: int = Field(3, description="Minimum frame confirmations")
+
+
+@router.post("/process-video")
+def process_video_attendance_endpoint(req: ProcessVideoAttendanceRequest):
+    """Process a recorded classroom video file against FAISS to mark attendance."""
+    try:
+        results = attendance_engine.process_video_attendance(
+            video_path=req.video_path,
+            class_id=req.class_id,
+            confidence_threshold=req.confidence_threshold,
+            required_confirmations=req.required_confirmations,
+        )
+        return {"status": "success", "data": results}
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error processing video attendance: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/report")

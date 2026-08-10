@@ -496,6 +496,110 @@ class AttendanceEngine:
         websocket_manager.broadcast_sync("UNKNOWN_FACE", payload)
         logger.info(f"Alert: Unknown face detected at camera {camera_id} (assigned: {cluster_id})")
 
+    def process_video_attendance(
+        self,
+        video_path: str,
+        class_id: str = "CSE_7A",
+        confidence_threshold: float = 0.58,
+        required_confirmations: int = 3,
+    ) -> dict:
+        """Process a classroom video file for attendance recognition against FAISS."""
+        if not os.path.exists(video_path):
+            raise FileNotFoundError(f"Video file not found: {video_path}")
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise RuntimeError(f"Could not open video file: {video_path}")
+
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        frame_skip = max(1, int(fps * 1.0))
+
+        faces_detected = 0
+        faces_matched = 0
+        unknown_faces = 0
+        duplicate_prevented = 0
+
+        observations = {}
+        first_seen_times = {}
+
+        frame_idx = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if frame_idx % frame_skip != 0:
+                frame_idx += 1
+                continue
+
+            timestamp_sec = frame_idx / fps if fps > 0 else 0.0
+
+            detections = face_detector.detect_faces(frame)
+            if detections:
+                faces_detected += len(detections)
+
+                for det in detections:
+                    crop = det["crop"]
+                    h, w = crop.shape[:2]
+                    if w < 20 or h < 20:
+                        continue
+
+                    raw_face = det.get("raw_face")
+                    if raw_face is not None and hasattr(raw_face, "embedding") and raw_face.embedding is not None:
+                        emb = raw_face.embedding.copy()
+                        norm = np.linalg.norm(emb)
+                        if norm > 0:
+                            emb = emb / norm
+                    else:
+                        emb = embedding_service.generate_embedding(crop)
+
+                    if emb is None:
+                        continue
+
+                    match = faiss_service.search_face(emb, threshold=confidence_threshold)
+                    if match:
+                        usn, conf = match
+                        faces_matched += 1
+                        if usn not in observations:
+                            observations[usn] = []
+                            first_seen_times[usn] = timestamp_sec
+                        else:
+                            duplicate_prevented += 1
+
+                        observations[usn].append(conf)
+                    else:
+                        unknown_faces += 1
+
+            frame_idx += 1
+
+        cap.release()
+
+        confirmed_records = []
+        for usn, confs in observations.items():
+            if len(confs) >= required_confirmations:
+                avg_conf = float(np.mean(confs))
+                confirmed_records.append({
+                    "usn": usn,
+                    "status": "PRESENT",
+                    "confidence": round(avg_conf, 3),
+                    "observation_count": len(confs),
+                    "first_seen_sec": round(first_seen_times[usn], 1),
+                    "confirmed_at": datetime.now().isoformat(),
+                })
+
+        return {
+            "video_path": video_path,
+            "class_id": class_id,
+            "total_frames": total_frames,
+            "faces_detected": faces_detected,
+            "faces_matched": faces_matched,
+            "unknown_faces": unknown_faces,
+            "attendance_confirmations": len(confirmed_records),
+            "duplicate_events_prevented": duplicate_prevented,
+            "confirmed_attendance": confirmed_records,
+        }
+
 
 # Singleton instance
 import threading
