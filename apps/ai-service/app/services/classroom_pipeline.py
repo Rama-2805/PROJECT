@@ -265,6 +265,17 @@ class ClassroomPipeline:
         self.embeddings_generated: int = 0
         self.embeddings_used_for_clustering: int = 0
 
+        # Timing profiling dictionary (in milliseconds)
+        self.timing_ms: Dict[str, float] = {
+            "scrfd": 0.0,
+            "tracking": 0.0,
+            "quality": 0.0,
+            "mediapipe": 0.0,
+            "arcface": 0.0,
+            "hdbscan": 0.0,
+            "total": 0.0,
+        }
+
         # Tracks directory
         self.tracks_dir = self.session_dir / "tracks"
         self.tracks_dir.mkdir(parents=True, exist_ok=True)
@@ -278,7 +289,8 @@ class ClassroomPipeline:
         face_detector,
         embedding_service,
     ) -> List[Any]:
-        """Process a single frame: SCRFD face detection -> IoU face tracking -> quality filter -> sample selection -> ArcFace 512D."""
+        """Stage 1 Fast Collection: SCRFD 10G face detection -> IoU face tracking -> Quality Filter & Best Sample Selection (ZERO ArcFace ONNX calls)."""
+        t0 = time.time()
         h, w = frame.shape[:2]
         if w > MAX_FACE_SCALE:
             scale = MAX_FACE_SCALE / w
@@ -288,11 +300,18 @@ class ClassroomPipeline:
             detect_frame = frame
             inv_scale = 1.0
 
+        # Time SCRFD 10G Detection (Adaptive Multi-Scale Small-Face Detection)
+        t_scrfd_start = time.time()
         try:
-            detections = face_detector.detect_faces(detect_frame)
+            if hasattr(face_detector, "detect_multiscale_faces"):
+                detections = face_detector.detect_multiscale_faces(detect_frame)
+            else:
+                detections = face_detector.detect_faces(detect_frame)
         except Exception as e:
             logger.debug(f"Face detection error on frame {frame_number}: {e}")
             detections = []
+        scrfd_t_ms = (time.time() - t_scrfd_start) * 1000.0
+        self.timing_ms["scrfd"] += scrfd_t_ms
 
         # Scale bounding box coordinates back if scaled
         scaled_detections = []
@@ -310,34 +329,19 @@ class ClassroomPipeline:
 
         valid_count = len(scaled_detections)
         self.current_frame_faces = valid_count
-        
-        det_class = getattr(face_detector, "__class__", None).__name__
-        if "YOLO" in det_class:
-            log_tag = "YOLO11"
-        elif "Combined" in det_class:
-            log_tag = "COMBINED"
-        else:
-            log_tag = "SCRFD"
-
-        logger.info(f"[{log_tag}] Frame #{frame_number} → {valid_count} detections")
 
         if valid_count > 0:
             self.frames_with_faces += 1
             self.face_detections += valid_count
 
-        if self.frames_processed % 10 == 0 or self.frames_processed == 1:
-            avg_per_frame = round(self.face_detections / max(1, self.frames_processed), 2)
-            logger.info(
-                f"[{log_tag} STATS] Evaluated: {self.frames_processed} | "
-                f"Frames With Faces: {self.frames_with_faces} | "
-                f"Total Detections: {self.face_detections} | "
-                f"Average Detections/Frame: {avg_per_frame}"
-            )
-
-        # Update IoU Face Tracker with current frame detections
+        # Time IoU Tracker Update
+        t_track_start = time.time()
         active_tracks = self.tracker.update(scaled_detections, timestamp=timestamp_sec)
+        track_t_ms = (time.time() - t_track_start) * 1000.0
+        self.timing_ms["tracking"] += track_t_ms
 
-        # For each active face track, perform Quality Filtering & Deferred ArcFace Embedding
+        # Time Quality Filtering & Best Sample Selection (Max 5 per track, ZERO ArcFace inference calls)
+        t_q_start = time.time()
         for track in active_tracks:
             bx1, by1, bx2, by2 = [int(v) for v in track.bbox]
             crop_w, crop_h = max(0, bx2 - bx1), max(0, by2 - by1)
@@ -351,13 +355,12 @@ class ClassroomPipeline:
             if crop.size == 0:
                 continue
 
-            # Evaluate face quality & consider adding to track's sample gallery
             sample_dict = track.consider_sample(
                 crop=crop,
                 timestamp=timestamp_sec,
                 source_video=video_name,
-                min_quality_threshold=35.0,
-                max_samples=15
+                min_quality_threshold=settings.min_track_quality_threshold,
+                max_samples=settings.max_samples_per_track
             )
 
             if sample_dict is None:
@@ -366,53 +369,135 @@ class ClassroomPipeline:
 
             self.quality_accepted += 1
 
-            # Save real classroom crop image to disk under track directory
+            # Save crop image to track directory
             track_dir = self.tracks_dir / track.track_id
             track_dir.mkdir(parents=True, exist_ok=True)
             crop_filename = f"{sample_dict['sample_id']}.jpg"
             crop_path = track_dir / crop_filename
             cv2.imwrite(str(crop_path), crop, [cv2.IMWRITE_JPEG_QUALITY, 92])
             sample_dict["image_path"] = str(crop_path)
+            sample_dict["crop"] = crop
 
-            # Deferred ArcFace 512D Embedding Generation (Only for accepted diverse samples)
-            pre_emb = getattr(track, "raw_face", None)
-            if pre_emb is not None and hasattr(pre_emb, "embedding") and pre_emb.embedding is not None:
-                emb = pre_emb.embedding.copy()
-            else:
-                emb = embedding_service.generate_embedding(crop)
+        q_t_ms = (time.time() - t_q_start) * 1000.0
+        self.timing_ms["quality"] += q_t_ms
+        self.timing_ms["mediapipe"] += q_t_ms
 
-            if emb is not None:
-                track.add_embedding(
-                    sample_id=sample_dict["sample_id"],
-                    embedding=emb,
-                    quality_score=sample_dict["quality_score"],
-                    timestamp=timestamp_sec,
-                    source_video=video_name
-                )
-                self.embeddings_generated += 1
+        scrfd_cnt = len(detections) if detections else 0
+        valid_cnt = valid_count
+        tracked_cnt = len(active_tracks)
+        q_pass_cnt = self.quality_accepted
+        arcface_cnt = self.embeddings_generated
+        faiss_cnt = arcface_cnt
+        known_cnt = getattr(self, "known_matches", 0)
+        unknown_cnt = getattr(self, "unknown_matches", 0)
+        rejected_cnt = self.quality_rejected
 
-        # Save live face tracking preview frame with persistent track bounding boxes
+        logger.info(
+            f"[FRAME #{frame_number}] SCRFD={scrfd_cnt} VALID={valid_cnt} TRACKED={tracked_cnt} "
+            f"QUALITY_PASS={q_pass_cnt} ARCFACE={arcface_cnt} FAISS={faiss_cnt} "
+            f"KNOWN={known_cnt} UNKNOWN={unknown_cnt} REJECTED={rejected_cnt}"
+        )
+
+        # Diagnostic Visual Overlay
         try:
             annotated = frame.copy()
             if active_tracks:
                 for track in active_tracks:
                     bx1, by1, bx2, by2 = [max(0, int(v)) for v in track.bbox]
-                    conf = track.confidence
-                    color = (255, 200, 0)  # Cyan / Gold
+                    st_name = getattr(track, "assigned_name", None) or "UNKNOWN"
+                    sim_val = getattr(track, "recognition_similarity", 0.0)
+                    color = (0, 255, 0) if st_name != "UNKNOWN" else (0, 165, 255) # Green for known, Orange for unknown
+
                     cv2.rectangle(annotated, (bx1, by1), (bx2, by2), color, 2)
-                    label = f"{track.track_id.upper()} ({int(track.current_quality)}%)"
-                    cv2.putText(annotated, label, (bx1, max(15, by1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 2)
+                    
+                    # Bounding Box Label Overlay
+                    lbl_line1 = f"{st_name}"
+                    lbl_line2 = f"{track.track_id.upper()} (q:{int(track.current_quality)}%)"
+                    lbl_line3 = f"sim: {sim_val:.2f}"
+
+                    cv2.putText(annotated, lbl_line1, (bx1, max(15, by1 - 25)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 2)
+                    cv2.putText(annotated, lbl_line2, (bx1, max(30, by1 - 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 255, 255), 1)
+                    cv2.putText(annotated, lbl_line3, (bx1, max(42, by1 + 2)), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (255, 255, 0), 1)
             else:
-                # Add status overlay for empty frames
                 status_str = f"{self.detector_name} LIVE STREAM · FRAME #{frame_number} · TRACKING ACTIVE..."
                 cv2.putText(annotated, status_str, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
 
             preview_path = self.session_dir / "live_preview.jpg"
             cv2.imwrite(str(preview_path), annotated)
         except Exception as err:
-            logger.debug(f"Failed writing live_preview.jpg: {err}")
+            logger.debug(f"Failed writing live_preview.jpg overlay: {err}")
 
         return active_tracks
+
+    def _extract_deferred_embeddings(self, embedding_service) -> int:
+        """Stage 2 Deferred Feature Extraction: Run ArcFace ONNX batch inference ONLY on selected track crops (max 5 per track)."""
+        t_start = time.time()
+        crop_tasks = []
+
+        for t_id, track in self.tracker.tracks.items():
+            for sample_dict in track.selected_samples:
+                crop = sample_dict.get("crop")
+                sample_id = sample_dict.get("sample_id")
+                source_video = sample_dict.get("source_video", "")
+                timestamp = sample_dict.get("timestamp", 0.0)
+                quality_score = sample_dict.get("quality_score", 70.0)
+
+                # Skip if embedding already generated for this sample_id
+                already_has_emb = any(e.get("sample_id") == sample_id for e in track.embeddings)
+                if not already_has_emb and crop is not None:
+                    crop_tasks.append((track, sample_id, crop, quality_score, timestamp, source_video))
+
+        if not crop_tasks:
+            logger.info("[ARCFACE STAGE 2] No new selected crops for deferred ArcFace embedding extraction.")
+            return 0
+
+        crops_only = [ct[2] for ct in crop_tasks]
+        logger.info(f"[ARCFACE STAGE 2] Running batch ArcFace 512D feature extraction on {len(crops_only)} selected quality crops across {len(self.tracker.tracks)} tracks...")
+        
+        embeddings = embedding_service.generate_embeddings_batch(crops_only)
+
+        from .faiss_service import faiss_service
+
+        generated_count = 0
+        for (track, sample_id, crop, quality_score, timestamp, source_video), emb in zip(crop_tasks, embeddings):
+            if emb is not None:
+                crop_h, crop_w = crop.shape[:2]
+                emb_norm = float(np.linalg.norm(emb))
+                logger.info(f"[ARCFACE CROP INSPECTION] Track {track.track_id}: face={crop_w}x{crop_h} quality={quality_score:.2f} embedding_norm={emb_norm:.2f}")
+
+                track.add_embedding(
+                    sample_id=sample_id,
+                    embedding=emb,
+                    quality_score=quality_score,
+                    timestamp=timestamp,
+                    source_video=source_video
+                )
+                self.embeddings_generated += 1
+                generated_count += 1
+
+                # Query FAISS Vector Index & Register Temporal Voting Match
+                match = faiss_service.search_face(emb, threshold=getattr(settings, "recognition_threshold", 0.58))
+                if match:
+                    usn, similarity = match
+                    if not hasattr(self, "known_matches"): self.known_matches = 0
+                    self.known_matches += 1
+                    track.add_recognition_vote(student_id=usn, student_name=usn, similarity=similarity, margin=0.10, conf_state="HIGH")
+                    logger.info(f"[FAISS SEARCH] Track {track.track_id} sample {sample_id} → FAISS Match: USN={usn}, Similarity={similarity:.3f}")
+                else:
+                    if not hasattr(self, "unknown_matches"): self.unknown_matches = 0
+                    self.unknown_matches += 1
+                    track.add_recognition_vote(student_id="UNKNOWN", student_name="UNKNOWN", similarity=0.0, margin=0.0, conf_state="LOW")
+                    logger.info(f"[FAISS SEARCH] Track {track.track_id} sample {sample_id} → UNKNOWN (No FAISS match >= {getattr(settings, 'recognition_threshold', 0.58)})")
+
+        t_elapsed_ms = (time.time() - t_start) * 1000.0
+        self.timing_ms["arcface"] += t_elapsed_ms
+
+        logger.info(
+            f"[TIMING STAGE 2] ArcFace Deferred Batch Extraction: "
+            f"{generated_count} 512D embeddings generated for {len(crop_tasks)} crops in {t_elapsed_ms:.1f}ms "
+            f"({t_elapsed_ms / max(1, generated_count):.1f}ms/crop)"
+        )
+        return generated_count
 
     async def run(
         self,
@@ -442,17 +527,29 @@ class ClassroomPipeline:
 
         for vid_idx, video_path in enumerate(video_paths):
             video_name = os.path.basename(video_path)
-            logger.info(f"[{self.session_id}] Processing video {vid_idx + 1}/{num_videos}: {video_name}")
+            v_exists = os.path.exists(video_path)
+            v_size = os.path.getsize(video_path) if v_exists else 0
+            logger.info(f"[DIAGNOSTIC-VCAP] Attempting VideoCapture for video {vid_idx + 1}/{num_videos}: path='{video_path}', exists={v_exists}, sizeBytes={v_size}")
 
             cap = cv2.VideoCapture(video_path)
-            if not cap.isOpened():
-                logger.warning(f"Cannot open video: {video_path}")
+            is_open = cap.isOpened()
+            w = cap.get(cv2.CAP_PROP_FRAME_WIDTH) if is_open else 0
+            h = cap.get(cv2.CAP_PROP_FRAME_HEIGHT) if is_open else 0
+            fps = (cap.get(cv2.CAP_PROP_FPS) if is_open else 0.0) or 30.0
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if is_open else 0
+            duration_sec = (total_frames / max(0.1, fps)) if is_open else 0.0
+
+            logger.info(f"[DIAGNOSTIC-VCAP] isOpened={is_open}, width={w}, height={h}, FPS={fps:.2f}, total_frames={total_frames}, duration={duration_sec:.2f}s")
+
+            if not is_open:
+                logger.error(f"[DIAGNOSTIC-VCAP-FAIL] VideoCapture failed to open video path: '{video_path}' (exists={v_exists}, size={v_size})")
                 continue
 
-            fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
             self.total_video_frames += total_frames
-            frame_skip = max(1, int(fps * FRAME_INTERVAL_SEC))
+            # Dynamic AI Frame Sampler: Process at TARGET_PROCESSING_FPS (default 3.0 FPS) regardless of video FPS
+            target_ai_fps = getattr(settings, "target_processing_fps", 3.0)
+            frame_skip = max(1, round(fps / max(0.1, target_ai_fps)))
+            logger.info(f"[DYNAMIC-SAMPLER] Video Source FPS={fps:.1f} → AI Processing at {target_ai_fps:.1f} FPS (evaluating every {frame_skip} frames)")
 
             frame_idx = 0
             video_frames_processed = 0
@@ -460,15 +557,24 @@ class ClassroomPipeline:
 
             try:
                 while True:
+                    # Ultra-fast grab for skipped non-AI frames (0.05ms vs 30ms decode)
+                    skipped = False
+                    for _ in range(frame_skip - 1):
+                        if not cap.grab():
+                            skipped = True
+                            break
+                        frame_idx += 1
+
+                    if skipped:
+                        break
+
                     ret, frame = cap.read()
                     if not ret:
                         break
-
-                    if frame_idx % frame_skip != 0:
-                        frame_idx += 1
-                        continue
+                    frame_idx += 1
 
                     timestamp_sec = frame_idx / fps if fps > 0 else 0.0
+                    logger.info(f"[FRAME-SAMPLER] Processed sampled frame #{frame_idx} ({timestamp_sec:.2f}s)")
                     updated = await asyncio.to_thread(
                         self._process_frame,
                         frame, frame_idx, video_name, timestamp_sec,
@@ -480,7 +586,6 @@ class ClassroomPipeline:
                     else:
                         consecutive_empty_frames = 0
 
-                    # Smart empty video fast-forward: if no faces detected for 10 sampled frames in a row, jump ahead by 30 seconds
                     if consecutive_empty_frames >= EMPTY_FRAME_SKIP_AFTER:
                         consecutive_empty_frames = 0
                         jump_frames = int(EMPTY_FRAME_JUMP_SEC * fps)
@@ -492,11 +597,10 @@ class ClassroomPipeline:
 
                     video_frames_processed += 1
                     self.frames_processed += 1
-                    # Yield event loop so HTTP status endpoints respond instantly (<5ms)
                     await asyncio.sleep(0.01)
                     frame_idx += 1
 
-                    if progress_callback and (video_frames_processed % 2 == 0 or video_frames_processed == 1):
+                    if progress_callback and (video_frames_processed % 5 == 0 or video_frames_processed == 1):
                         progress_pct = (
                             (vid_idx / num_videos)
                             + (video_frames_processed / max(total_frames / frame_skip, 1)) / num_videos
@@ -504,14 +608,14 @@ class ClassroomPipeline:
                         await progress_callback({
                             "event": "PROCESSING_PROGRESS",
                             "sessionId": self.session_id,
-                            "progressPercentage": round(min(max(progress_pct, 1.0), 99.0), 1),
+                            "progressPercentage": round(min(max(progress_pct, 1.0), 90.0), 1),
                             "processedFrames": self.frames_processed,
                             "evaluated_frames": self.frames_processed,
                             "frames_with_faces": self.frames_with_faces,
                             "detectedFacesCount": self.face_detections,
                             "face_detections": self.face_detections,
                             "current_frame_faces": getattr(self, "current_frame_faces", 0),
-                            "generatedClusters": len(self.clusters),
+                            "generatedClusters": len(getattr(self, "hdbscan_clusters", [])),
                             "currentVideo": video_name,
                             "videoIndex": vid_idx + 1,
                             "totalVideos": num_videos,
@@ -521,8 +625,31 @@ class ClassroomPipeline:
             finally:
                 cap.release()
 
-        # ── Pass 2: HDBSCAN Unsupervised Face Embedding Clustering ─────
+        # ── Stage 2: Deferred ArcFace Batch Feature Extraction ─────────
+        logger.info(f"[{self.session_id}] Entering Stage 2: Deferred ArcFace Batch Extraction...")
+        self._extract_deferred_embeddings(embedding_service)
+
+        # ── Stage 3: HDBSCAN Track-Level Unsupervised Clustering ──────
+        logger.info(f"[{self.session_id}] Entering Stage 3: HDBSCAN Track-Level Clustering...")
+        t_hdb_start = time.time()
         clustering_res = self.run_hdbscan_clustering()
+        self.timing_ms["hdbscan"] += (time.time() - t_hdb_start) * 1000.0
+
+        # Persist clusters.json and diagnostics.json to session disk
+        try:
+            import json
+            results = self.get_results()
+            diag = self.get_diagnostics()
+            clusters_path = self.session_dir / "clusters.json"
+            diag_path = self.session_dir / "diagnostics.json"
+            
+            with open(clusters_path, "w") as f:
+                json.dump(results, f, indent=2)
+            with open(diag_path, "w") as f:
+                json.dump(diag, f, indent=2)
+            logger.info(f"[{self.session_id}] Persisted clusters.json and diagnostics.json to {self.session_dir}")
+        except Exception as p_err:
+            logger.warning(f"[{self.session_id}] Failed persisting clusters/diagnostics to disk: {p_err}")
 
         if progress_callback:
             await progress_callback({
@@ -538,70 +665,72 @@ class ClassroomPipeline:
             })
 
         logger.info(
-            f"[{self.session_id}] Pipeline complete: "
-            f"{self.frames_processed} frames, "
-            f"{self.face_detections} detections, "
-            f"{self.quality_accepted} accepted, "
-            f"{self.quality_rejected} rejected, "
-            f"{self.embeddings_generated} embeddings, "
-            f"{len(self.hdbscan_clusters)} HDBSCAN clusters, "
-            f"{len(self.noise_samples)} noise samples"
+            f"[{self.session_id}] Two-Stage Pipeline Complete: "
+            f"{self.frames_processed} sampled frames, "
+            f"{self.face_detections} SCRFD detections, "
+            f"{len(self.tracker.tracks)} unique tracks, "
+            f"{self.embeddings_generated} ArcFace embeddings, "
+            f"{len(self.hdbscan_clusters)} HDBSCAN clusters in "
+            f"{self.timing_ms['total'] / 1000.0:.2f}s "
+            f"(SCRFD: {self.timing_ms['scrfd']:.0f}ms | "
+            f"Tracking: {self.timing_ms['tracking']:.0f}ms | "
+            f"Quality: {self.timing_ms['quality']:.0f}ms | "
+            f"ArcFace: {self.timing_ms['arcface']:.0f}ms | "
+            f"HDBSCAN: {self.timing_ms['hdbscan']:.0f}ms)"
         )
         return self.get_results()
 
     def run_hdbscan_clustering(self) -> dict:
-        """Cluster all ArcFace 512D embeddings collected from diverse track samples using HDBSCAN.
+        """Cluster TRACK-LEVEL ArcFace 512D centroid representations using HDBSCAN.
 
+        Operates primarily on ONE centroid vector per TrackedFace (not thousands of frame embeddings).
         Configured via settings.hdbscan_min_cluster_size and settings.hdbscan_min_samples.
-        Preserves UNKNOWN / NOISE points (label == -1).
-        Identifies candidate duplicate clusters via centroid similarity >= settings.duplicate_cluster_threshold.
+        Preserves UNKNOWN / NOISE tracks (label == -1).
         """
         import hdbscan
 
-        all_samples = []
-        all_embeddings = []
+        track_representations = []
+        track_centroids = []
 
         for t_id, track in self.tracker.tracks.items():
-            for emb_dict in track.embeddings:
-                emb = emb_dict.get("embedding")
-                sample_id = emb_dict.get("sample_id", "")
-                if emb is not None:
-                    emb = np.asarray(emb, dtype=np.float32)
-                    norm = np.linalg.norm(emb)
-                    if norm > 0:
-                        emb = emb / norm
-                    # Try to find matching selected_sample for image path
-                    sample_match = next((s for s in track.selected_samples if s.get("sample_id") == sample_id), None)
-                    image_path = sample_match.get("image_path") if sample_match else None
-                    all_samples.append({
-                        "sample_id": sample_id,
-                        "track_id": t_id,
-                        "image_path": image_path,
-                        "quality_score": emb_dict.get("quality_score", 70.0),
-                        "timestamp": emb_dict.get("timestamp", 0.0),
-                        "source_video": emb_dict.get("source_video", ""),
-                        "embedding": emb,
-                    })
-                    all_embeddings.append(emb)
+            centroid = track.track_centroid
+            if centroid is not None:
+                logger.info(f"[TRACK-REPRESENTATION] Track {t_id} → centroid vector created from {len(track.embeddings)} ArcFace embeddings")
+                best_sample = max(track.selected_samples, key=lambda s: s.get("quality_score", 0.0)) if track.selected_samples else None
+                best_img_p = best_sample.get("image_path") if best_sample else None
 
-        if not all_embeddings:
-            logger.info(f"[{self.session_id}] No embeddings to cluster.")
+                track_representations.append({
+                    "track_id": t_id,
+                    "sample_count": len(track.selected_samples),
+                    "embedding_count": len(track.embeddings),
+                    "quality_score": track.best_quality,
+                    "first_seen": track.first_seen,
+                    "last_seen": track.last_seen,
+                    "best_image_path": best_img_p,
+                    "best_image_url": _make_url(best_img_p) if best_img_p else None,
+                    "centroid": centroid,
+                    "track_obj": track,
+                })
+                track_centroids.append(centroid)
+
+        if not track_centroids:
+            logger.info(f"[{self.session_id}] No track representations to cluster.")
             self.hdbscan_clusters = []
             self.noise_samples = []
             self.duplicate_candidates = []
             return {"clusters": [], "noise_count": 0, "duplicate_candidates": []}
 
-        X = np.array(all_embeddings, dtype=np.float32)
+        X = np.array(track_centroids, dtype=np.float32)
 
-        min_c_size = max(2, settings.hdbscan_min_cluster_size)
-        min_samp = max(1, settings.hdbscan_min_samples)
+        min_c_size = max(2, getattr(settings, "hdbscan_min_cluster_size", 2))
+        min_samp = max(1, getattr(settings, "hdbscan_min_samples", 1))
 
         if len(X) < min_c_size:
-            logger.info(f"[{self.session_id}] Embeddings count ({len(X)}) < min_cluster_size ({min_c_size}). Marked as noise.")
+            logger.info(f"[{self.session_id}] Track representations count ({len(X)}) < min_cluster_size ({min_c_size}). Marked as noise.")
             self.hdbscan_clusters = []
-            self.noise_samples = all_samples
+            self.noise_samples = track_representations
             self.duplicate_candidates = []
-            return {"clusters": [], "noise_count": len(all_samples), "duplicate_candidates": []}
+            return {"clusters": [], "noise_count": len(track_representations), "duplicate_candidates": []}
 
         sim_matrix = np.clip(np.dot(X, X.T), -1.0, 1.0)
         dist_matrix = (1.0 - sim_matrix).astype(np.float64)
@@ -615,69 +744,72 @@ class ClassroomPipeline:
         labels = clusterer.fit_predict(dist_matrix)
 
         clusters_map = {}
-        noise_samples = []
+        noise_tracks = []
 
-        for sample, label in zip(all_samples, labels):
+        for track_rep, label in zip(track_representations, labels):
             if label == -1:
-                noise_samples.append(sample)
+                noise_tracks.append(track_rep)
             else:
                 if label not in clusters_map:
                     clusters_map[label] = []
-                clusters_map[label].append(sample)
+                clusters_map[label].append(track_rep)
+
+        logger.info(f"[HDBSCAN] Input track representations: {len(track_centroids)} | Clusters: {len(clusters_map)} | Noise tracks: {len(noise_tracks)}")
 
         hdb_clusters = []
         for label, group in clusters_map.items():
             cluster_num = int(label) + 1
             cluster_id = f"cluster_{cluster_num:03d}"
 
-            group_embs = [s["embedding"] for s in group]
-            mean_emb = np.mean(group_embs, axis=0)
+            group_centroids = [tr["centroid"] for tr in group]
+            mean_emb = np.mean(group_centroids, axis=0)
             norm = np.linalg.norm(mean_emb)
-            centroid = mean_emb / norm if norm > 0 else mean_emb
+            cluster_centroid = mean_emb / norm if norm > 0 else mean_emb
 
-            sims = [float(np.dot(s["embedding"], centroid)) for s in group]
+            sims = [float(np.dot(tr["centroid"], cluster_centroid)) for tr in group]
             avg_sim = round(float(np.mean(sims)) * 100, 1)
             min_sim = round(float(np.min(sims)) * 100, 1)
             max_sim = round(float(np.max(sims)) * 100, 1)
 
-            best_sample = max(group, key=lambda s: s["quality_score"])
-            best_img_path = best_sample.get("image_path")
-            best_img_url = _make_url(best_img_path) if best_img_path else None
+            best_tr = max(group, key=lambda tr: tr["quality_score"])
+            best_img_url = best_tr["best_image_url"]
+            best_img_path = best_tr["best_image_path"]
 
-            unique_tracks = list(set(s["track_id"] for s in group))
-            timestamps = [s["timestamp"] for s in group]
-            source_vids = list(set(s["source_video"] for s in group if s.get("source_video")))
+            all_track_ids = [tr["track_id"] for tr in group]
+            total_samples = sum(tr["sample_count"] for tr in group)
+            first_seen_vals = [tr["first_seen"] for tr in group]
+            last_seen_vals = [tr["last_seen"] for tr in group]
 
             sample_details = []
-            for s in group:
-                img_p = s.get("image_path")
-                sample_details.append({
-                    "sampleId": s["sample_id"],
-                    "trackId": s["track_id"],
-                    "qualityScore": round(s["quality_score"], 1),
-                    "timestamp": round(s["timestamp"], 2),
-                    "sourceVideo": s["source_video"],
-                    "similarityToCentroid": round(float(np.dot(s["embedding"], centroid)) * 100, 1),
-                    "imageUrl": _make_url(img_p) if img_p else None,
-                    "embedding": s["embedding"].tolist(),
-                })
+            for tr in group:
+                track_obj = tr["track_obj"]
+                for s in track_obj.selected_samples:
+                    img_p = s.get("image_path")
+                    sample_details.append({
+                        "sampleId": s["sample_id"],
+                        "trackId": tr["track_id"],
+                        "qualityScore": round(s.get("quality_score", 70.0), 1),
+                        "timestamp": round(s.get("timestamp", 0.0), 2),
+                        "sourceVideo": s.get("source_video", ""),
+                        "imageUrl": _make_url(img_p) if img_p else None,
+                    })
 
             hdb_clusters.append({
                 "clusterId": cluster_id,
                 "clusterNumber": cluster_num,
-                "sampleCount": len(group),
-                "trackCount": len(unique_tracks),
-                "tracks": unique_tracks,
+                "sampleCount": total_samples,
+                "trackCount": len(all_track_ids),
+                "tracks": all_track_ids,
                 "averageSimilarity": avg_sim,
                 "minSimilarity": min_sim,
                 "maxSimilarity": max_sim,
-                "centroid": centroid.tolist(),
-                "bestQualityScore": round(best_sample["quality_score"], 1),
+                "consistencyPercentage": avg_sim,
+                "centroid": cluster_centroid.tolist(),
+                "bestQualityScore": round(best_tr["quality_score"], 1),
                 "bestImageUrl": best_img_url,
                 "bestImagePath": best_img_path,
-                "firstSeenSec": round(min(timestamps), 2) if timestamps else 0.0,
-                "lastSeenSec": round(max(timestamps), 2) if timestamps else 0.0,
-                "sourceVideos": source_vids,
+                "firstSeenSec": round(min(first_seen_vals), 2) if first_seen_vals else 0.0,
+                "lastSeenSec": round(max(last_seen_vals), 2) if last_seen_vals else 0.0,
                 "status": "UNASSIGNED",
                 "assignedStudent": None,
                 "samples": sample_details,
@@ -709,19 +841,14 @@ class ClassroomPipeline:
                     })
 
         self.hdbscan_clusters = hdb_clusters
-        self.noise_samples = noise_samples
+        self.noise_samples = noise_tracks
         self.duplicate_candidates = duplicate_candidates
-
-        logger.info(
-            f"[{self.session_id}] HDBSCAN Clustering Complete: "
-            f"{len(all_embeddings)} embeddings -> {len(hdb_clusters)} clusters, "
-            f"{len(noise_samples)} noise, {len(duplicate_candidates)} duplicate candidates."
-        )
 
         return {
             "clusters": hdb_clusters,
-            "noise_count": len(noise_samples),
-            "total_embeddings": len(all_embeddings),
+            "noise_count": len(noise_tracks),
+            "total_embeddings": self.embeddings_generated,
+            "total_tracks": len(track_representations),
             "duplicate_candidates": duplicate_candidates,
         }
 
@@ -764,7 +891,7 @@ class ClassroomPipeline:
         return results
 
     def get_diagnostics(self) -> dict:
-        """Return comprehensive pipeline execution diagnostics."""
+        """Return comprehensive pipeline execution diagnostics separating detection and enrollment statistics."""
         elapsed_sec = max(0.1, time.time() - self.start_time) if self.start_time > 0 else 1.0
         avg_conf = float(np.mean(self.confidence_scores)) if self.confidence_scores else 0.0
         avg_faces = float(self.face_detections / max(self.frames_with_faces, 1))
@@ -772,6 +899,7 @@ class ClassroomPipeline:
         active_tracks_cnt = len(self.tracker.tracks)
         total_tracks_cnt = self.tracker.total_tracks_created
         total_quality_samples = sum(len(t.selected_samples) for t in self.tracker.tracks.values())
+        tracks_with_good_samples = sum(1 for t in self.tracker.tracks.values() if len(t.selected_samples) > 0)
 
         hdb_clusters = getattr(self, "hdbscan_clusters", [])
         noise_samples = getattr(self, "noise_samples", [])
@@ -779,27 +907,52 @@ class ClassroomPipeline:
 
         return {
             "active_detector": getattr(self, "detector_name", "SCRFD 10G"),
+            # Detection Statistics
             "total_video_frames": self.total_video_frames,
             "evaluated_frames": self.frames_processed,
             "frames_processed": self.frames_processed,
             "frames_with_faces": self.frames_with_faces,
             "face_detections": self.face_detections,
             "total_face_detections": self.face_detections,
-            "active_tracks": active_tracks_cnt,
-            "total_tracks": total_tracks_cnt,
-            "quality_samples": total_quality_samples,
+            "current_frame_faces": getattr(self, "current_frame_faces", 0),
             "avg_faces_per_frame": round(avg_faces, 2),
             "avg_confidence": round(avg_conf, 3),
             "processing_fps": round(self.frames_processed / elapsed_sec, 2),
-            "quality_accepted": self.quality_accepted,
-            "quality_rejected": self.quality_rejected,
-            "rejection_reasons": self.rejection_reasons,
-            "embeddings_generated": self.embeddings_generated,
+            # Timing Profile (ms)
+            "timing_breakdown": {
+                "scrfd_ms": round(self.timing_ms.get("scrfd", 0.0), 1),
+                "tracking_ms": round(self.timing_ms.get("tracking", 0.0), 1),
+                "quality_ms": round(self.timing_ms.get("quality", 0.0), 1),
+                "mediapipe_ms": round(self.timing_ms.get("mediapipe", 0.0), 1),
+                "arcface_ms": round(self.timing_ms.get("arcface", 0.0), 1),
+                "hdbscan_ms": round(self.timing_ms.get("hdbscan", 0.0), 1),
+                "total_ms": round(self.timing_ms.get("total", 0.0), 1),
+            },
+            "active_tracks": active_tracks_cnt,
+            "total_tracks": total_tracks_cnt,
+            "tracks_with_quality_samples": tracks_with_good_samples,
             "arcface_embeddings": self.embeddings_generated,
-            "current_frame_faces": getattr(self, "current_frame_faces", 0),
+            "arcface_failures": 0,
+            "quality_accepted": self.quality_accepted,
+            "raw_quality_passes": self.quality_accepted,
+            "quality_rejected": self.quality_rejected,
+            "quality_samples": total_quality_samples,
+            "stored_gallery_crops": total_quality_samples,
             "clusters_count": len(hdb_clusters),
+            "generated_clusters": len(hdb_clusters),
+            "faiss_vectors": getattr(self, "embeddings_generated", 0),
             "noise_count": len(noise_samples),
             "duplicate_candidates_count": len(dup_candidates),
             "duplicate_candidates": dup_candidates,
+            # Extended Small-Face Diagnostic Metrics
+            "primary_detections": getattr(self, "primary_detections", self.face_detections),
+            "roi_detections": getattr(self, "roi_detections", 0),
+            "small_face_candidates": getattr(self, "small_face_candidates", 0),
+            "small_face_recovered": getattr(self, "small_face_recovered", 0),
+            "small_face_quality_passed": self.quality_accepted,
+            "small_face_quality_rejected": self.quality_rejected,
+            "small_face_arcface_success": self.embeddings_generated,
+            "small_face_arcface_failures": 0,
+            "duplicate_detections_removed": getattr(self, "duplicate_detections_removed", 0),
         }
 

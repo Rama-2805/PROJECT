@@ -29,20 +29,48 @@ class Settings(BaseSettings):
     face_data_dir: str = "data/faces"
     max_upload_size_mb: int = 500
 
-    # Video Processing
+    # Video Processing & Intelligent Sampling
     frame_extraction_interval: float = 0.5  # Extract frame every 0.5 seconds
+    target_processing_fps: float = 1.5      # Fast AI processing (1.5 FPS = 1 frame every ~20 frames)
+    enrollment_sample_fps: float = 1.5      # Fast AI processing framerate
+    min_track_observations: int = 2         # Minimum track observations before sample eligibility
+    max_samples_per_track: int = 5          # Maximum high-quality diverse face crops per track (max 5)
+    max_embeddings_per_track: int = 5       # Max ArcFace embeddings per track
+    target_embeddings_per_track: int = 3    # Target ArcFace embeddings per track
+    embedding_frame_interval: int = 10      # Minimum frames between embedding candidate samples
+    embedding_frame_interval_sec: float = 1.0 # Minimum 1.0 second between crop samples per track
+    quality_threshold: float = 0.60         # Minimum composite quality score (0.0 - 1.0)
+    min_track_quality: float = 0.60         # Minimum composite quality score (0.0 - 1.0)
+    duplicate_embedding_threshold: float = 0.95 # Cosine similarity threshold for duplicate embedding rejection
+    embedding_dedup_threshold: float = 0.95     # Cosine similarity threshold for duplicate embedding rejection
+    arcface_batch_size: int = 8             # ArcFace batch inference size
+    min_track_quality_threshold: float = 30.0 # Quality score threshold (0-100) for track samples
     target_frame_size: tuple = (640, 480)
     blur_threshold: float = 50.0  # Laplacian variance threshold for blur detection
 
+    # Continuous Student Profile Learning
+    auto_learn_known_students: bool = True
+    allow_auto_profile_update: bool = True
+    max_embeddings_per_student: int = 20    # Max embeddings stored per student profile
+    initial_embeddings_per_student: int = 5  # Target initial embeddings per student profile
+
     # Face Detection & Safety Filtering
     detection_model: str = "scrfd"                 # Options: "scrfd", "yolo11", "combined"
+    person_detector: str = "disabled"              # Options: "disabled", "yolo11"
     yolo_model_path: str = "yolo11n-face.pt"       # Default YOLO11 face model weight
     yolo_confidence_threshold: float = 0.35        # YOLO11 confidence threshold for back-row faces
     yolo_iou_threshold: float = 0.45               # YOLO11 NMS IoU threshold
     yolo_imgsz: int = 1024                         # YOLO11 input resolution for high pixel detail
     detection_confidence_threshold: float = 0.70  # Reject false positive detections < 0.70
-    min_face_width: int = 25                       # Minimum face crop width in pixels
-    min_face_height: int = 25                      # Minimum face crop height in pixels
+    # MediaPipe Face Landmarker & Pose Quality Stage
+    enable_mediapipe_quality: bool = True
+    max_yaw: float = 30.0    # Max head yaw angle in degrees
+    max_pitch: float = 25.0  # Max head pitch angle in degrees
+    max_roll: float = 25.0   # Max head roll angle in degrees
+    min_face_width: int = 25  # Min face crop width in pixels (25px captures far/back-row faces)
+    min_face_height: int = 25 # Min face crop height in pixels (25px captures far/back-row faces)
+    faiss_top_k: int = 3      # Top-K candidate search depth for recognition diagnostics
+    margin_ambiguity_threshold: float = 0.10 # Similarity margin below which identity is marked AMBIGUOUS
     min_face_area_ratio: float = 0.0001            # Minimum face area / frame area ratio
     max_face_aspect_ratio: float = 2.2            # Max aspect ratio (w/h or h/w)
     min_brightness: float = 20.0                   # Min average pixel intensity (0-255)
@@ -53,13 +81,13 @@ class Settings(BaseSettings):
     recognition_confidence_threshold: float = 0.58
     embedding_size: int = 512  # ArcFace embedding dimension
 
-    # Clustering
-    min_cluster_size: int = 3
+    # Track-Centric Clustering
+    min_cluster_size: int = 2
     cluster_selection_epsilon: float = 0.5
-    min_samples: int = 2
+    min_samples: int = 1
     clustering_eps: float = 0.3  # Cosine distance threshold for DBSCAN
-    hdbscan_min_cluster_size: int = 5  # Configurable HDBSCAN min_cluster_size
-    hdbscan_min_samples: int = 2       # Configurable HDBSCAN min_samples
+    hdbscan_min_cluster_size: int = 2  # Configurable HDBSCAN min_cluster_size for track-level clustering
+    hdbscan_min_samples: int = 1       # Configurable HDBSCAN min_samples for track-level clustering
     duplicate_cluster_threshold: float = 0.75  # Cosine similarity threshold for candidate duplicates
 
     # Database

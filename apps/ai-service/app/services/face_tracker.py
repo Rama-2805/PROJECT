@@ -10,6 +10,7 @@ import logging
 import numpy as np
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Tuple, Optional
+from app.config.settings import settings
 
 logger = logging.getLogger("smartcampus.tracker")
 
@@ -107,42 +108,113 @@ class TrackedFace:
         self.crop: Optional[np.ndarray] = None
         self.raw_face: Optional[Any] = None
 
+        # Temporal Majority Voting Track Attributes
+        self.recognition_votes: List[Dict[str, Any]] = []
+        self.assigned_student_id: Optional[str] = None
+        self.assigned_name: str = "UNKNOWN"
+        self.recognition_similarity: float = 0.0
+
+    def add_recognition_vote(self, student_id: str, student_name: str, similarity: float, margin: float, conf_state: str):
+        """Record FAISS recognition search vote for track identity temporal voting."""
+        if not hasattr(self, "recognition_votes"):
+            self.recognition_votes = []
+        self.recognition_votes.append({
+            "student_id": student_id,
+            "student_name": student_name,
+            "similarity": similarity,
+            "margin": margin,
+            "state": conf_state
+        })
+
+        # Apply Temporal Majority Voting across track samples
+        votes_count: Dict[str, int] = {}
+        sim_sums: Dict[str, float] = {}
+        for vote in self.recognition_votes:
+            sid = vote["student_id"]
+            votes_count[sid] = votes_count.get(sid, 0) + 1
+            sim_sums[sid] = sim_sums.get(sid, 0.0) + vote["similarity"]
+
+        best_sid = max(votes_count.keys(), key=lambda s: (votes_count[s], sim_sums[s]))
+        majority_name = next((v["student_name"] for v in reversed(self.recognition_votes) if v["student_id"] == best_sid), best_sid)
+
+        self.assigned_student_id = best_sid
+        self.assigned_name = majority_name
+        self.recognition_similarity = float(sim_sums[best_sid] / votes_count[best_sid])
+        self.recognition_confidence = self.recognition_similarity
+
     def consider_sample(
         self,
         crop: np.ndarray,
         timestamp: float,
         source_video: str,
         min_quality_threshold: float = 35.0,
-        max_samples: int = 15
+        max_samples: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
-        """Evaluate quality and add to selected_samples if diverse and high quality.
+        """Evaluate quality and pose using MediaPipe Face Landmarker.
+        Adds to selected_samples gallery if pose is within limits and quality is high.
         Returns sample dict if added, else None.
         """
+        if max_samples is None:
+            max_samples = getattr(settings, "max_samples_per_track", 5)
+
         if crop is None or crop.size == 0:
             return None
 
-        q_metrics = calculate_face_quality(crop, self.bbox)
-        q_score = q_metrics["quality_score"]
-        self.current_quality = q_score
-        if q_score > self.best_quality:
-            self.best_quality = q_score
-
-        if q_score < min_quality_threshold:
+        # Return immediately if track has already reached max quality sample limit (max 5)
+        if len(self.selected_samples) >= max_samples:
             return None
+
+        # Enforce minimum temporal interval between crop samples (1.0 second)
+        if self.selected_samples:
+            last_ts = self.selected_samples[-1].get("timestamp", 0.0)
+            if abs(timestamp - last_ts) < getattr(settings, "embedding_frame_interval_sec", 1.0):
+                return None
+
+        # MediaPipe Quality & Pose Filter
+        if getattr(settings, "enable_mediapipe_quality", True):
+            from .mediapipe_face_quality import mediapipe_face_quality_service
+            mp_res = mediapipe_face_quality_service.evaluate_crop(crop)
+            if not mp_res.get("is_acceptable", False):
+                logger.debug(f"[MEDIAPIPE-FILTER] Track {self.track_id} sample rejected: {mp_res.get('rejection_reason')}")
+                return None
+
+            q_score = mp_res["overall_quality_score"] * 100.0  # Scale to 0-100 for display compatibility
+            self.current_quality = q_score
+            if q_score > self.best_quality:
+                self.best_quality = q_score
+
+            yaw = mp_res.get("head_yaw", 0.0)
+            pitch = mp_res.get("head_pitch", 0.0)
+            roll = mp_res.get("head_roll", 0.0)
+            blur_score = mp_res.get("sharpness", 0.0)
+            w, h = mp_res.get("face_width", crop.shape[1]), mp_res.get("face_height", crop.shape[0])
+        else:
+            q_metrics = calculate_face_quality(crop, self.bbox)
+            q_score = q_metrics["quality_score"]
+            self.current_quality = q_score
+            if q_score > self.best_quality:
+                self.best_quality = q_score
+            if q_score < min_quality_threshold:
+                return None
+            yaw, pitch, roll = 0.0, 0.0, 0.0
+            blur_score = q_metrics["blur_score"]
+            w, h = q_metrics["w"], q_metrics["h"]
 
         # Check for near-duplicates in time or crop similarity
         for existing in self.selected_samples:
             dt = abs(timestamp - existing.get("timestamp", 0.0))
             if dt < 0.3:  # Too close in time (within 300ms)
-                # If new crop has significantly higher quality, replace existing
                 if q_score > existing.get("quality_score", 0.0) + 10.0:
                     sample_id = existing["sample_id"]
                     new_sample = {
                         "sample_id": sample_id,
                         "crop": crop,
                         "quality_score": q_score,
-                        "blur_score": q_metrics["blur_score"],
-                        "bbox_size": (q_metrics["w"], q_metrics["h"]),
+                        "blur_score": blur_score,
+                        "bbox_size": (w, h),
+                        "head_yaw": yaw,
+                        "head_pitch": pitch,
+                        "head_roll": roll,
                         "timestamp": timestamp,
                         "source_video": source_video,
                         "track_id": self.track_id,
@@ -158,8 +230,11 @@ class TrackedFace:
             "sample_id": sample_id,
             "crop": crop,
             "quality_score": q_score,
-            "blur_score": q_metrics["blur_score"],
-            "bbox_size": (q_metrics["w"], q_metrics["h"]),
+            "blur_score": blur_score,
+            "bbox_size": (w, h),
+            "head_yaw": yaw,
+            "head_pitch": pitch,
+            "head_roll": roll,
             "timestamp": timestamp,
             "source_video": source_video,
             "track_id": self.track_id,
@@ -167,7 +242,7 @@ class TrackedFace:
 
         self.selected_samples.append(sample_dict)
 
-        # If gallery exceeds max_samples, prune lowest quality sample
+        # Maintain pose diversity & quality when gallery exceeds max_samples
         if len(self.selected_samples) > max_samples:
             self.selected_samples.sort(key=lambda s: s.get("quality_score", 0.0), reverse=True)
             self.selected_samples = self.selected_samples[:max_samples]
@@ -182,13 +257,22 @@ class TrackedFace:
         timestamp: float,
         source_video: str
     ) -> Dict[str, Any]:
-        """Store ArcFace 512-D L2-normalized embedding attached to track."""
+        """Store ArcFace 512-D L2-normalized embedding attached to track, enforcing near-duplicate rejection (cosine sim >= 0.95)."""
         if embedding is None:
             return {}
         emb_arr = np.asarray(embedding, dtype=np.float32)
         norm = np.linalg.norm(emb_arr)
         if norm > 1e-6:
             emb_arr = emb_arr / norm
+
+        # Near-duplicate rejection: if cosine similarity with any existing embedding in this track is >= 0.95, discard as redundant
+        dup_thresh = getattr(settings, "duplicate_embedding_threshold", 0.95)
+        for existing in self.embeddings:
+            ex_emb = existing.get("embedding")
+            if ex_emb is not None:
+                sim = float(np.dot(emb_arr, ex_emb))
+                if sim >= dup_thresh:
+                    return {}
 
         emb_id = f"emb_{uuid.uuid4().hex[:6]}"
         emb_dict = {
@@ -226,6 +310,16 @@ class TrackedFace:
         mean = self._embedding_sum / self._embedding_count
         norm = np.linalg.norm(mean)
         return mean / norm if norm > 1e-6 else mean
+
+    @property
+    def track_centroid(self) -> Optional[np.ndarray]:
+        """Compute L2-normalized mean centroid of all ArcFace embeddings collected for this track."""
+        valid_embs = [e["embedding"] for e in self.embeddings if e.get("embedding") is not None]
+        if not valid_embs:
+            return None
+        raw_mean = np.mean(valid_embs, axis=0)
+        norm = np.linalg.norm(raw_mean)
+        return raw_mean / norm if norm > 1e-6 else raw_mean
 
     def predict(self) -> List[int]:
         """Predict next bounding box location based on Kalman velocity linear state."""

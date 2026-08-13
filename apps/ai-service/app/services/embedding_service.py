@@ -8,6 +8,7 @@ import logging
 import cv2
 import numpy as np
 from typing import List, Optional, Any
+from app.config.settings import settings
 from .face_detector import face_detector
 
 logger = logging.getLogger("smartcampus.embedding")
@@ -54,12 +55,16 @@ class EmbeddingService:
 
         return None
 
-    def generate_embeddings_batch(self, face_crops: List[np.ndarray]) -> List[np.ndarray]:
-        """Generate embeddings for a list of face crop images. Skips empty results."""
-        embeddings = []
-        for crop in face_crops:
-            emb = self.generate_embedding(crop)
-            if emb is not None:
+    def generate_embeddings_batch(self, face_crops: List[np.ndarray]) -> List[Optional[np.ndarray]]:
+        """Generate embeddings for a list of face crop images in batches."""
+        if not face_crops:
+            return []
+        batch_size = getattr(settings, "arcface_batch_size", 8)
+        embeddings: List[Optional[np.ndarray]] = []
+        for i in range(0, len(face_crops), batch_size):
+            chunk = face_crops[i:i + batch_size]
+            for crop in chunk:
+                emb = self.generate_embedding(crop)
                 embeddings.append(emb)
         return embeddings
 

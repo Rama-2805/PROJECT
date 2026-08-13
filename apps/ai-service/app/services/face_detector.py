@@ -40,11 +40,11 @@ def check_and_download_models():
 # Internal SCRFD threshold: kept deliberately LOW so distant classroom faces
 # (which often score 0.35-0.60) are NOT silently dropped by the ONNX model.
 # The real precision gate is _validate_detection below.
-_SCRFD_INTERNAL_THRESH = 0.30
+_SCRFD_INTERNAL_THRESH = 0.25
 
 # Validation gate: the minimum confidence we accept after all other checks pass.
-# Real classroom data shows valid back-row faces scoring 0.40-0.50.
-_VALIDATION_CONFIDENCE_GATE = 0.40
+# Real classroom data shows valid back-row faces scoring 0.35-0.50.
+_VALIDATION_CONFIDENCE_GATE = 0.35
 
 
 class FaceDetector:
@@ -54,6 +54,12 @@ class FaceDetector:
         self.confidence_threshold = _VALIDATION_CONFIDENCE_GATE
         self._model = None
         self.requested_providers = providers
+        # Adaptive recovery state & profiling counters
+        self.recovery_cooldown_counter = 0
+        self.recovery_cooldown_frames = 5
+        self.primary_detector_calls = 0
+        self.recovery_detector_calls = 0
+        self.duplicate_detections_removed = 0
 
     @property
     def model(self):
@@ -78,9 +84,9 @@ class FaceDetector:
                     providers=providers,
                     provider_options=provider_options
                 )
-                # LOW internal threshold so SCRFD returns all candidate faces
-                self._model.prepare(ctx_id=-1, det_thresh=_SCRFD_INTERNAL_THRESH)
-                logger.info(f"[SCRFD] Model loaded successfully: det_10g.onnx (det_thresh={_SCRFD_INTERNAL_THRESH}, gate={_VALIDATION_CONFIDENCE_GATE})")
+                # HIGH RESOLUTION 1280x1280 detection size for full classroom student recall (front/middle/back rows)
+                self._model.prepare(ctx_id=-1, det_thresh=_SCRFD_INTERNAL_THRESH, det_size=(1280, 1280))
+                logger.info(f"[SCRFD] Model loaded successfully: det_10g.onnx (det_thresh={_SCRFD_INTERNAL_THRESH}, det_size=(1280, 1280), gate={_VALIDATION_CONFIDENCE_GATE})")
             except Exception as e:
                 logger.error(f"[SCRFD] Failed to load InsightFace FaceAnalysis model: {e}")
                 raise e
@@ -122,8 +128,8 @@ class FaceDetector:
         if frame is None or frame.size == 0:
             return []
 
+        self.primary_detector_calls += 1
         h, w = frame.shape[:2]
-        logger.info(f"[SCRFD] Input frame: {w}x{h}")
 
         # Primary: InsightFace SCRFD 10G (detection-only)
         try:
@@ -135,12 +141,10 @@ class FaceDetector:
             return []
 
         if bboxes is None or len(bboxes) == 0:
-            logger.info(f"[SCRFD] Raw detections: 0 | Valid faces after threshold ({self.confidence_threshold}): 0")
             return []
 
         raw_count = len(bboxes)
         detections = []
-        rejected_count = 0
 
         for idx, bbox_raw in enumerate(bboxes):
             confidence = float(bbox_raw[-1])
@@ -154,8 +158,6 @@ class FaceDetector:
             is_valid, reason = self._validate_detection([x1, y1, x2, y2], confidence, w, h, face_crop)
 
             if not is_valid:
-                rejected_count += 1
-                logger.debug(f"[SCRFD] [FACE REJECTED] confidence={confidence:.2f} bbox=[{x1},{y1},{x2},{y2}] reason={reason}")
                 continue
 
             landmarks = kpss[idx] if (kpss is not None and idx < len(kpss)) else None
@@ -169,11 +171,126 @@ class FaceDetector:
                 "embedding": None,  # Deferred: ArcFace embeddings generated only on selected crops
             })
 
-        logger.info(f"[SCRFD] Raw detections: {raw_count} | Valid faces after threshold ({self.confidence_threshold}): {len(detections)}")
         return detections
+
+    def detect_multiscale_faces(self, frame: np.ndarray, back_row_y_max: int = 650, upscale_factor: float = 1.8, iou_thresh: float = 0.40, force_recovery: bool = False) -> List[Dict[str, Any]]:
+        """Adaptive Multi-scale face detection combining Full-Frame, ROI Tiling, and Targeted Small-Face Recovery with Cooldown."""
+        if frame is None or frame.size == 0:
+            return []
+
+        # Decrement recovery cooldown counter if active
+        if self.recovery_cooldown_counter > 0:
+            self.recovery_cooldown_counter -= 1
+
+        # Step 1: Scale 1 Primary Full-Frame Detection
+        scale1_dets = self.detect_faces(frame)
+        for d in scale1_dets:
+            d["source"] = "FULL_FRAME"
+
+        # Step 2: Coverage & Small-Face Risk Assessment
+        h, w = frame.shape[:2]
+        back_row_dets = [d for d in scale1_dets if (d["bbox"][1] + d["bbox"][3]) / 2.0 < back_row_y_max]
+        back_sizes = [(d["bbox"][2] - d["bbox"][0]) for d in back_row_dets]
+        avg_back_size = float(np.mean(back_sizes)) if back_sizes else 0.0
+
+        # Adaptive Trigger: Trigger targeted recovery if back-row count is low (< 15) or avg size < 40px
+        needs_recovery = force_recovery or (len(back_row_dets) < 15) or (avg_back_size > 0 and avg_back_size < 40.0)
+
+        # Check Recovery Cooldown
+        if needs_recovery and self.recovery_cooldown_counter > 0 and not force_recovery:
+            logger.debug(f"[SCRFD ADAPTIVE COOLDOWN] Small-face recovery needed but cooldown active ({self.recovery_cooldown_counter} frames left) -> Using Scale 1 detections.")
+            return scale1_dets
+
+        if not needs_recovery:
+            return scale1_dets
+
+        # Set Cooldown counter
+        self.recovery_cooldown_counter = self.recovery_cooldown_frames
+        self.recovery_detector_calls += 1
+
+        # Step 3: Targeted ROI Tiling (Scale 2)
+        tiles = [(0, 0, 1080, 650), (840, 0, 1920, 650), (0, 400, 1920, 1080)]
+        scale2_raw = []
+        for tx1, ty1, tx2, ty2 in tiles:
+            t_crop = frame[ty1:ty2, tx1:tx2]
+            t_dets = self.detect_faces(t_crop) or []
+            for d in t_dets:
+                bx1, by1, bx2, by2 = d["bbox"]
+                scale2_raw.append({
+                    **d,
+                    "bbox": [bx1 + tx1, by1 + ty1, bx2 + tx1, by2 + ty1],
+                    "source": "ROI_TILE"
+                })
+
+        # Step 4: Targeted Small-Face Recovery (Scale 3 - 2x2 Overlapping Grid on Back-Row ROI y < back_row_y_max)
+        roi_h = min(h, back_row_y_max)
+        tile_w = int(w * 0.58)
+        tile_h = int(roi_h * 0.58)
+
+        sub_tiles = [
+            (0, 0, tile_w, tile_h),
+            (w - tile_w, 0, w, tile_h),
+            (0, roi_h - tile_h, tile_w, roi_h),
+            (w - tile_w, roi_h - tile_h, w, roi_h)
+        ]
+
+        scale3_raw = []
+        for stx1, sty1, stx2, sty2 in sub_tiles:
+            sub_crop = frame[sty1:sty2, stx1:stx2]
+            if sub_crop.size == 0: continue
+            
+            enlarged_crop = cv2.resize(sub_crop, (0, 0), fx=upscale_factor, fy=upscale_factor, interpolation=cv2.INTER_CUBIC)
+            sub_dets = self.detect_faces(enlarged_crop) or []
+
+            for d in sub_dets:
+                bx1, by1, bx2, by2 = d["bbox"]
+                orig_bx1 = max(0, int(bx1 / upscale_factor) + stx1)
+                orig_by1 = max(0, int(by1 / upscale_factor) + sty1)
+                orig_bx2 = min(w, int(bx2 / upscale_factor) + stx1)
+                orig_by2 = min(h, int(by2 / upscale_factor) + sty1)
+
+                scale3_raw.append({
+                    **d,
+                    "bbox": [orig_bx1, orig_by1, orig_bx2, orig_by2],
+                    "source": "SMALL_FACE_RECOVERY"
+                })
+
+        # Merge all scales with IoU NMS Duplicate Suppression
+        all_candidates = scale1_dets + scale2_raw + scale3_raw
+        if not all_candidates:
+            return []
+
+        sorted_cand = sorted(all_candidates, key=lambda x: x["confidence"], reverse=True)
+        final_dets = []
+
+        while sorted_cand:
+            best = sorted_cand.pop(0)
+            final_dets.append(best)
+            remains = []
+            for d in sorted_cand:
+                b1, b2 = best["bbox"], d["bbox"]
+                x1 = max(b1[0], b2[0])
+                y1 = max(b1[1], b2[1])
+                x2 = min(b1[2], b2[2])
+                y2 = min(b1[3], b2[3])
+                inter = max(0, x2 - x1) * max(0, y2 - y1)
+                area1 = (b1[2] - b1[0]) * (b1[3] - b1[1])
+                area2 = (b2[2] - b2[0]) * (b2[3] - b2[1])
+                union = area1 + area2 - inter
+                iou = inter / float(union) if union > 0 else 0.0
+                if iou < iou_thresh:
+                    remains.append(d)
+            sorted_cand = remains
+
+        self.duplicate_detections_removed += (len(all_candidates) - len(final_dets))
+        logger.info(f"[SCRFD ADAPTIVE RECOVERY] Scale 1 ({len(scale1_dets)}) + Scale 2 ({len(scale2_raw)}) + Scale 3 ({len(scale3_raw)}) = {len(all_candidates)} candidates -> {len(final_dets)} unique faces after NMS (thresh={iou_thresh})")
+        return final_dets
+
 
 
 # Singleton instance
 face_detector = FaceDetector()
+
+
 
 

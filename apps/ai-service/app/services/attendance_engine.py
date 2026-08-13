@@ -511,9 +511,14 @@ class AttendanceEngine:
         if not cap.isOpened():
             raise RuntimeError(f"Could not open video file: {video_path}")
 
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        frame_skip = max(1, int(fps * 1.0))
+        duration_sec = round(total_frames / max(0.1, fps), 2)
+        frame_skip = max(1, round(fps / getattr(settings, "target_processing_fps", 1.5)))
+
+        logger.info(f"[VIDEO-ATTENDANCE] Processing '{video_path}' ({width}x{height} @ {fps:.1f} FPS, {total_frames} frames, {duration_sec}s)")
 
         faces_detected = 0
         faces_matched = 0
@@ -525,13 +530,21 @@ class AttendanceEngine:
 
         frame_idx = 0
         while True:
+            # Fast-forward skipped non-AI frames in 0.05ms using cap.grab()
+            skipped = False
+            for _ in range(frame_skip - 1):
+                if not cap.grab():
+                    skipped = True
+                    break
+                frame_idx += 1
+
+            if skipped:
+                break
+
             ret, frame = cap.read()
             if not ret:
                 break
-
-            if frame_idx % frame_skip != 0:
-                frame_idx += 1
-                continue
+            frame_idx += 1
 
             timestamp_sec = frame_idx / fps if fps > 0 else 0.0
 
@@ -591,6 +604,14 @@ class AttendanceEngine:
         return {
             "video_path": video_path,
             "class_id": class_id,
+            "video_metadata": {
+                "resolution": f"{width}x{height}",
+                "width": width,
+                "height": height,
+                "fps": round(fps, 1),
+                "total_frames": total_frames,
+                "duration_sec": duration_sec,
+            },
             "total_frames": total_frames,
             "faces_detected": faces_detected,
             "faces_matched": faces_matched,

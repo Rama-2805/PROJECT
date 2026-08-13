@@ -58,3 +58,7 @@ apps/ai-service/smartcampus_dev.db
 # Debug output
 debug/
 AttendifyAI/
+
+# SQLite databases
+*.db
+

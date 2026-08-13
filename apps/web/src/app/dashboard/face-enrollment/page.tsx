@@ -8,7 +8,8 @@ import {
   ScanFace, Loader2, Search, ChevronRight,
   Plus, BarChart3, Zap, Shield,
   X, Image as ImageIcon, RotateCcw, AlertTriangle,
-  Clock, Cpu, Database, TrendingUp, Camera, FileVideo, RefreshCw
+  Clock, Cpu, Database, TrendingUp, Camera, FileVideo, RefreshCw,
+  Layers, Sparkles, Fingerprint
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { Button } from "@/components/ui/Button";
@@ -1543,13 +1544,15 @@ export default function FaceEnrollmentPage() {
               </div>
 
               {/* Stats Row */}
-              <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2.5 flex-wrap">
                 <StatChip icon={FileVideo} label="Videos" value={active.totalVideos} color="text-blue-400" />
-                <StatChip icon={ImageIcon} label="Frames" value={active.processedFrames > 0 ? active.processedFrames.toLocaleString() : "—"} color="text-purple-400" />
-                <StatChip icon={ScanFace} label="Faces" value={active.detectedFacesCount > 0 ? active.detectedFacesCount.toLocaleString() : "—"} color="text-cyan-400" />
-                <StatChip icon={Users} label="Clusters" value={active.generatedClusters || sessionClusters.length || "—"} color="text-amber-400" />
+                <StatChip icon={ImageIcon} label="Frames" value={(active.evaluatedFrames ?? active.processedFrames ?? 0).toLocaleString()} color="text-purple-400" />
+                <StatChip icon={ScanFace} label="Detections" value={(active.detectedFacesCount ?? 0).toLocaleString()} color="text-cyan-400" />
+                <StatChip icon={Layers} label="Tracks" value={(active.totalTracks ?? active.activeTracks ?? 0).toLocaleString()} color="text-yellow-400" />
+                <StatChip icon={Sparkles} label="Samples" value={(active.qualitySamples ?? 0).toLocaleString()} color="text-pink-400" />
+                <StatChip icon={Fingerprint} label="ArcFace 512D" value={(active.arcfaceEmbeddings ?? 0).toLocaleString()} color="text-blue-400" />
+                <StatChip icon={Users} label="Clusters" value={active.generatedClusters || sessionClusters.length || 0} color="text-amber-400" />
                 <StatChip icon={CheckCircle2} label="Enrolled" value={counts.assigned} color="text-emerald-400" />
-                <StatChip icon={Database} label="In FAISS" value={counts.assigned} color="text-indigo-400" />
               </div>
 
               {/* Progress & Live Tracking Feed */}
