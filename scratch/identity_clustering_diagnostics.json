@@ -1,0 +1,75 @@
+{
+  "total_tracks_evaluated": 100,
+  "unique_track_profiles": 100,
+  "embedding_similarity_distribution": {
+    "min": -0.041,
+    "mean": 0.435,
+    "median": 0.438,
+    "max": 0.883,
+    "percentiles": {
+      "50%": 0.438,
+      "75%": 0.582,
+      "90%": 0.677,
+      "95%": 0.727,
+      "99%": 0.8
+    }
+  },
+  "threshold_analysis": [
+    {
+      "threshold": 0.7,
+      "merges": 53,
+      "candidates": 47,
+      "avg_tracks_per_candidate": 2.13
+    },
+    {
+      "threshold": 0.72,
+      "merges": 48,
+      "candidates": 52,
+      "avg_tracks_per_candidate": 1.92
+    },
+    {
+      "threshold": 0.74,
+      "merges": 44,
+      "candidates": 56,
+      "avg_tracks_per_candidate": 1.79
+    },
+    {
+      "threshold": 0.75,
+      "merges": 42,
+      "candidates": 58,
+      "avg_tracks_per_candidate": 1.72
+    },
+    {
+      "threshold": 0.76,
+      "merges": 40,
+      "candidates": 60,
+      "avg_tracks_per_candidate": 1.67
+    },
+    {
+      "threshold": 0.78,
+      "merges": 31,
+      "candidates": 69,
+      "avg_tracks_per_candidate": 1.45
+    },
+    {
+      "threshold": 0.8,
+      "merges": 29,
+      "candidates": 71,
+      "avg_tracks_per_candidate": 1.41
+    },
+    {
+      "threshold": 0.82,
+      "merges": 25,
+      "candidates": 75,
+      "avg_tracks_per_candidate": 1.33
+    },
+    {
+      "threshold": 0.85,
+      "merges": 10,
+      "candidates": 90,
+      "avg_tracks_per_candidate": 1.11
+    }
+  ],
+  "calibrated_threshold": 0.75,
+  "safe_representative_threshold": 0.68
+}

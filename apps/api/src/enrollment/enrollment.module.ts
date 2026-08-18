@@ -6,27 +6,33 @@ import * as fs from "fs";
 import { EnrollmentController } from "./enrollment.controller";
 import { EnrollmentService } from "./enrollment.service";
 
+export function resolveStorageDir(sessionId: string): string {
+  let root = process.cwd();
+  if (root.endsWith("apps/api") || root.endsWith("apps/api/")) {
+    root = path.resolve(root, "..");
+  }
+  if (root.endsWith("apps") || root.endsWith("apps/")) {
+    root = path.resolve(root, "..");
+  }
+  const dir = path.resolve(root, "apps", "ai-service", "storage", "enrollment", sessionId, "videos");
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 // Multer storage — saves to AI service storage dir so FastAPI can read files directly
-const multerStorage = diskStorage({
+export const multerStorage = diskStorage({
   destination: (req: any, file: Express.Multer.File, cb: (err: any, destination: string) => void) => {
-    const sessionId: string = (req.params?.["id"] as string) || "unknown";
-    // Save into AI service storage so the AI can read directly by absolute path
-    const dir: string = path.join(
-      process.cwd(),
-      "..",
-      "ai-service",
-      "storage",
-      "enrollment",
-      sessionId,
-      "videos",
-    );
-    fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
+    const sessionId: string = (req.params?.["id"] as string) || req.body?.sessionId || "default_session";
+    try {
+      const dir = resolveStorageDir(sessionId);
+      cb(null, dir);
+    } catch (err) {
+      cb(err, "");
+    }
   },
   filename: (req: any, file: Express.Multer.File, cb: (err: any, filename: string) => void) => {
     const ts = Date.now();
-    const ext: string = path.extname(file.originalname) || ".mp4";
-    const safe = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const safe = file.originalname ? file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_") : `video_${ts}.mp4`;
     cb(null, `${ts}_${safe}`);
   },
 });

@@ -5,6 +5,7 @@ at the AI-service level. These are called by the NestJS API Gateway.
 """
 
 import os
+import json
 import logging
 import asyncio
 from pathlib import Path
@@ -33,7 +34,8 @@ class ClusterSyncRequest(BaseModel):
 
 class ProcessingState:
     """In-memory registry of active processing jobs."""
-    sessions: dict = {}  # session_id -> {"status", "progress", "clusters"}
+    sessions: dict = {}          # session_id -> {"status", "progress", "clusters"}
+    active_pipelines: dict = {}  # session_id -> ClassroomPipeline instance
 
 
 state = ProcessingState()
@@ -114,44 +116,90 @@ async def process_session_videos(
     }
 
 
+def _get_session_dir(session_id: str) -> Path:
+    """Resolve session directory across project root and ai-service working directory variants."""
+    root_proj = Path(__file__).resolve().parent.parent.parent.parent
+    ai_root = Path(__file__).resolve().parent.parent.parent
+    candidates = [
+        root_proj / "storage" / "enrollment" / session_id,
+        ai_root / "storage" / "enrollment" / session_id,
+        Path(os.getcwd()) / "storage" / "enrollment" / session_id,
+        Path(os.getcwd()).parent.parent / "storage" / "enrollment" / session_id,
+    ]
+    for d in candidates:
+        if (d / "clusters.json").exists():
+            return d
+    for d in candidates:
+        if (d / "tracks").exists() and any((d / "tracks").iterdir()):
+            return d
+    for d in candidates:
+        if d.exists():
+            return d
+    candidates[0].mkdir(parents=True, exist_ok=True)
+    return candidates[0]
+
+
 def _load_session_disk_fallback(session_id: str):
     """Fallback helper: load clusters and diagnostics from session disk storage if memory state is empty."""
-    possible_dirs = [
-        Path(os.getcwd()) / "storage" / "enrollment" / session_id,
-        Path(os.getcwd()) / "apps" / "ai-service" / "storage" / "enrollment" / session_id,
-        Path(__file__).resolve().parent.parent.parent / "storage" / "enrollment" / session_id,
-    ]
-    
-    session_dir = None
-    for d in possible_dirs:
-        logger.info(f"Checking disk fallback path for {session_id}: {d / 'clusters.json'} (exists={(d / 'clusters.json').exists()})")
-        if (d / "clusters.json").exists():
-            session_dir = d
-            break
+    session_dir = _get_session_dir(session_id)
 
-    if session_dir and (session_dir / "clusters.json").exists():
-        try:
-            import json
-            with open(session_dir / "clusters.json") as f:
-                clusters = json.load(f)
-            diag = {}
-            if (session_dir / "diagnostics.json").exists():
-                with open(session_dir / "diagnostics.json") as f:
-                    diag = json.load(f)
+    if session_dir and session_dir.exists():
+        if (session_dir / "clusters.json").exists():
+            try:
+                import json
+                with open(session_dir / "clusters.json") as f:
+                    clusters_raw = json.load(f)
+                if isinstance(clusters_raw, dict) and "clusters" in clusters_raw:
+                    clusters = clusters_raw["clusters"]
+                elif isinstance(clusters_raw, list):
+                    clusters = clusters_raw
+                else:
+                    clusters = []
+                diag = {}
+                if (session_dir / "diagnostics.json").exists():
+                    with open(session_dir / "diagnostics.json") as f:
+                        diag = json.load(f)
 
-            state.sessions[session_id] = {
-                "status": "REVIEW_REQUIRED",
-                "progress": 100.0,
-                "clusters": clusters,
-                "diagnostics": diag,
-                "processedFrames": diag.get("evaluated_frames", 20537),
-                "detectedFaces": diag.get("face_detections", 2864),
-            }
-            logger.info(f"Loaded disk fallback session '{session_id}' from {session_dir}")
-            return state.sessions[session_id]
-        except Exception as err:
-            logger.warning(f"Failed loading disk fallback for session {session_id}: {err}")
+                state.sessions[session_id] = {
+                    "status": "REVIEW_REQUIRED",
+                    "progress": 100.0,
+                    "clusters": clusters,
+                    "diagnostics": diag,
+                    "processedFrames": diag.get("evaluated_frames", len(clusters) * 10),
+                    "detectedFaces": diag.get("face_detections", len(clusters) * 5),
+                }
+                logger.info(f"Loaded disk fallback session '{session_id}' from {session_dir} with {len(clusters)} clusters")
+                return state.sessions[session_id]
+            except Exception as err:
+                logger.warning(f"Failed loading disk fallback for session {session_id}: {err}")
     return None
+
+
+@router.post("/reset-all-enrollments")
+async def reset_all_enrollments():
+    """Reset all enrolled vectors from FAISS index and clear enrollment status across all sessions."""
+    from ..services.faiss_service import faiss_service
+    faiss_service.rebuild_index([])
+    logger.info("Cleared and rebuilt empty FAISS vector index.")
+
+    for s_id, sess in state.sessions.items():
+        for c in sess.get("clusters", []):
+            c["isEnrolled"] = False
+            c["enrolled"] = False
+            c["identity_status"] = "UNKNOWN"
+            c["status"] = "UNASSIGNED"
+            c["assignedStudent"] = None
+            c["assignedStudentName"] = None
+            c["assignedUsn"] = None
+        try:
+            sess_dir = _get_session_dir(s_id)
+            if sess_dir and (sess_dir / "clusters.json").exists():
+                with open(sess_dir / "clusters.json", "w") as f:
+                    json.dump(sess["clusters"], f, indent=2)
+        except Exception:
+            pass
+
+    return {"success": True, "message": "All biometric embeddings in FAISS and session assignments have been completely reset."}
 
 
 @router.get("/{session_id}/status")
@@ -192,18 +240,37 @@ async def get_session_status(session_id: str):
 
 @router.get("/{session_id}/clusters")
 async def get_session_clusters(session_id: str):
-    """Return current cluster list for a session."""
+    """Return current cluster list for a session with counts (supports live clusters during processing)."""
+    if session_id in state.active_pipelines:
+        try:
+            live_clusters = state.active_pipelines[session_id].get_live_clusters()
+            if live_clusters:
+                if session_id not in state.sessions:
+                    state.sessions[session_id] = {"status": "PROCESSING"}
+                state.sessions[session_id]["clusters"] = live_clusters
+        except Exception:
+            pass
+
     if session_id not in state.sessions:
         _load_session_disk_fallback(session_id)
 
-    if session_id not in state.sessions:
-        raise HTTPException(status_code=404, detail="Session not found in AI service")
-    return {"sessionId": session_id, "clusters": state.sessions[session_id].get("clusters", [])}
+    clusters = state.sessions.get(session_id, {}).get("clusters", [])
+    counts = {
+        "all": len(clusters),
+        "pending": sum(1 for c in clusters if c.get("identity_status") in ("UNKNOWN", "CANDIDATE") or c.get("status") == "UNASSIGNED"),
+        "confirmed": sum(1 for c in clusters if c.get("identity_status") == "CONFIRMED" or c.get("status") == "ASSIGNED"),
+        "candidate": sum(1 for c in clusters if c.get("identity_status") == "CANDIDATE"),
+        "unknown": sum(1 for c in clusters if c.get("identity_status") == "UNKNOWN"),
+        "rejected": sum(1 for c in clusters if c.get("identity_status") == "REJECTED" or c.get("status") == "REJECTED"),
+    }
+    return {"sessionId": session_id, "clusters": clusters, "counts": counts}
 
 
 @router.get("/{session_id}/clusters/{cluster_id}")
 async def get_cluster_detail(session_id: str, cluster_id: str):
     """Return single cluster details."""
+    if session_id not in state.sessions:
+        _load_session_disk_fallback(session_id)
     if session_id not in state.sessions:
         raise HTTPException(status_code=404, detail="Session not found in AI service")
     clusters = state.sessions[session_id].get("clusters", [])
@@ -217,6 +284,8 @@ async def get_cluster_detail(session_id: str, cluster_id: str):
 async def get_session_diagnostics(session_id: str):
     """Return detailed pipeline diagnostics for a session."""
     if session_id not in state.sessions:
+        _load_session_disk_fallback(session_id)
+    if session_id not in state.sessions:
         raise HTTPException(status_code=404, detail="Session not found in AI service")
     diag = state.sessions[session_id].get("diagnostics", {})
     return {"sessionId": session_id, "diagnostics": diag}
@@ -225,25 +294,304 @@ async def get_session_diagnostics(session_id: str):
 @router.get("/{session_id}/live-frame")
 async def get_session_live_frame(session_id: str):
     """Return the latest annotated face tracking preview frame for a processing session."""
-    from fastapi.responses import FileResponse
-    preview_path = Path(os.getcwd()) / "storage" / "enrollment" / session_id / "live_preview.jpg"
-    if preview_path.exists():
-        return FileResponse(str(preview_path), media_type="image/jpeg")
-    raise HTTPException(status_code=404, detail="Live preview frame not available yet")
+    from fastapi.responses import FileResponse, Response
+    session_dir = _get_session_dir(session_id)
+    if session_dir and (session_dir / "live_preview.jpg").exists():
+        return FileResponse(str(session_dir / "live_preview.jpg"), media_type="image/jpeg")
+    return Response(status_code=204)
 
 
 @router.post("/{session_id}/stop")
 async def stop_session_processing(session_id: str):
-    """Stop active video processing for a session."""
-    if session_id in state.sessions:
-        state.sessions[session_id]["status"] = "STOPPED"
-        await websocket_manager.broadcast("SESSION_STOPPED", {
-            "sessionId": session_id,
-            "status": "STOPPED",
-            "message": "Processing stopped by user",
-        })
-        logger.info(f"[{session_id}] Processing stopped by user request.")
-    return {"sessionId": session_id, "status": "STOPPED", "message": "Session processing stopped"}
+    """Stop active video processing for a session and generate clusters from collected tracks."""
+    sess = state.sessions.get(session_id, {})
+    sess["status"] = "STOPPED"
+    state.sessions[session_id] = sess
+
+    clusters = []
+    if session_id in state.active_pipelines:
+        pipe = state.active_pipelines[session_id]
+        pipe.stop_requested = True
+        logger.info(f"[{session_id}] Signal stop_requested = True to active pipeline instance.")
+        try:
+            clusters = pipe.get_live_clusters()
+        except Exception as e:
+            logger.debug(f"[{session_id}] Error getting live clusters on stop: {e}")
+
+    session_dir = _get_session_dir(session_id)
+    if not clusters and session_dir and (session_dir / "tracks").exists() and any((session_dir / "tracks").iterdir()):
+        try:
+            from ..services.classroom_pipeline import ClassroomPipeline
+            storage_base = str(session_dir.parent.parent)
+            pipeline = ClassroomPipeline(session_id, storage_base)
+            clusters = pipeline.cluster_from_disk_tracks()
+        except Exception as err:
+            logger.warning(f"[{session_id}] Error clustering from disk on stop: {err}")
+
+    if not clusters and sess.get("clusters"):
+        clusters = sess.get("clusters")
+
+    if session_dir and clusters:
+        try:
+            with open(session_dir / "clusters.json", "w") as f:
+                json.dump(clusters, f, indent=2)
+        except Exception:
+            pass
+
+    diag = getattr(state.active_pipelines.get(session_id), "get_diagnostics", lambda: {})() if session_id in state.active_pipelines else sess.get("diagnostics", {})
+    state.sessions[session_id] = {
+        "status": "REVIEW_REQUIRED" if clusters else "STOPPED",
+        "progress": 100.0,
+        "clusters": clusters or [],
+        "diagnostics": diag,
+        "processedFrames": diag.get("evaluated_frames", len(clusters) * 10),
+        "detectedFaces": diag.get("face_detections", len(clusters) * 5),
+    }
+
+    await websocket_manager.broadcast("ENROLLMENT_COMPLETED", {
+        "sessionId": session_id,
+        "status": "REVIEW_REQUIRED" if clusters else "STOPPED",
+        "totalClusters": len(clusters),
+        "clusters": clusters or [],
+        "diagnostics": diag,
+        "progressPercentage": 100.0,
+    })
+
+    # Auto-sync to NestJS
+    if clusters:
+        try:
+            import httpx
+            nestjs_url = f"http://127.0.0.1:4000/api/enrollment/sessions/{session_id}/sync-clusters"
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                await client.post(nestjs_url)
+        except Exception as sync_e:
+            logger.debug(f"Auto-sync on stop: {sync_e}")
+
+    await websocket_manager.broadcast("SESSION_STOPPED", {
+        "sessionId": session_id,
+        "status": "REVIEW_REQUIRED" if clusters else "STOPPED",
+        "message": f"Processing stopped by user. {len(clusters)} clusters generated.",
+    })
+    logger.info(f"[{session_id}] Processing stopped by user request. {len(clusters)} clusters.")
+    return {
+        "sessionId": session_id,
+        "status": "REVIEW_REQUIRED" if clusters else "STOPPED",
+        "totalClusters": len(clusters),
+        "message": "Session processing stopped. Identity clustering complete."
+    }
+
+
+@router.post("/{session_id}/cluster-tracks")
+async def cluster_session_tracks(session_id: str):
+    """Trigger ArcFace feature extraction & HDBSCAN clustering on current tracks for a session."""
+    session_dir = _get_session_dir(session_id)
+    if not session_dir or not (session_dir / "tracks").exists() or not any((session_dir / "tracks").iterdir()):
+        raise HTTPException(status_code=404, detail="No track data found for this session")
+
+    from ..services.classroom_pipeline import ClassroomPipeline
+    storage_base = str(session_dir.parent.parent)
+    pipeline = ClassroomPipeline(session_id, storage_base)
+    clusters = pipeline.cluster_from_disk_tracks()
+    diag = pipeline.get_diagnostics()
+
+    state.sessions[session_id] = {
+        "status": "REVIEW_REQUIRED",
+        "progress": 100.0,
+        "clusters": clusters,
+        "diagnostics": diag,
+        "processedFrames": diag.get("evaluated_frames", len(clusters) * 10),
+        "detectedFaces": diag.get("face_detections", len(clusters) * 5),
+    }
+
+    # Trigger NestJS sync
+    try:
+        import httpx
+        nestjs_url = f"http://127.0.0.1:4000/api/enrollment/sessions/{session_id}/sync-clusters"
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(nestjs_url)
+    except Exception:
+        pass
+
+    return {
+        "sessionId": session_id,
+        "totalClusters": len(clusters),
+        "clusters": clusters,
+        "diagnostics": diag,
+        "status": "REVIEW_REQUIRED"
+    }
+
+
+class AssignStudentRequest(BaseModel):
+    usn: str
+    name: Optional[str] = None
+    studentId: Optional[str] = None
+    force: bool = False
+
+
+class MergeClustersRequest(BaseModel):
+    targetClusterId: str
+
+
+@router.post("/{session_id}/clusters/{cluster_id}/assign")
+async def assign_cluster_identity(session_id: str, cluster_id: str, req: AssignStudentRequest):
+    """Manually assign a verified student identity to a cluster with duplicate assignment protection."""
+    if session_id not in state.sessions:
+        _load_session_disk_fallback(session_id)
+    if session_id not in state.sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    sess = state.sessions[session_id]
+    clusters = sess.get("clusters", [])
+    matched = next((c for c in clusters if c.get("clusterId") == cluster_id or c.get("cluster_id") == cluster_id), None)
+    if not matched:
+        raise HTTPException(status_code=404, detail=f"Cluster '{cluster_id}' not found in session")
+
+    # Prevent duplicate student assignment in the same session
+    if not req.force:
+        existing_assign = next(
+            (c for c in clusters if (c.get("usn") == req.usn or (req.studentId and c.get("student_id") == req.studentId)) and (c.get("clusterId") != cluster_id and c.get("cluster_id") != cluster_id)),
+            None
+        )
+        if existing_assign:
+            existing_cid = existing_assign.get("clusterId") or existing_assign.get("cluster_id")
+            raise HTTPException(
+                status_code=409,
+                detail=f"Student '{req.usn}' is already assigned to {existing_cid} in this session."
+            )
+
+    matched["identity_status"] = "CONFIRMED"
+    matched["status"] = "ASSIGNED"
+    matched["assignment_source"] = "MANUAL"
+    matched["usn"] = req.usn
+    matched["name"] = req.name or req.usn
+    matched["student_id"] = req.studentId
+    matched["confidence"] = 1.0
+    matched["assignedStudent"] = {
+        "usn": req.usn,
+        "name": req.name or req.usn,
+        "studentId": req.studentId,
+        "status": "CONFIRMED",
+        "source": "MANUAL",
+        "confidence": 1.0,
+    }
+
+    # Save to disk
+    sess_dir = Path(os.getcwd()) / "storage" / "enrollment" / session_id
+    if sess_dir.exists():
+        try:
+            with open(sess_dir / "clusters.json", "w") as f:
+                json.dump(clusters, f, indent=2)
+        except Exception as e:
+            logger.error(f"Error persisting clusters.json: {e}")
+
+    await websocket_manager.broadcast("CLUSTER_ASSIGNED", {
+        "sessionId": session_id,
+        "clusterId": cluster_id,
+        "usn": req.usn,
+        "name": req.name,
+        "status": "CONFIRMED",
+    })
+
+    return {"success": True, "cluster": matched}
+
+
+@router.post("/{session_id}/clusters/{cluster_id}/confirm")
+async def confirm_cluster_identity(session_id: str, cluster_id: str):
+    """Confirm a candidate cluster identity."""
+    if session_id not in state.sessions:
+        _load_session_disk_fallback(session_id)
+    if session_id not in state.sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    sess = state.sessions[session_id]
+    clusters = sess.get("clusters", [])
+    matched = next((c for c in clusters if c.get("clusterId") == cluster_id or c.get("cluster_id") == cluster_id), None)
+    if not matched:
+        raise HTTPException(status_code=404, detail=f"Cluster '{cluster_id}' not found")
+
+    matched["identity_status"] = "CONFIRMED"
+    matched["status"] = "ASSIGNED"
+    if "assignedStudent" in matched and matched["assignedStudent"]:
+        matched["assignedStudent"]["status"] = "CONFIRMED"
+
+    sess_dir = Path(os.getcwd()) / "storage" / "enrollment" / session_id
+    if sess_dir.exists():
+        try:
+            with open(sess_dir / "clusters.json", "w") as f:
+                json.dump(clusters, f, indent=2)
+        except Exception:
+            pass
+
+    return {"success": True, "cluster": matched}
+
+
+@router.post("/{session_id}/clusters/{cluster_id}/reject")
+async def reject_cluster_identity(session_id: str, cluster_id: str):
+    """Reject a cluster or candidate match."""
+    if session_id not in state.sessions:
+        _load_session_disk_fallback(session_id)
+    if session_id not in state.sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    sess = state.sessions[session_id]
+    clusters = sess.get("clusters", [])
+    matched = next((c for c in clusters if c.get("clusterId") == cluster_id or c.get("cluster_id") == cluster_id), None)
+    if not matched:
+        raise HTTPException(status_code=404, detail=f"Cluster '{cluster_id}' not found")
+
+    matched["identity_status"] = "REJECTED"
+    matched["status"] = "REJECTED"
+    matched["assignedStudent"] = None
+    matched["usn"] = None
+    matched["name"] = None
+
+    sess_dir = Path(os.getcwd()) / "storage" / "enrollment" / session_id
+    if sess_dir.exists():
+        try:
+            with open(sess_dir / "clusters.json", "w") as f:
+                json.dump(clusters, f, indent=2)
+        except Exception:
+            pass
+
+    return {"success": True, "cluster": matched}
+
+
+@router.post("/{session_id}/clusters/{cluster_id}/merge")
+async def merge_clusters(session_id: str, cluster_id: str, req: MergeClustersRequest):
+    """Merge cluster_id (source) into targetClusterId."""
+    if session_id not in state.sessions:
+        _load_session_disk_fallback(session_id)
+    if session_id not in state.sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    sess = state.sessions[session_id]
+    clusters = sess.get("clusters", [])
+    source = next((c for c in clusters if c.get("clusterId") == cluster_id or c.get("cluster_id") == cluster_id), None)
+    target = next((c for c in clusters if c.get("clusterId") == req.targetClusterId or c.get("cluster_id") == req.targetClusterId), None)
+    if not source or not target:
+        raise HTTPException(status_code=404, detail="Source or target cluster not found")
+
+    # Combine samples and tracks
+    target["sampleCount"] = target.get("sampleCount", 0) + source.get("sampleCount", 0)
+    target["sample_count"] = target["sampleCount"]
+    target["trackCount"] = len(set(target.get("tracks", []) + source.get("tracks", [])))
+    target["tracks"] = list(set(target.get("tracks", []) + source.get("tracks", [])))
+    target["track_ids"] = target["tracks"]
+    target["samples"] = target.get("samples", []) + source.get("samples", [])
+    target["gallery"] = list(set(target.get("gallery", []) + source.get("gallery", [])))
+
+    # Remove source cluster
+    sess["clusters"] = [c for c in clusters if c.get("clusterId") != cluster_id and c.get("cluster_id") != cluster_id]
+
+    sess_dir = Path(os.getcwd()) / "storage" / "enrollment" / session_id
+    if sess_dir.exists():
+        try:
+            with open(sess_dir / "clusters.json", "w") as f:
+                json.dump(sess["clusters"], f, indent=2)
+        except Exception:
+            pass
+
+    return {"success": True, "mergedCluster": target, "remainingClusters": len(sess["clusters"])}
 
 
 class EnrollClusterRequest(BaseModel):
@@ -256,6 +604,9 @@ class EnrollClusterRequest(BaseModel):
 @router.post("/{session_id}/enroll-cluster")
 async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
     """Register all high-quality 512D ArcFace embeddings for a cluster into the FAISS vector index."""
+    if session_id not in state.sessions:
+        _load_session_disk_fallback(session_id)
+
     from ..services.faiss_service import faiss_service
     import numpy as np
 
@@ -278,32 +629,111 @@ async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
     else:
         sess = state.sessions.get(session_id, {})
         clusters = sess.get("clusters", [])
-        matched = next((c for c in clusters if c.get("clusterId") == cluster_id), None)
-        if matched and "samples" in matched and matched["samples"]:
-            for sample in matched["samples"]:
-                if "embedding" in sample and len(sample["embedding"]) == 512:
-                    vec = np.array(sample["embedding"], dtype=np.float32)
-                    norm = np.linalg.norm(vec)
-                    if norm > 0: vec = vec / norm
-                    vectors_to_add.append(vec)
-        if matched and "centroid" in matched and matched["centroid"]:
-            vec = np.array(matched["centroid"], dtype=np.float32)
-            norm = np.linalg.norm(vec)
-            if norm > 0: vec = vec / norm
-            vectors_to_add.append(vec)
+        matched = next((c for c in clusters if c.get("clusterId") == cluster_id or c.get("cluster_id") == cluster_id), None)
+        if matched:
+            if "representative_embedding" in matched and matched["representative_embedding"] and len(matched["representative_embedding"]) == 512:
+                vec = np.array(matched["representative_embedding"], dtype=np.float32)
+                norm = np.linalg.norm(vec)
+                if norm > 0: vec = vec / norm
+                vectors_to_add.append(vec)
+            if "centroid_embedding" in matched and matched["centroid_embedding"] and len(matched["centroid_embedding"]) == 512:
+                vec = np.array(matched["centroid_embedding"], dtype=np.float32)
+                norm = np.linalg.norm(vec)
+                if norm > 0: vec = vec / norm
+                vectors_to_add.append(vec)
+            elif "centroid" in matched and matched["centroid"] and len(matched["centroid"]) == 512:
+                vec = np.array(matched["centroid"], dtype=np.float32)
+                norm = np.linalg.norm(vec)
+                if norm > 0: vec = vec / norm
+                vectors_to_add.append(vec)
+
+        if matched and not vectors_to_add:
+            # Fallback: compute ArcFace 512D embedding on demand from real crop image
+            best_img = matched.get("bestImageUrl") or (matched.get("gallery", [None])[0] if matched.get("gallery") else None)
+            if best_img:
+                clean_rel = best_img.lstrip("/")
+                candidates = [
+                    Path(clean_rel),
+                    Path(__file__).resolve().parent.parent.parent / clean_rel,
+                    Path(__file__).resolve().parent.parent.parent.parent / clean_rel,
+                ]
+                for p in candidates:
+                    if p.exists():
+                        try:
+                            import cv2
+                            from ..services.embedding_service import embedding_service
+                            crop_img = cv2.imread(str(p))
+                            if crop_img is not None and crop_img.size > 0:
+                                emb = embedding_service.generate_embedding(crop_img)
+                                if emb is not None and len(emb) == 512:
+                                    vec = np.array(emb, dtype=np.float32)
+                                    norm = np.linalg.norm(vec)
+                                    if norm > 0: vec = vec / norm
+                                    vectors_to_add.append(vec)
+                                    break
+                        except Exception as ex:
+                            logger.warning(f"On-demand ArcFace crop extraction failed for {p}: {ex}")
 
     if not vectors_to_add:
-        # Fallback if no embeddings found
-        vec = np.random.randn(512).astype(np.float32)
-        vec = vec / np.linalg.norm(vec)
-        vectors_to_add.append(vec)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot enroll cluster '{cluster_id}' into FAISS: No valid 512D ArcFace embeddings found. Mock vectors are strictly prohibited."
+        )
 
     added_count = 0
     for vec in vectors_to_add:
         faiss_service.add_student(usn, vec)
         added_count += 1
 
-    logger.info(f"[{session_id}] Enrolled {added_count} vectors for cluster {cluster_id} (USN {usn}) into FAISS index.")
+    try:
+        faiss_service.save_index()
+    except Exception as s_err:
+        logger.warning(f"Failed saving FAISS index to disk: {s_err}")
+
+    # Mark cluster as enrolled in AI session state
+    if session_id not in state.sessions:
+        _load_session_disk_fallback(session_id)
+
+    sess = state.sessions.get(session_id, {})
+    clusters = sess.get("clusters", [])
+    best_img_path = None
+    for c in clusters:
+        if c.get("clusterId") == cluster_id or c.get("cluster_id") == cluster_id or str(c.get("clusterNumber")) == str(cluster_id).replace("cluster_", ""):
+            c["isEnrolled"] = True
+            c["enrolled"] = True
+            c["status"] = "ASSIGNED"
+            c["identity_status"] = "CONFIRMED"
+            best_img_path = c.get("bestImagePath") or c.get("best_image_path") or (c.get("gallery", [None])[0] if c.get("gallery") else None)
+            break
+    
+    # Persist updated clusters to disk
+    try:
+        sess_dir = _get_session_dir(session_id)
+        clusters_path = sess_dir / "clusters.json"
+        with open(clusters_path, "w") as f:
+            json.dump(clusters, f, indent=2)
+        logger.info(f"[{session_id}] Persisted {len(clusters)} clusters to {clusters_path}")
+    except Exception as p_err:
+        logger.warning(f"Could not persist enrolled status to clusters.json: {p_err}")
+
+    # Synchronize student faceEnrolled state in NestJS backend
+    try:
+        import httpx
+        with httpx.Client(timeout=4.0) as client:
+            client.post(
+                "http://localhost:4000/api/students/sync-enrollment",
+                json={
+                    "usn": usn,
+                    "faceSamples": added_count,
+                    "profilePhoto": best_img_path,
+                }
+            )
+            # Also trigger NestJS session cluster sync to persist cluster status into Postgres
+            client.post(f"http://localhost:4000/api/enrollment/sessions/{session_id}/sync-clusters")
+    except Exception as n_err:
+        logger.warning(f"Could not sync student enrollment status to NestJS API: {n_err}")
+
+    logger.info(f"[{session_id}] Enrolled {added_count} real 512D vectors for cluster {cluster_id} (USN {usn}) into FAISS index.")
 
     return {
         "success": True,
@@ -311,8 +741,36 @@ async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
         "clusterId": cluster_id,
         "addedVectors": added_count,
         "totalFaissVectors": faiss_service.index.ntotal if faiss_service.index else 0,
-        "message": f"Successfully enrolled {added_count} ArcFace vectors for USN {usn} into FAISS index.",
+        "message": f"Successfully enrolled {added_count} real ArcFace vectors for USN {usn} into FAISS index.",
     }
+
+
+@router.delete("/{session_id}/clusters/{cluster_id}")
+async def delete_session_cluster(session_id: str, cluster_id: str):
+    """Delete a specific cluster from a session's in-memory state and disk storage."""
+    if session_id not in state.sessions:
+        _load_session_disk_fallback(session_id)
+    if session_id not in state.sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    sess = state.sessions[session_id]
+    clusters = sess.get("clusters", [])
+    sess["clusters"] = [
+        c for c in clusters
+        if c.get("clusterId") != cluster_id and c.get("cluster_id") != cluster_id and str(c.get("clusterNumber")) != str(cluster_id)
+    ]
+
+    # Save updated clusters to clusters.json
+    try:
+        session_dir = _get_session_dir(session_id)
+        if session_dir and (session_dir / "clusters.json").exists():
+            with open(session_dir / "clusters.json", "w") as f:
+                json.dump({"clusters": sess["clusters"]}, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to persist cluster deletion to disk: {e}")
+
+    logger.info(f"[{session_id}] Deleted cluster {cluster_id}. Remaining: {len(sess['clusters'])}")
+    return {"success": True, "deletedClusterId": cluster_id, "remainingClusters": len(sess["clusters"])}
 
 
 @router.delete("/{session_id}")
@@ -356,14 +814,43 @@ async def _run_pipeline_background(session_id: str, video_paths: List[str], stor
             sess["face_detections"] = event["detectedFacesCount"]
         if "current_frame_faces" in event:
             sess["current_frame_faces"] = event["current_frame_faces"]
+        if "qualitySamples" in event:
+            sess["qualitySamples"] = event["qualitySamples"]
+        if "arcfaceEmbeddings" in event:
+            sess["arcfaceEmbeddings"] = event["arcfaceEmbeddings"]
+        if "activeTracks" in event:
+            sess["activeTracks"] = event["activeTracks"]
+        if "totalTracks" in event:
+            sess["totalTracks"] = event["totalTracks"]
+        if "generatedClusters" in event:
+            sess["generatedClusters"] = event["generatedClusters"]
         if "diagnostics" in event:
-            sess["diagnostics"] = event["diagnostics"]
+            d = event["diagnostics"]
+            sess["diagnostics"] = d
+            sess["qualitySamples"] = d.get("quality_samples", sess.get("qualitySamples", 0))
+            sess["arcfaceEmbeddings"] = d.get("arcface_embeddings", sess.get("arcfaceEmbeddings", 0))
+            sess["activeTracks"] = d.get("active_tracks", sess.get("activeTracks", 0))
+            sess["totalTracks"] = d.get("total_tracks", sess.get("totalTracks", 0))
+            sess["processingFps"] = d.get("processing_fps", 0.0)
+            sess["generatedClusters"] = d.get("generated_clusters", sess.get("generatedClusters", 0))
+
+        # Dynamically attach live clusters from active pipeline
+        if session_id in state.active_pipelines:
+            try:
+                live_clusters = state.active_pipelines[session_id].get_live_clusters()
+                if live_clusters:
+                    sess["clusters"] = live_clusters
+                    event["clusters"] = live_clusters
+                    event["generatedClusters"] = len(live_clusters)
+            except Exception as e:
+                logger.debug(f"[{session_id}] Live cluster error: {e}")
 
         state.sessions[session_id] = sess
         await websocket_manager.broadcast(evt_type, {"sessionId": session_id, **event})
 
     try:
         pipeline = ClassroomPipeline(session_id, storage_base, detector_type=detector)
+        state.active_pipelines[session_id] = pipeline
         clusters = await pipeline.run(video_paths, on_progress)
 
         # Store results & diagnostics
@@ -396,10 +883,42 @@ async def _run_pipeline_background(session_id: str, video_paths: List[str], stor
         logger.info(f"[{session_id}] Pipeline finished: {len(clusters)} clusters.")
 
     except Exception as exc:
-        logger.error(f"[{session_id}] Pipeline failed: {exc}", exc_info=True)
-        state.sessions[session_id]["status"] = "FAILED"
-        await websocket_manager.broadcast("SESSION_FAILED", {
-            "sessionId": session_id,
-            "status": "FAILED",
-            "error": str(exc),
-        })
+        logger.error(f"[{session_id}] Pipeline exception/stop: {exc}", exc_info=True)
+        # Check if pipeline generated any clusters or tracks before stopping
+        recovered_clusters = []
+        try:
+            if pipeline:
+                recovered_clusters = pipeline.cluster_from_disk_tracks()
+        except Exception:
+            pass
+
+        if recovered_clusters:
+            diag = pipeline.get_diagnostics() if pipeline else {}
+            state.sessions[session_id]["status"] = "REVIEW_REQUIRED"
+            state.sessions[session_id]["clusters"] = recovered_clusters
+            state.sessions[session_id]["diagnostics"] = diag
+            state.sessions[session_id]["progress"] = 100.0
+            await websocket_manager.broadcast("ENROLLMENT_COMPLETED", {
+                "sessionId": session_id,
+                "status": "REVIEW_REQUIRED",
+                "totalClusters": len(recovered_clusters),
+                "clusters": recovered_clusters,
+                "diagnostics": diag,
+                "progressPercentage": 100.0,
+            })
+            try:
+                import httpx
+                nestjs_url = f"http://127.0.0.1:4000/api/enrollment/sessions/{session_id}/sync-clusters"
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    await client.post(nestjs_url)
+            except Exception:
+                pass
+        else:
+            state.sessions[session_id]["status"] = "STOPPED"
+            await websocket_manager.broadcast("SESSION_STOPPED", {
+                "sessionId": session_id,
+                "status": "STOPPED",
+                "error": str(exc),
+            })
+    finally:
+        state.active_pipelines.pop(session_id, None)

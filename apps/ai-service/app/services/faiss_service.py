@@ -27,8 +27,13 @@ class FaissService:
 
     def __init__(self):
         self.dimension = 512
-        self.index_path = Path(settings.face_index_path).resolve()
-        self.metadata_path = Path(settings.metadata_path).resolve()
+        project_root = Path(__file__).resolve().parent.parent.parent.parent
+        if (project_root / "vectors").exists():
+            self.index_path = (project_root / "vectors" / "face_index.faiss").resolve()
+            self.metadata_path = (project_root / "vectors" / "metadata.json").resolve()
+        else:
+            self.index_path = Path(settings.face_index_path).resolve()
+            self.metadata_path = Path(settings.metadata_path).resolve()
         
         # Ensure vectors folder exists
         self.index_path.parent.mkdir(parents=True, exist_ok=True)

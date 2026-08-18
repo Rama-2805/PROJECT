@@ -3,8 +3,9 @@
 import logging
 import time
 import cv2
+import numpy as np
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from ..config.settings import settings
@@ -132,31 +133,113 @@ def generate_mjpeg_stream(camera_id: str):
         frame = None
         with attendance_engine._lock:
             frame = attendance_engine.annotated_frames.get(camera_id)
+            if frame is None and attendance_engine.annotated_frames:
+                # Fallback to the first active annotated stream
+                frame = next(iter(attendance_engine.annotated_frames.values()), None)
             
         # Fallback to raw frame from camera service if no session is running
         if frame is None:
             latest = camera_service.get_latest_frame(camera_id)
+            if latest is None and camera_service._latest_frames:
+                latest = next(iter(camera_service._latest_frames.values()), None)
             if latest is not None:
                 _, frame = latest
                 
         if frame is not None:
             # Encode frame to JPEG
-            ret, jpeg = cv2.imencode('.jpg', frame)
+            ret, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ret:
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n')
+                data = jpeg.tobytes()
+                yield (
+                    b'--frame\r\n'
+                    b'Content-Type: image/jpeg\r\n'
+                    b'Content-Length: ' + str(len(data)).encode() + b'\r\n\r\n' +
+                    data +
+                    b'\r\n'
+                )
         
-        time.sleep(0.066)  # ~15 FPS update rate
+        time.sleep(0.04)  # ~25 FPS update rate
 
 @router.get("/stream")
 def get_camera_stream(camera_id: str = "webcam"):
     """MJPEG stream endpoint for live monitoring."""
     state = camera_service.get_camera_state(camera_id)
     if state == CameraState.OFFLINE:
-        # Try starting camera automatically if offline
-        camera_service.start_camera(camera_id, "0")
+        # Try starting camera automatically if offline with footage sequence
+        camera_service.start_camera(camera_id, "footage")
         
     return StreamingResponse(
         generate_mjpeg_stream(camera_id),
-        media_type="multipart/x-mixed-replace; boundary=frame"
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, private, max-age=0, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Access-Control-Allow-Origin": "*"
+        }
     )
+
+@router.get("/frame")
+def get_single_frame(camera_id: str = "webcam"):
+    """Single JPEG snapshot endpoint for polling fallback."""
+    from ..services.attendance_engine import attendance_engine
+    frame = None
+    with attendance_engine._lock:
+        frame = attendance_engine.annotated_frames.get(camera_id)
+        if frame is None and attendance_engine.annotated_frames:
+            frame = next(iter(attendance_engine.annotated_frames.values()), None)
+        
+    if frame is None:
+        latest = camera_service.get_latest_frame(camera_id)
+        if latest is None and camera_service._latest_frames:
+            latest = next(iter(camera_service._latest_frames.values()), None)
+        if latest is not None:
+            _, frame = latest
+            
+    if frame is not None:
+        ret, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if ret:
+            from fastapi import Response
+            return Response(
+                content=jpeg.tobytes(),
+                media_type="image/jpeg",
+                headers={
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    "Pragma": "no-cache",
+                    "Expires": "0",
+                    "Access-Control-Allow-Origin": "*"
+                }
+            )
+    
+    blank = np.zeros((480, 640, 3), dtype=np.uint8)
+    ret, jpeg = cv2.imencode('.jpg', blank)
+    from fastapi import Response
+    return Response(content=jpeg.tobytes(), media_type="image/jpeg")
+
+@router.post("/control")
+def control_playback(payload: dict):
+    """Control footage playback: action='forward' | 'next' | 'prev' | 'speed'."""
+    camera_id = payload.get("camera_id", "room-023")
+    action = payload.get("action", "forward")
+    seconds = float(payload.get("seconds", 30.0))
+    speed = float(payload.get("speed", 1.0))
+
+    if action == "next":
+        new_vid = camera_service.next_video(camera_id)
+        return {"status": "success", "action": "next", "current_video": new_vid}
+    elif action == "prev":
+        new_vid = camera_service.prev_video(camera_id)
+        return {"status": "success", "action": "prev", "current_video": new_vid}
+    elif action == "forward":
+        camera_service.seek_forward(camera_id, seconds)
+        return {"status": "success", "action": "forward", "seconds": seconds}
+    elif action == "speed":
+        camera_service.set_speed(camera_id, speed)
+        return {"status": "success", "action": "speed", "speed": speed}
+    
+    return {"status": "unknown_action", "action": action}
+
+@router.get("/status")
+def get_playback_status(camera_id: str = "room-023"):
+    """Get active footage metadata, playlist position, and speed."""
+    return camera_service.get_playback_status(camera_id)

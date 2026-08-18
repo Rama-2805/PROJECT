@@ -173,8 +173,25 @@ class FaceDetector:
 
         return detections
 
-    def detect_multiscale_faces(self, frame: np.ndarray, back_row_y_max: int = 650, upscale_factor: float = 1.8, iou_thresh: float = 0.40, force_recovery: bool = False) -> List[Dict[str, Any]]:
-        """Adaptive Multi-scale face detection combining Full-Frame, ROI Tiling, and Targeted Small-Face Recovery with Cooldown."""
+    def set_det_size(self, size_tuple: Tuple[int, int]):
+        """Dynamically set det_size on InsightFace SCRFD model."""
+        m = self.model
+        if m is not None and hasattr(m, "det_model"):
+            m.det_model.input_size = size_tuple
+            m.det_model.input_shape = (1, 3, size_tuple[1], size_tuple[0])
+
+    def detect_multiscale_faces(
+        self,
+        frame: np.ndarray,
+        upscale_factor: float = 1.8,
+        back_row_y_max: int = 550,
+        force_recovery: bool = False,
+        iou_thresh: float = 0.35,
+    ) -> List[Dict[str, Any]]:
+        """Multi-scale SCRFD face detection with targeted ROI tiling for back-row classroom faces."""
+        if not getattr(self, "enable_multiscale", True):
+            return self.detect_faces(frame)
+
         if frame is None or frame.size == 0:
             return []
 

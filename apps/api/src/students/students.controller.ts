@@ -39,6 +39,18 @@ export class StudentsController {
     return this.students.findById(id);
   }
 
+  @Get(":id/biometrics")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT, RoleName.RESEARCH_ANALYST)
+  getBiometrics(@Param("id") id: string) {
+    return this.students.getStudentBiometrics(id);
+  }
+
+  @Post("sync-enrollment")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  syncEnrollment(@Body() dto: { usn: string; faceSamples?: number; profilePhoto?: string }) {
+    return this.students.markStudentEnrolled(dto);
+  }
+
   @Post()
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
   create(@Body() dto: CreateStudentDto) {
@@ -55,6 +67,12 @@ export class StudentsController {
   @Roles(RoleName.SUPER_ADMIN)
   remove(@Param("id") id: string) {
     return this.students.remove(id);
+  }
+
+  @Post("reset-all-enrollment")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
+  resetAllEnrollment() {
+    return this.students.resetAllEnrolledStudents();
   }
 
   @Post(":id/reset-password")

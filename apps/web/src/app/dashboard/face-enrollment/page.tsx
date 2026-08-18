@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Video, Upload, Users, CheckCircle2, XCircle,
@@ -9,7 +9,7 @@ import {
   Plus, BarChart3, Zap, Shield,
   X, Image as ImageIcon, RotateCcw, AlertTriangle,
   Clock, Cpu, Database, TrendingUp, Camera, FileVideo, RefreshCw,
-  Layers, Sparkles, Fingerprint
+  Layers, Sparkles, Fingerprint, UserCheck, Check, ArrowRight, HelpCircle
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import { Button } from "@/components/ui/Button";
@@ -21,11 +21,25 @@ import { apiRequest, getAccessToken } from "@/lib/api/client";
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
 const AI_BASE  = process.env.NEXT_PUBLIC_AI_URL   || "http://localhost:8000";
 
+function resolveCropUrl(item: any): string | null {
+  if (!item) return null;
+  const raw = typeof item === "string" ? item : (item.imageUrl || item.imagePath || item.url || item.path || "");
+  if (!raw || typeof raw !== "string") return null;
+  if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("data:")) return raw;
+  if (raw.startsWith("/")) return `${AI_BASE}${raw}`;
+  if (raw.includes("storage/")) {
+    const sub = raw.split("storage/")[1];
+    return `${AI_BASE}/storage/${sub}`;
+  }
+  return `${AI_BASE}/storage/${raw}`;
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    TYPES
 ═══════════════════════════════════════════════════════════════════ */
 type SessionStatus = "PENDING" | "PROCESSING" | "REVIEW_REQUIRED" | "COMPLETED" | "FAILED" | "STOPPED" | "CANCELLED";
-type ClusterStatus = "UNASSIGNED" | "ASSIGNED" | "REJECTED";
+type ClusterStatus = "UNASSIGNED" | "ASSIGNED" | "REJECTED" | "CANDIDATE";
+type IdentityStatus = "UNKNOWN" | "CANDIDATE" | "CONFIRMED" | "REJECTED";
 
 interface Session {
   id: string; name: string; department: string; program: string;
@@ -43,7 +57,6 @@ interface Session {
   arcfaceEmbeddings?: number;
   processingFps?: number;
   generatedClusters: number; createdAt: string;
-  // from API
   departmentId?: string; programId?: string; semesterId?: string;
   sectionId?: string; subjectId?: string; teacherId?: string;
   institutionId?: string;
@@ -55,14 +68,80 @@ interface ClusterImage {
   imageUrl?: string | null;
 }
 
+interface ClusterSample {
+  sampleId?: string;
+  trackId?: string;
+  qualityScore?: number;
+  timestamp?: number;
+  sourceVideo?: string;
+  imageUrl?: string | null;
+  imagePath?: string | null;
+}
+
 interface Cluster {
-  id: string; sessionId: string; clusterNumber: number;
-  sampleCount: number; qualityAvg: number; confidence: number;
-  firstSeenTime: string; lastSeenTime: string;
-  status: ClusterStatus; images: ClusterImage[];
+  id: string;
+  clusterId: string;
+  sessionId: string;
+  clusterNumber: number;
+  sampleCount: number;
+  trackCount: number;
+  qualityAvg: number;
+  bestQualityScore: number;
+  confidence: number;
+  firstSeenTime: string;
+  lastSeenTime: string;
+  firstSeenSec?: number;
+  lastSeenSec?: number;
+  identity_status: IdentityStatus;
+  status: ClusterStatus;
+  assignment_source?: string;
+  assignedStudent?: {
+    usn: string;
+    name: string;
+    studentId?: string;
+    confidence?: number;
+    status?: string;
+    source?: string;
+  } | null;
   assignedStudentName?: string;
+  assignedUsn?: string;
+  candidateMatch?: {
+    usn: string;
+    name: string;
+    similarity: number;
+    votes: number;
+  } | null;
+  embeddingCount?: number;
+  purity?: number;
+  internalPurity?: number;
+  internal_min_similarity?: number;
+  internal_mean_similarity?: number;
+  identity_evidence?: string;
+  identityEvidence?: string;
+  possible_multi_identity_cluster?: boolean;
+  possibleMultiIdentity?: boolean;
+  images: ClusterImage[];
+  samples?: ClusterSample[];
+  gallery?: string[];
   bestImageUrl?: string | null;
   bestImagePath?: string | null;
+  isEnrolled?: boolean;
+  enrolled?: boolean;
+}
+
+interface StudentSearchResult {
+  id: string;
+  studentId: string;
+  rollNumber?: string;
+  usn?: string;
+  fullName: string;
+  email?: string;
+  phone?: string;
+  department?: { id: string; name: string; code: string } | string;
+  semester?: number | string;
+  section?: string;
+  faceEnrolled?: boolean;
+  profilePhoto?: string;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -77,26 +156,31 @@ async function authFetch(url: string, opts: RequestInit = {}) {
   return fetch(url, { ...opts, headers, credentials: "include" });
 }
 
-/* Convert API session shape to our frontend Session type */
 function LiveTrackingImage({ sessionId }: { sessionId: string }) {
   const [activeFrameUrl, setActiveFrameUrl] = useState<string | null>(null);
   const [hasFrame, setHasFrame] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
-    const checkFrame = () => {
-      const img = new Image();
-      const testUrl = `${AI_BASE}/api/v1/sessions/${sessionId}/live-frame?t=${Date.now()}`;
-      img.onload = () => {
-        if (isMounted) {
-          setActiveFrameUrl(testUrl);
-          setHasFrame(true);
+    let currentBlobUrl: string | null = null;
+
+    const checkFrame = async () => {
+      try {
+        const testUrl = `${AI_BASE}/api/v1/sessions/${sessionId}/live-frame?t=${Date.now()}`;
+        const res = await fetch(testUrl);
+        if (res.status === 200 && isMounted) {
+          const blob = await res.blob();
+          if (blob.size > 0 && isMounted) {
+            const url = URL.createObjectURL(blob);
+            if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+            currentBlobUrl = url;
+            setActiveFrameUrl(url);
+            setHasFrame(true);
+          }
         }
-      };
-      img.onerror = () => {
-        // Keeps previous activeFrameUrl if frame not ready or between writes
-      };
-      img.src = testUrl;
+      } catch {
+        /* transient polling skip */
+      }
     };
 
     checkFrame();
@@ -104,6 +188,7 @@ function LiveTrackingImage({ sessionId }: { sessionId: string }) {
     return () => {
       isMounted = false;
       clearInterval(interval);
+      if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
     };
   }, [sessionId]);
 
@@ -145,7 +230,7 @@ function mapSession(s: any): Session {
     lectureTime: s.lectureTime || "",
     status: ai.status || s.status || "PENDING",
     totalVideos: s.totalVideos || s.videos?.length || 0,
-    progressPercentage: ai.progressPercentage ?? s.progressPercentage ?? 0,
+    progressPercentage: Math.min(100, Math.max(0, ai.progressPercentage ?? s.progressPercentage ?? 0)),
     processedFrames: ai.processedFrames ?? ai.evaluated_frames ?? s.processedFrames ?? 0,
     evaluatedFrames: ai.evaluated_frames ?? ai.processedFrames ?? s.evaluatedFrames ?? s.processedFrames ?? 0,
     framesWithFaces: ai.frames_with_faces ?? diag.frames_with_faces ?? s.framesWithFaces ?? 0,
@@ -164,48 +249,112 @@ function mapSession(s: any): Session {
   };
 }
 
-/* Convert API cluster shape to our frontend Cluster type */
 function mapCluster(c: any, sessionId: string): Cluster {
-  const images: ClusterImage[] = (c.gallery || c.images || []).map((img: any, i: number) => {
-    // If img is a string URL (from AI service gallery), convert
-    if (typeof img === "string") {
-      return {
-        id: `${c.id}-img-${i}`,
-        frameNumber: i,
-        videoFileName: "",
-        timestampSec: 0,
-        qualityScore: 0.85,
-        isBest: img.includes("best.jpg"),
-        imageUrl: img.startsWith("/") ? `${AI_BASE}${img}` : img,
-      };
-    }
+  const cid = c.clusterId || c.cluster_id || (c.clusterNumber ? `cluster_${String(c.clusterNumber).padStart(3, '0')}` : (c.id || "cluster_001"));
+  const num = c.clusterNumber || c.cluster_number || (typeof c.clusterId === "string" && c.clusterId.startsWith("cluster_") ? parseInt(c.clusterId.split("_")[1], 10) : 1);
+
+  const rawImages = Array.isArray(c.gallery) ? c.gallery : (Array.isArray(c.images) ? c.images : []);
+  const images: ClusterImage[] = rawImages.map((img: any, i: number) => {
+    const srcUrl = resolveCropUrl(img);
+    const isBest = typeof img === "string" ? img.includes("best.jpg") : Boolean(img?.isBest);
     return {
-      id: img.id || `${c.id}-img-${i}`,
-      frameNumber: img.frameNumber || i,
-      videoFileName: img.videoFileName || "",
-      timestampSec: img.timestampSec || 0,
-      qualityScore: img.qualityScore || 0.85,
-      isBest: img.isBest || false,
-      imageUrl: img.imageUrl || (img.imagePath ? `${AI_BASE}/storage/${img.imagePath.split("/storage/")[1] || ""}` : null),
+      id: (img && typeof img === "object" && img.id) ? img.id : `${cid}-img-${i}`,
+      frameNumber: (img && typeof img === "object" && img.frameNumber) ? img.frameNumber : i,
+      videoFileName: (img && typeof img === "object" && img.videoFileName) ? img.videoFileName : "",
+      timestampSec: (img && typeof img === "object" && img.timestampSec) ? img.timestampSec : 0,
+      qualityScore: (img && typeof img === "object" && img.qualityScore) ? img.qualityScore : 0.85,
+      isBest: isBest || i === 0,
+      imageUrl: srcUrl,
     };
   });
 
-  return {
-    id: c.id || c.clusterId,
-    sessionId: c.sessionId || c.enrollmentSessionId || sessionId,
-    clusterNumber: c.clusterNumber || 0,
-    sampleCount: c.sampleCount || 0,
-    qualityAvg: c.qualityAvg || 0,
+  const rawSamples = Array.isArray(c.samples) ? c.samples : [];
+  const samples: ClusterSample[] = rawSamples.map((s: any) => ({
+    sampleId: s.sampleId || `s-${Math.random().toString(36).substring(2, 7)}`,
+    trackId: s.trackId || "track_001",
+    qualityScore: s.qualityScore || 85.0,
+    timestamp: s.timestamp || 0.0,
+    sourceVideo: s.sourceVideo || "",
+    imageUrl: resolveCropUrl(s.imageUrl || s.imagePath),
+    imagePath: typeof s.imagePath === "string" ? s.imagePath : undefined,
+  }));
+
+  const identityStatus: IdentityStatus = c.identity_status || (
+    c.status === "ASSIGNED" ? "CONFIRMED" :
+    c.status === "REJECTED" ? "REJECTED" :
+    c.status === "CANDIDATE" ? "CANDIDATE" : "UNKNOWN"
+  );
+
+  const status: ClusterStatus = c.status || (
+    identityStatus === "CONFIRMED" ? "ASSIGNED" :
+    identityStatus === "REJECTED" ? "REJECTED" :
+    identityStatus === "CANDIDATE" ? "CANDIDATE" : "UNASSIGNED"
+  );
+
+  const bestImg = resolveCropUrl(c.bestImageUrl || c.bestImagePath || (images.length > 0 ? images[0].imageUrl : null));
+
+  const assignedStudent = c.assignedStudent ? {
+    usn: c.assignedStudent.usn || c.usn || "",
+    name: c.assignedStudent.name || c.name || c.assignedStudentName || c.usn || "",
+    studentId: c.assignedStudent.studentId || c.student_id,
+    confidence: c.assignedStudent.confidence || c.confidence,
+    status: c.assignedStudent.status || identityStatus,
+    source: c.assignedStudent.source || c.assignment_source || "AUTO",
+  } : (c.assignedStudentName || c.usn ? {
+    usn: c.usn || c.assignedUsn || "",
+    name: c.assignedStudentName || c.name || c.usn || "",
     confidence: c.confidence || 0.85,
-    firstSeenTime: c.firstSeenTime || "00:00",
-    lastSeenTime: c.lastSeenTime || "00:00",
-    status: c.status || "UNASSIGNED",
+    status: identityStatus,
+    source: c.assignment_source || "MANUAL",
+  } : null);
+
+  const candidateMatch = identityStatus === "CANDIDATE" ? {
+    usn: c.assignedStudent?.usn || c.usn || "",
+    name: c.assignedStudent?.name || c.name || c.usn || "Candidate",
+    similarity: c.identity_mean_similarity || c.confidence || 0.65,
+    votes: c.identity_vote_count || 2,
+  } : null;
+
+  const firstSeen = c.first_seen !== undefined ? `${Math.floor(c.first_seen / 60)}:${String(Math.floor(c.first_seen % 60)).padStart(2, '0')}` : (c.firstSeenTime || "00:00");
+  const lastSeen = c.last_seen !== undefined ? `${Math.floor(c.last_seen / 60)}:${String(Math.floor(c.last_seen % 60)).padStart(2, '0')}` : (c.lastSeenTime || "00:00");
+
+  return {
+    id: c.id || cid,
+    clusterId: cid,
+    sessionId: c.sessionId || c.enrollmentSessionId || sessionId,
+    clusterNumber: num,
+    sampleCount: c.sampleCount ?? c.sample_count ?? samples.length ?? images.length ?? 0,
+    trackCount: c.trackCount ?? c.track_count ?? c.tracks?.length ?? 1,
+    qualityAvg: c.qualityAvg ?? c.quality_mean ?? 0.85,
+    bestQualityScore: c.bestQualityScore ?? c.quality_max ?? 0.95,
+    confidence: c.confidence ?? c.identity_mean_similarity ?? 0.85,
+    firstSeenTime: firstSeen,
+    lastSeenTime: lastSeen,
+    firstSeenSec: c.first_seen,
+    lastSeenSec: c.last_seen,
+    identity_status: identityStatus,
+    status,
+    assignment_source: c.assignment_source || (assignedStudent?.source),
+    assignedStudent,
+    assignedStudentName: assignedStudent?.name || c.assignedStudentName,
+    assignedUsn: assignedStudent?.usn || c.usn,
+    candidateMatch,
+    embeddingCount: c.embedding_count || c.sampleCount || images.length,
+    purity: c.purity ?? c.internalPurity ?? 95,
+    internalPurity: c.internalPurity ?? c.purity ?? 95,
+    internal_min_similarity: c.internal_min_similarity ?? 90,
+    internal_mean_similarity: c.internal_mean_similarity ?? 95,
+    identity_evidence: c.identity_evidence || c.identityEvidence || "Moderate",
+    identityEvidence: c.identityEvidence || c.identity_evidence || "Moderate",
+    possible_multi_identity_cluster: Boolean(c.possible_multi_identity_cluster ?? c.possibleMultiIdentity),
+    possibleMultiIdentity: Boolean(c.possibleMultiIdentity ?? c.possible_multi_identity_cluster),
     images,
-    assignedStudentName: c.assignedStudent?.fullName || c.assignedStudentName,
-    bestImageUrl: c.bestImageUrl
-      ? (c.bestImageUrl.startsWith("/") ? `${AI_BASE}${c.bestImageUrl}` : c.bestImageUrl)
-      : (images[0]?.imageUrl || null),
-    bestImagePath: c.bestImagePath || null,
+    samples,
+    gallery: c.gallery || [],
+    bestImageUrl: bestImg,
+    bestImagePath: c.bestImagePath || (images[0]?.imageUrl || null),
+    isEnrolled: Boolean(c.isEnrolled || c.enrolled),
+    enrolled: Boolean(c.isEnrolled || c.enrolled),
   };
 }
 
@@ -213,20 +362,23 @@ function mapCluster(c: any, sessionId: string): Cluster {
    STATUS META
 ═══════════════════════════════════════════════════════════════════ */
 const STATUS_META: Record<string, { label: string; dot: string; badge: string }> = {
-  PENDING:          { label: "Pending",         dot: "bg-slate-400",              badge: "text-slate-400 bg-slate-500/10 border-slate-500/30" },
-  PROCESSING:       { label: "Processing",      dot: "bg-blue-400 animate-pulse", badge: "text-blue-400 bg-blue-500/10 border-blue-500/30" },
-  REVIEW_REQUIRED:  { label: "Review Required", dot: "bg-amber-400 animate-pulse",badge: "text-amber-400 bg-amber-500/10 border-amber-500/30" },
-  COMPLETED:        { label: "Completed",       dot: "bg-emerald-400",            badge: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30" },
-  FAILED:           { label: "Failed",          dot: "bg-red-400",                badge: "text-red-400 bg-red-500/10 border-red-500/30" },
-  STOPPED:          { label: "Stopped",         dot: "bg-amber-400",              badge: "text-amber-400 bg-amber-500/10 border-amber-500/30" },
-  CANCELLED:        { label: "Cancelled",       dot: "bg-amber-400",              badge: "text-amber-400 bg-amber-500/10 border-amber-500/30" },
-  UNASSIGNED:       { label: "Unassigned",      dot: "bg-slate-400",              badge: "text-slate-400 bg-slate-500/10 border-slate-500/30" },
-  ASSIGNED:         { label: "Assigned",        dot: "bg-emerald-400",            badge: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30" },
-  REJECTED:         { label: "Rejected",        dot: "bg-red-400",                badge: "text-red-400 bg-red-500/10 border-red-500/30" },
+  PENDING:          { label: "Pending",          dot: "bg-slate-400",               badge: "text-slate-400 bg-slate-500/10 border-slate-500/30" },
+  PROCESSING:       { label: "Processing",       dot: "bg-blue-400 animate-pulse",  badge: "text-blue-400 bg-blue-500/10 border-blue-500/30" },
+  REVIEW_REQUIRED:  { label: "Review Required",  dot: "bg-amber-400 animate-pulse", badge: "text-amber-400 bg-amber-500/10 border-amber-500/30" },
+  COMPLETED:        { label: "Completed",        dot: "bg-emerald-400",             badge: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30" },
+  FAILED:           { label: "Failed",           dot: "bg-red-400",                 badge: "text-red-400 bg-red-500/10 border-red-500/30" },
+  STOPPED:          { label: "Stopped",          dot: "bg-amber-400",               badge: "text-amber-400 bg-amber-500/10 border-amber-500/30" },
+  CANCELLED:        { label: "Cancelled",        dot: "bg-amber-400",               badge: "text-amber-400 bg-amber-500/10 border-amber-500/30" },
+  UNKNOWN:          { label: "Unknown",          dot: "bg-slate-400",               badge: "text-slate-400 bg-slate-500/10 border-slate-500/30" },
+  CANDIDATE:        { label: "Candidate Match",  dot: "bg-amber-400 animate-pulse", badge: "text-amber-400 bg-amber-500/10 border-amber-500/30" },
+  CONFIRMED:        { label: "Confirmed",        dot: "bg-emerald-400",             badge: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30" },
+  REJECTED:         { label: "Rejected",         dot: "bg-red-400",                 badge: "text-red-400 bg-red-500/10 border-red-500/30" },
+  UNASSIGNED:       { label: "Unassigned",       dot: "bg-slate-400",               badge: "text-slate-400 bg-slate-500/10 border-slate-500/30" },
+  ASSIGNED:         { label: "Assigned",         dot: "bg-emerald-400",             badge: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30" },
 };
 
 /* ═══════════════════════════════════════════════════════════════════
-   FACE AVATAR — biometric-style AI face placeholder
+   FACE AVATAR — Biometric-style AI face placeholder
 ═══════════════════════════════════════════════════════════════════ */
 const AVATAR_PALETTES = [
   { from: "#3B82F6", to: "#8B5CF6" },
@@ -291,12 +443,9 @@ function FaceAvatar({ id, size = 56 }: { id: string; size?: number }) {
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   CLUSTER FACE — shows real image with FaceAvatar fallback
-═══════════════════════════════════════════════════════════════════ */
 function ClusterFace({ cluster, size = 72 }: { cluster: Cluster; size?: number }) {
   const [imgFailed, setImgFailed] = useState(false);
-  const imgUrl = cluster.bestImageUrl;
+  const imgUrl = resolveCropUrl(cluster.bestImageUrl || cluster.bestImagePath || (cluster.gallery && cluster.gallery[0]));
 
   if (imgUrl && !imgFailed) {
     return (
@@ -304,17 +453,14 @@ function ClusterFace({ cluster, size = 72 }: { cluster: Cluster; size?: number }
         src={imgUrl}
         alt={`Cluster #${cluster.clusterNumber}`}
         onError={() => setImgFailed(true)}
-        className="rounded-full object-cover border border-glass-border"
+        className="rounded-full object-cover border border-glass-border shadow-md"
         style={{ width: size, height: size }}
       />
     );
   }
-  return <FaceAvatar id={cluster.id} size={size} />;
+  return <FaceAvatar id={cluster.clusterId || cluster.id} size={size} />;
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   STAT CHIP
-═══════════════════════════════════════════════════════════════════ */
 function StatChip({ icon: Icon, label, value, color }: { icon: any; label: string; value: string | number; color: string }) {
   return (
     <div className="flex items-center gap-2.5 px-3 py-2 rounded-xl bg-glass-light border border-glass-border">
@@ -327,23 +473,20 @@ function StatChip({ icon: Icon, label, value, color }: { icon: any; label: strin
   );
 }
 
-/* ═══════════════════════════════════════════════════════════════════
-   QUALITY RING
-═══════════════════════════════════════════════════════════════════ */
 function QualityRing({ score, size = 48 }: { score: number; size?: number }) {
-  const pct = Math.round(score * 100);
+  const pct = Math.min(100, Math.max(0, Math.round(score > 1 ? score : score * 100)));
   const r = (size - 6) / 2;
   const circ = 2 * Math.PI * r;
   const dash = (pct / 100) * circ;
-  const color = pct >= 90 ? "#10B981" : pct >= 75 ? "#F59E0B" : "#EF4444";
+  const color = pct >= 85 ? "#10B981" : pct >= 70 ? "#F59E0B" : "#EF4444";
   return (
     <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.06)" strokeWidth="3" />
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth="3"
-          strokeDasharray={`${dash} ${circ - dash}`} strokeLinecap="round" style={{ transition: "stroke-dasharray 0.6s ease" }} />
+          strokeDasharray={`${dash} ${circ}`} strokeLinecap="round" />
       </svg>
-      <span className="absolute text-[10px] font-bold" style={{ color }}>{pct}%</span>
+      <span className="absolute text-[9px] font-mono font-bold text-text-primary">{pct}%</span>
     </div>
   );
 }
@@ -352,97 +495,92 @@ function QualityRing({ score, size = 48 }: { score: number; size?: number }) {
    CREATE SESSION MODAL
 ═══════════════════════════════════════════════════════════════════ */
 function CreateSessionModal({ onClose, onCreated }: { onClose: () => void; onCreated: (s: Session) => void }) {
-  const [step, setStep] = useState<1 | 2>(1);
-  const [form, setForm] = useState({
-    name: "", department: "CSE", program: "B.Tech", semester: "7",
-    section: "A", subject: "", teacher: "", lectureDate: new Date().toISOString().split("T")[0], lectureTime: "09:00",
-  });
-  const [videos, setVideos] = useState<File[]>([]);
-  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [dept, setDept] = useState("Computer Science & Engineering");
+  const [prog, setProg] = useState("B.Tech CSE");
+  const [sem, setSem] = useState("6th Semester");
+  const [sec, setSec] = useState("Section A");
+  const [sub, setSub] = useState("Machine Learning & Pattern Recognition");
+  const [teach, setTeach] = useState("Dr. Ananya Sharma");
+  const [videoFiles, setVideoFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const field = (key: keyof typeof form) => ({
-    value: form[key],
-    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-      setForm(p => ({ ...p, [key]: e.target.value })),
-  });
-
-  const inputCls = "w-full bg-glass-light border border-glass-border rounded-xl px-3.5 py-2.5 text-sm text-text-primary focus:outline-none focus:border-blue-500/60 focus:bg-blue-500/5 placeholder:text-text-muted transition-all";
-  const labelCls = "block text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5";
-
-  const handleCreate = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setCreating(true);
+    if (!name.trim()) { setError("Session name is required"); return; }
+    if (videoFiles.length === 0) { setError("Please select at least one classroom video file (.mp4, .avi, .mkv)"); return; }
+
+    setUploading(true);
     setError(null);
+
     try {
-      // Step 1: Create the session
-      const sessionName = form.name || `${form.department} ${form.semester}th Sem — ${form.subject || "Lecture"}`;
+      const formPayload = {
+        name: name.trim(),
+        department: dept,
+        program: prog,
+        semester: sem,
+        section: sec,
+        subject: sub,
+        teacher: teach,
+        lectureDate: new Date().toISOString().split("T")[0],
+        lectureTime: "09:00 - 10:30 AM",
+      };
+
       const res = await authFetch(`${API_BASE}/enrollment/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: sessionName,
-          institutionId: "inst_default", // will be resolved server-side
-          department: form.department,
-          program: form.program,
-          semester: `${form.semester}th Semester`,
-          section: `Section ${form.section}`,
-          subject: form.subject,
-          teacher: form.teacher,
-          lectureDate: form.lectureDate,
-          lectureTime: form.lectureTime,
-        }),
+        body: JSON.stringify(formPayload),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to create session");
 
-      const sessionData = await res.json();
-      const session = sessionData.data || sessionData;
+      const session = data.data || data;
+      const sessionId = session.id;
 
-      if (!session?.id) throw new Error(sessionData.message || "Failed to create session");
+      const formData = new FormData();
+      videoFiles.forEach((file) => formData.append("videos", file));
 
-      // Step 2: Upload videos if any
-      if (videos.length > 0) {
-        const fd = new FormData();
-        videos.forEach(v => fd.append("videos", v));
-        await authFetch(`${API_BASE}/enrollment/sessions/${session.id}/upload`, {
-          method: "POST",
-          body: fd,
-        });
-      }
+      const uploadRes = await authFetch(`${API_BASE}/enrollment/sessions/${sessionId}/upload`, {
+        method: "POST",
+        body: formData,
+      });
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(uploadData.message || "Failed to upload video files");
 
-      onCreated(mapSession({
-        ...session,
-        name: sessionName,
-        totalVideos: videos.length,
-        status: "PENDING",
-      }));
+      const mapped = mapSession({ ...session, totalVideos: videoFiles.length });
+      onCreated(mapped);
     } catch (err: any) {
-      setError(err.message || "Failed to create session. Is the API running?");
+      setError(err.message || "Error creating session");
     } finally {
-      setCreating(false);
+      setUploading(false);
     }
   };
 
+  const inputCls = "w-full bg-glass-light border border-glass-border rounded-xl px-3.5 py-2.5 text-xs text-text-primary focus:outline-none focus:border-blue-500/50 placeholder:text-text-muted transition-all";
+  const labelCls = "block text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-      <motion.div className="absolute inset-0 bg-bg-primary/75 backdrop-blur-xl" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
+      <motion.div className="absolute inset-0 bg-bg-primary/80 backdrop-blur-xl" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
       <motion.div
         initial={{ opacity: 0, y: 24, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 24, scale: 0.97 }}
         transition={{ type: "spring", stiffness: 340, damping: 28 }}
-        className="relative w-full max-w-xl bg-bg-secondary border border-glass-border rounded-2xl shadow-glow-blue overflow-hidden"
+        className="relative w-full max-w-xl bg-bg-secondary border border-glass-border rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
       >
         <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-blue-500/60 to-transparent" />
 
-        <div className="flex items-center justify-between px-6 py-5">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-glass-border">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-blue-500/15 border border-blue-500/25 flex items-center justify-center">
-              <FileVideo className="w-4 h-4 text-blue-400" />
+              <Camera className="w-4 h-4 text-blue-400" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-text-primary">New Enrollment Session</h2>
-              <p className="text-[11px] text-text-muted">Step {step} of 2 — {step === 1 ? "Academic Context" : "Upload Videos"}</p>
+              <h2 className="text-sm font-bold text-text-primary">New AI Face Enrollment Session</h2>
+              <p className="text-[11px] text-text-muted">Upload multi-angle classroom footage for automatic identity clustering</p>
             </div>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-lg bg-glass-light hover:bg-glass-medium text-text-muted hover:text-text-primary flex items-center justify-center transition-all">
@@ -450,126 +588,109 @@ function CreateSessionModal({ onClose, onCreated }: { onClose: () => void; onCre
           </button>
         </div>
 
-        <div className="flex px-6 gap-2 mb-5">
-          {[1, 2].map(s => (
-            <div key={s} className={cn("h-0.5 flex-1 rounded-full transition-all duration-500",
-              step >= s ? "bg-blue-500" : "bg-glass-medium")} />
-          ))}
-        </div>
-
         {error && (
-          <div className="mx-6 mb-4 px-4 py-3 rounded-xl bg-red-500/10 border border-red-500/25 text-xs text-red-400 flex items-center gap-2">
+          <div className="mx-6 mt-4 px-3 py-2.5 rounded-xl bg-red-500/10 border border-red-500/25 text-xs text-red-400 flex items-center gap-2">
             <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {error}
           </div>
         )}
 
-        <form onSubmit={handleCreate} className="px-6 pb-6">
-          <AnimatePresence mode="wait">
-            {step === 1 && (
-              <motion.div key="step1" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} className="space-y-4">
-                <div>
-                  <label className={labelCls}>Session Name</label>
-                  <input placeholder="e.g. CSE 7th Sem — Room 408" className={inputCls} {...field("name")} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className={labelCls}>Department</label>
-                    <select className={inputCls} {...field("department")}>
-                      {["CSE","ISE","ECE","EEE","AIML","MECH","CIVIL"].map(d => <option key={d}>{d}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={labelCls}>Program</label>
-                    <select className={inputCls} {...field("program")}>
-                      {["B.Tech","M.Tech","BCA","MCA","MBA"].map(p => <option key={p}>{p}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 gap-3">
-                  <div>
-                    <label className={labelCls}>Semester</label>
-                    <select className={inputCls} {...field("semester")}>
-                      {[1,2,3,4,5,6,7,8].map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={labelCls}>Section</label>
-                    <select className={inputCls} {...field("section")}>
-                      {["A","B","C","D"].map(s => <option key={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className={labelCls}>Subject</label>
-                    <input placeholder="e.g. AI & ML" className={inputCls} {...field("subject")} />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className={labelCls}>Lecture Date</label>
-                    <input type="date" className={inputCls} {...field("lectureDate")} />
-                  </div>
-                  <div>
-                    <label className={labelCls}>Lecture Time</label>
-                    <input type="time" className={inputCls} {...field("lectureTime")} />
-                  </div>
-                </div>
-                <div className="flex justify-end pt-1">
-                  <button type="button" onClick={() => setStep(2)}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)]">
-                    Next — Upload Videos <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </motion.div>
-            )}
+        <form onSubmit={handleSubmit} className="p-6 space-y-4 overflow-y-auto">
+          <div>
+            <label className={labelCls}>Session Title *</label>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g. CSE-6A Classroom Lecture — Morning Session"
+              className={inputCls}
+              required
+            />
+          </div>
 
-            {step === 2 && (
-              <motion.div key="step2" initial={{ opacity: 0, x: 16 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -16 }} className="space-y-4">
-                <input ref={fileRef} type="file" accept=".mp4,.mov,.avi,.mkv" multiple className="hidden"
-                  onChange={e => setVideos(Array.from(e.target.files || []))} />
-                <button type="button" onClick={() => fileRef.current?.click()}
-                  className="w-full border-2 border-dashed border-glass-border hover:border-blue-500/40 bg-glass-light hover:bg-blue-500/5 rounded-xl p-8 text-center transition-all group">
-                  <div className="w-12 h-12 rounded-2xl bg-blue-500/10 border border-blue-500/20 flex items-center justify-center mx-auto mb-3 group-hover:bg-blue-500/20 transition-all">
-                    <Upload className="w-6 h-6 text-blue-400" />
-                  </div>
-                  <p className="text-sm font-semibold text-text-primary mb-1">
-                    {videos.length > 0 ? `${videos.length} video${videos.length > 1 ? "s" : ""} selected` : "Drop classroom videos here"}
-                  </p>
-                  <p className="text-[11px] text-text-muted">MP4, MOV, AVI, MKV · Multiple files supported</p>
-                </button>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Department</label>
+              <input value={dept} onChange={e => setDept(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Program</label>
+              <input value={prog} onChange={e => setProg(e.target.value)} className={inputCls} />
+            </div>
+          </div>
 
-                {videos.length > 0 && (
-                  <div className="space-y-2 max-h-36 overflow-y-auto">
-                    {videos.map((v, i) => (
-                      <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-xl bg-glass-light border border-glass-border">
-                        <Video className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                        <span className="flex-1 text-xs text-text-primary truncate">{v.name}</span>
-                        <span className="text-[10px] font-mono text-text-muted shrink-0">{(v.size / 1024 / 1024).toFixed(1)} MB</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Semester</label>
+              <input value={sem} onChange={e => setSem(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Section</label>
+              <input value={sec} onChange={e => setSec(e.target.value)} className={inputCls} />
+            </div>
+          </div>
 
-                <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/15 flex gap-2.5">
-                  <Zap className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-                  <p className="text-[11px] text-text-muted leading-relaxed">
-                    The AI pipeline processes frames at 1 FPS, runs InsightFace detection, ArcFace embedding, and greedy identity clustering automatically.
-                  </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelCls}>Subject</label>
+              <input value={sub} onChange={e => setSub(e.target.value)} className={inputCls} />
+            </div>
+            <div>
+              <label className={labelCls}>Teacher / Instructor</label>
+              <input value={teach} onChange={e => setTeach(e.target.value)} className={inputCls} />
+            </div>
+          </div>
+
+          {/* Video Upload Area */}
+          <div>
+            <label className={labelCls}>Classroom Video Files (.mp4, .avi, .mkv) *</label>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="video/*"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files) {
+                  setVideoFiles(Array.from(e.target.files));
+                }
+              }}
+            />
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              className="border-2 border-dashed border-glass-border hover:border-blue-500/40 rounded-xl p-6 text-center cursor-pointer transition-all bg-glass-light hover:bg-glass-medium group"
+            >
+              <Upload className="w-8 h-8 mx-auto mb-2 text-text-muted group-hover:text-blue-400 transition-colors" />
+              <p className="text-xs font-semibold text-text-primary">Click to select classroom video files</p>
+              <p className="text-[10px] text-text-muted mt-1">Multi-angle CCTV / Camera recordings supported</p>
+              {videoFiles.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5 justify-center">
+                  {videoFiles.map((f, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20 text-[10px] text-blue-300">
+                      <FileVideo className="w-3 h-3" /> {f.name} ({(f.size / (1024 * 1024)).toFixed(1)} MB)
+                    </span>
+                  ))}
                 </div>
+              )}
+            </div>
+          </div>
 
-                <div className="flex gap-3 pt-1">
-                  <button type="button" onClick={() => setStep(1)}
-                    className="px-5 py-2.5 bg-glass-light hover:bg-glass-medium border border-glass-border text-text-secondary text-sm font-medium rounded-xl transition-all">
-                    ← Back
-                  </button>
-                  <button type="submit" disabled={creating}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)]">
-                    {creating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    {creating ? "Creating…" : "Create Session"}
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <div className="pt-2 flex gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={uploading}
+              className="flex-1 py-2.5 bg-glass-light hover:bg-glass-medium border border-glass-border text-text-secondary text-xs font-semibold rounded-xl transition-all"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={uploading}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-xs font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)]"
+            >
+              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+              {uploading ? "Creating Session..." : "Create Enrollment Session"}
+            </button>
+          </div>
         </form>
       </motion.div>
     </div>
@@ -577,54 +698,101 @@ function CreateSessionModal({ onClose, onCreated }: { onClose: () => void; onCre
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   ASSIGN STUDENT MODAL
+   STUDENT ASSIGNMENT MODAL (Real Database Search + 2-Step Confirmation)
 ═══════════════════════════════════════════════════════════════════ */
 function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: () => void; onDone: (id: string, name: string) => void }) {
-  const [tab, setTab] = useState<"new" | "existing">("new");
-  const [confirmStep, setConfirmStep] = useState(false);
-  const [pendingStudent, setPendingStudent] = useState<{ name: string; usn: string; existingId?: string; form?: any } | null>(null);
-
-  const [form, setForm] = useState({
-    name: "", usn: "", email: "", phone: "", dept: "CSE", sem: "7", section: "A"
-  });
+  const [tab, setTab] = useState<"existing" | "new">("existing");
   const [search, setSearch] = useState("");
-  const [students, setStudents] = useState<any[]>([]);
+  const [students, setStudents] = useState<StudentSearchResult[]>([]);
   const [loadingStudents, setLoadingStudents] = useState(false);
+  const [confirmStep, setConfirmStep] = useState(false);
+  const [pendingStudent, setPendingStudent] = useState<{
+    name: string;
+    usn: string;
+    existingId?: string;
+    department?: string;
+    form?: any;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Form state for creating a new student
+  const [form, setForm] = useState({
+    name: "",
+    usn: "",
+    dept: "Computer Science & Engineering",
+    sem: "6",
+    section: "A",
+    email: "",
+    phone: "",
+  });
+
+  // Debounced search querying real NestJS database endpoint: GET /api/students?search=...
+  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const fetchRealStudents = useCallback(async (query: string) => {
+    setLoadingStudents(true);
+    try {
+      const params = new URLSearchParams({ limit: "25" });
+      if (query.trim()) params.set("search", query.trim());
+
+      const res = await authFetch(`${API_BASE}/students?${params.toString()}`);
+      if (res.ok) {
+        const data = await res.json();
+        let studentList: StudentSearchResult[] = [];
+        if (Array.isArray(data)) {
+          studentList = data;
+        } else if (Array.isArray(data.data)) {
+          studentList = data.data;
+        } else if (Array.isArray(data.data?.data)) {
+          studentList = data.data.data;
+        }
+        setStudents(studentList);
+      }
+    } catch {
+      /* transient fetch error fallback */
+    } finally {
+      setLoadingStudents(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (tab === "existing") {
-      setLoadingStudents(true);
-      authFetch(`${API_BASE}/students`)
-        .then(r => r.json())
-        .then(d => { setStudents(Array.isArray(d) ? d : d.data || []); })
-        .catch(() => {})
-        .finally(() => setLoadingStudents(false));
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = setTimeout(() => {
+        fetchRealStudents(search);
+      }, 250);
     }
-  }, [tab]);
+    return () => {
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
+  }, [search, tab, fetchRealStudents]);
 
-  const filtered = students.filter(s =>
-    !search || s.fullName?.toLowerCase().includes(search.toLowerCase()) || s.usn?.toLowerCase().includes(search.toLowerCase())
-  );
-
-  const inputCls = "w-full bg-glass-light border border-glass-border rounded-xl px-3.5 py-2.5 text-sm text-text-primary focus:outline-none focus:border-emerald-500/50 placeholder:text-text-muted transition-all";
-  const labelCls = "block text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5";
-
-  const handlePrepareNew = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.name || !form.usn) {
-      setError("Please fill in Student Name and USN");
-      return;
-    }
+  const handleSelectExisting = (s: StudentSearchResult) => {
     setError(null);
-    setPendingStudent({ name: form.name, usn: form.usn, form });
+    const usnVal = s.studentId || s.usn || s.rollNumber || "";
+    setPendingStudent({
+      name: s.fullName,
+      usn: usnVal,
+      existingId: s.id,
+      department: typeof s.department === "object" ? s.department?.name : s.department,
+    });
     setConfirmStep(true);
   };
 
-  const handlePrepareExisting = (student: any) => {
+  const handlePrepareNew = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.name.trim() || !form.usn.trim()) {
+      setError("Please provide both Full Name and USN/Student ID");
+      return;
+    }
     setError(null);
-    setPendingStudent({ name: student.fullName, usn: student.usn || student.studentId, existingId: student.id });
+    setPendingStudent({
+      name: form.name.trim(),
+      usn: form.usn.trim(),
+      department: form.dept,
+      form,
+    });
     setConfirmStep(true);
   };
 
@@ -632,54 +800,82 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
     if (!pendingStudent) return;
     setSaving(true);
     setError(null);
+
     try {
-      let body: any = { clusterId: cluster.id };
+      // 1. Call NestJS backend endpoint: POST /api/enrollment/clusters/assign-student
+      const assignPayload: any = {
+        clusterId: cluster.id,
+        usn: pendingStudent.usn,
+        fullName: pendingStudent.name,
+      };
       if (pendingStudent.existingId) {
-        body.existingStudentId = pendingStudent.existingId;
-      } else {
-        body.fullName = pendingStudent.name;
-        body.usn = pendingStudent.usn;
-        body.email = pendingStudent.form?.email;
-        body.phone = pendingStudent.form?.phone;
-        body.department = pendingStudent.form?.dept;
-        body.semester = `${pendingStudent.form?.sem}th Semester`;
-        body.section = `Section ${pendingStudent.form?.section}`;
+        assignPayload.existingStudentId = pendingStudent.existingId;
+      } else if (pendingStudent.form) {
+        assignPayload.email = pendingStudent.form.email;
+        assignPayload.phone = pendingStudent.form.phone;
+        assignPayload.departmentId = pendingStudent.form.dept;
+        assignPayload.semester = `${pendingStudent.form.sem}th Semester`;
+        assignPayload.section = pendingStudent.form.section;
       }
 
       const res = await authFetch(`${API_BASE}/enrollment/clusters/assign-student`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify(assignPayload),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Assignment failed");
+
+      // 2. Call FastAPI AI Service endpoint: POST /api/v1/sessions/{sessionId}/clusters/{clusterId}/assign
+      try {
+        const aiCid = cluster.clusterId || cluster.id;
+        await fetch(`${AI_BASE}/api/v1/sessions/${cluster.sessionId}/clusters/${aiCid}/assign`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            usn: pendingStudent.usn,
+            name: pendingStudent.name,
+            studentId: pendingStudent.existingId,
+          }),
+        });
+      } catch {
+        /* best-effort AI sync */
+      }
+
       onDone(cluster.id, pendingStudent.name);
     } catch (err: any) {
-      setError(err.message || "Failed to assign student");
+      setError(err.message || "Failed to assign student identity");
       setConfirmStep(false);
     } finally {
       setSaving(false);
     }
   };
 
+  const isReassignment = cluster.identity_status === "CONFIRMED" || cluster.status === "ASSIGNED";
+  const currentAssignedName = cluster.assignedStudentName || cluster.assignedStudent?.name;
+
+  const inputCls = "w-full bg-glass-light border border-glass-border rounded-xl px-3.5 py-2.5 text-xs text-text-primary focus:outline-none focus:border-emerald-500/50 placeholder:text-text-muted transition-all";
+  const labelCls = "block text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
-      <motion.div className="absolute inset-0 bg-bg-primary/75 backdrop-blur-xl" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
+      <motion.div className="absolute inset-0 bg-bg-primary/80 backdrop-blur-xl" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
       <motion.div
         initial={{ opacity: 0, y: 24, scale: 0.97 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, y: 24, scale: 0.97 }}
         transition={{ type: "spring", stiffness: 340, damping: 28 }}
-        className="relative w-full max-w-lg bg-bg-secondary border border-glass-border rounded-2xl shadow-glow-purple overflow-hidden"
+        className="relative w-full max-w-lg bg-bg-secondary border border-glass-border rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
       >
         <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-emerald-500/60 to-transparent" />
 
-        <div className="flex items-center justify-between px-6 py-5">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-glass-border shrink-0">
           <div className="flex items-center gap-3">
             <ClusterFace cluster={cluster} size={40} />
             <div>
-              <h2 className="text-sm font-bold text-text-primary">Assign Student</h2>
-              <p className="text-[11px] text-text-muted">Cluster #{cluster.clusterNumber} · {cluster.sampleCount.toLocaleString()} detections · {Math.round(cluster.confidence * 100)}% consistency</p>
+              <h2 className="text-sm font-bold text-text-primary">Assign Student Identity</h2>
+              <p className="text-[11px] text-text-muted">
+                {cluster.clusterId || `Cluster #${cluster.clusterNumber}`} · {cluster.sampleCount} face crops · {Math.round(cluster.qualityAvg > 1 ? cluster.qualityAvg : cluster.qualityAvg * 100)}% quality
+              </p>
             </div>
           </div>
           <button onClick={onClose} className="w-8 h-8 rounded-lg bg-glass-light hover:bg-glass-medium text-text-muted hover:text-text-primary flex items-center justify-center transition-all">
@@ -688,46 +884,249 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
         </div>
 
         {error && (
-          <div className="mx-6 mb-3 px-3 py-2.5 rounded-xl bg-red-500/10 border border-red-500/25 text-xs text-red-400 flex items-center gap-2">
+          <div className="mx-6 mt-3 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/25 text-xs text-red-400 flex items-center gap-2 shrink-0">
             <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {error}
           </div>
         )}
 
-        <div className="px-6 pb-6 space-y-4">
-          <AnimatePresence mode="wait">
-            {tab === "existing" && (
-              <motion.div key="existing" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} className="space-y-3">
-                <div className="relative">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-                  <input value={search} onChange={e => setSearch(e.target.value)}
-                    placeholder="Search by name or USN…" className={cn(inputCls, "pl-10")} />
-                </div>
-                <div className="space-y-2 max-h-52 overflow-y-auto">
-                  {loadingStudents && (
-                    <div className="text-center py-6 text-text-muted text-xs flex items-center justify-center gap-2">
-                      <Loader2 className="w-4 h-4 animate-spin" /> Loading students…
+        {/* Reassignment Warning */}
+        {isReassignment && currentAssignedName && !confirmStep && (
+          <div className="mx-6 mt-3 px-3.5 py-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 flex items-start gap-2.5 shrink-0">
+            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold text-amber-200">Reassignment Notice:</span> This cluster is currently assigned to <strong className="text-white">{currentAssignedName}</strong>. Selecting a different student will update the verified identity.
+            </div>
+          </div>
+        )}
+
+        <div className="p-6 overflow-y-auto flex-1">
+          {confirmStep && pendingStudent ? (
+            /* ── Step 2: 2-Step Confirmation Review ── */
+            <div className="space-y-4 text-center">
+              <div className="p-4 rounded-xl bg-glass-light border border-glass-border space-y-3">
+                <p className="text-[11px] text-text-muted uppercase tracking-wider font-semibold">Review & Confirm Assignment</p>
+                <p className="text-xs text-text-secondary">
+                  Link face biometric cluster <span className="font-mono text-blue-400 font-bold">{cluster.clusterId || `Cluster #${cluster.clusterNumber}`}</span> ({cluster.sampleCount} quality samples) to:
+                </p>
+                <div className="py-3 px-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-left">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-bold text-emerald-400">{pendingStudent.name}</p>
+                      <p className="text-xs font-mono text-text-muted mt-0.5">USN: {pendingStudent.usn}</p>
+                      {pendingStudent.department && (
+                        <p className="text-[11px] text-text-muted mt-0.5">{pendingStudent.department}</p>
+                      )}
                     </div>
-                  )}
-                  {!loadingStudents && filtered.map(s => (
-                    <button key={s.id} type="button" onClick={() => handlePrepareExisting(s)} disabled={saving}
-                      className="w-full flex items-center gap-3 p-3 rounded-xl bg-glass-light border border-glass-border hover:bg-emerald-500/8 hover:border-emerald-500/30 text-left transition-all group disabled:opacity-60">
-                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
-                        {(s.fullName || "?")[0]}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-semibold text-text-primary">{s.fullName}</p>
-                        <p className="text-[11px] text-text-muted">{s.usn} · {s.department}</p>
-                      </div>
-                      <ChevronRight className="w-4 h-4 text-text-muted group-hover:text-emerald-400 transition-colors shrink-0" />
-                    </button>
-                  ))}
-                  {!loadingStudents && filtered.length === 0 && (
-                    <div className="text-center py-8 text-text-muted text-sm">No students found</div>
-                  )}
+                    <CheckCircle2 className="w-6 h-6 text-emerald-400" />
+                  </div>
                 </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmStep(false)}
+                  disabled={saving}
+                  className="flex-1 py-2.5 bg-glass-light hover:bg-glass-medium border border-glass-border text-text-secondary text-xs font-semibold rounded-xl transition-all"
+                >
+                  Back to Search
+                </button>
+                <button
+                  type="button"
+                  onClick={executeAssignment}
+                  disabled={saving}
+                  className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+                >
+                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  {saving ? "Confirming..." : "Confirm & Save Assignment"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            /* ── Step 1: Student Search & Selection ── */
+            <div className="space-y-4">
+              {/* Tab Selector */}
+              <div className="flex rounded-xl bg-glass-light border border-glass-border p-1">
+                <button
+                  type="button"
+                  onClick={() => setTab("existing")}
+                  className={cn(
+                    "flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all",
+                    tab === "existing" ? "bg-emerald-500/20 text-emerald-400 shadow-sm" : "text-text-muted hover:text-text-primary"
+                  )}
+                >
+                  Database Student Autocomplete
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTab("new")}
+                  className={cn(
+                    "flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all",
+                    tab === "new" ? "bg-emerald-500/20 text-emerald-400 shadow-sm" : "text-text-muted hover:text-text-primary"
+                  )}
+                >
+                  Create New Student
+                </button>
+              </div>
+
+              {tab === "existing" ? (
+                <div className="space-y-3">
+                  <div className="relative">
+                    <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                    <input
+                      type="text"
+                      value={search}
+                      onChange={e => setSearch(e.target.value)}
+                      placeholder="Type student name, USN (e.g. 1VI23CS058), roll number..."
+                      className="w-full bg-glass-light border border-glass-border rounded-xl pl-10 pr-4 py-2.5 text-xs text-text-primary focus:outline-none focus:border-emerald-500/50 placeholder:text-text-muted transition-all"
+                      autoFocus
+                    />
+                    {loadingStudents && (
+                      <Loader2 className="absolute right-3.5 top-1/2 -translate-y-1/2 w-4 h-4 animate-spin text-emerald-400" />
+                    )}
+                  </div>
+
+                  <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                    {students.map((s) => {
+                      const usnVal = s.studentId || s.usn || s.rollNumber || "—";
+                      const deptName = typeof s.department === "object" ? s.department?.name || s.department?.code : s.department;
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => handleSelectExisting(s)}
+                          className="flex items-center justify-between p-2.5 rounded-xl bg-glass-light hover:bg-emerald-500/10 border border-glass-border hover:border-emerald-500/30 transition-all cursor-pointer group"
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-8 h-8 rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-xs font-bold text-emerald-400 shrink-0">
+                              {s.fullName.slice(0, 2).toUpperCase()}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-text-primary group-hover:text-emerald-300 truncate">{s.fullName}</p>
+                              <p className="text-[10px] font-mono text-text-muted">{usnVal} {deptName ? `· ${deptName}` : ""}</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {s.faceEnrolled && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                Enrolled
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              className="px-2.5 py-1 rounded-lg bg-emerald-600/80 group-hover:bg-emerald-500 text-white text-[11px] font-semibold transition-all shadow-sm"
+                            >
+                              Select
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {!loadingStudents && students.length === 0 && (
+                      <div className="text-center py-8 text-text-muted text-xs">
+                        <Users className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                        <p>No matching students found.</p>
+                        <p className="text-[10px] mt-1">Try another search query or switch to "Create New Student".</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handlePrepareNew} className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>Full Name *</label>
+                      <input
+                        value={form.name}
+                        onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                        placeholder="e.g. Manjunatha R"
+                        className={inputCls}
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls}>USN / Student ID *</label>
+                      <input
+                        value={form.usn}
+                        onChange={e => setForm(f => ({ ...f, usn: e.target.value }))}
+                        placeholder="e.g. 1VI23CS058"
+                        className={inputCls}
+                        required
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className={labelCls}>Department</label>
+                      <select
+                        value={form.dept}
+                        onChange={e => setForm(f => ({ ...f, dept: e.target.value }))}
+                        className={inputCls}
+                      >
+                        {["Computer Science & Engineering", "Information Science", "Electronics & Comm.", "Mechanical", "Civil", "AI & ML"].map(d => (
+                          <option key={d} value={d} className="bg-bg-secondary text-text-primary">{d}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Semester</label>
+                      <select
+                        value={form.sem}
+                        onChange={e => setForm(f => ({ ...f, sem: e.target.value }))}
+                        className={inputCls}
+                      >
+                        {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                          <option key={s} value={String(s)} className="bg-bg-secondary text-text-primary">{s}th Sem</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className={labelCls}>Section</label>
+                      <select
+                        value={form.section}
+                        onChange={e => setForm(f => ({ ...f, section: e.target.value }))}
+                        className={inputCls}
+                      >
+                        {["A", "B", "C", "D"].map(s => (
+                          <option key={s} value={s} className="bg-bg-secondary text-text-primary">Section {s}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={labelCls}>Email (Optional)</label>
+                      <input
+                        type="email"
+                        value={form.email}
+                        onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                        placeholder="student@college.edu"
+                        className={inputCls}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Phone (Optional)</label>
+                      <input
+                        value={form.phone}
+                        onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+                        placeholder="+91 9876543210"
+                        className={inputCls}
+                      />
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full flex items-center justify-center gap-2 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)] mt-2"
+                  >
+                    Continue to Confirmation <ChevronRight className="w-4 h-4" />
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
         </div>
       </motion.div>
     </div>
@@ -735,15 +1134,202 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   GALLERY MODAL
+   EXPLICIT FAISS ENROLLMENT MODAL (2-Step Safety Verification)
 ═══════════════════════════════════════════════════════════════════ */
-function GalleryModal({ cluster, onClose }: { cluster: Cluster; onClose: () => void }) {
+function EnrollModal({ cluster, activeSessionId, onClose, onEnrolled }: { cluster: Cluster; activeSessionId?: string | null; onClose: () => void; onEnrolled: (cid: string) => void }) {
+  const [enrolling, setEnrolling] = useState(false);
+  const [enrolledSuccess, setEnrolledSuccess] = useState(false);
+  const [addedCount, setAddedCount] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const studentName = cluster.assignedStudentName || cluster.assignedStudent?.name || cluster.assignedStudent?.studentId || "Student";
+  const studentUsn = cluster.assignedUsn || cluster.assignedStudent?.usn || (cluster as any).usn || (cluster.assignedStudent as any)?.studentId || "";
+  const sId = cluster.sessionId || (cluster as any).enrollmentSessionId || activeSessionId || "408";
+
+  const handleEnroll = async () => {
+    setEnrolling(true);
+    setError(null);
+    try {
+      const targetSid = sId || cluster.sessionId || (cluster as any).enrollmentSessionId || activeSessionId || "408";
+      const clusterKey = cluster.clusterId || cluster.id;
+      const targetUsn = (studentUsn && studentUsn !== "USN") ? studentUsn : (cluster.assignedUsn || cluster.assignedStudent?.usn || (cluster as any).usn || studentName);
+
+      if (!targetUsn || targetUsn === "USN") {
+        throw new Error("Cannot enroll: Student identity must be assigned to this cluster first.");
+      }
+
+      // 1. Register 512D ArcFace vectors into FAISS via AI service
+      const res = await fetch(`${AI_BASE}/api/v1/sessions/${targetSid}/enroll-cluster`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          usn: targetUsn,
+          clusterId: clusterKey,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.message || "Enrollment in FAISS failed");
+
+      const count = data.addedVectors || cluster.sampleCount || 1;
+      const photoPath = cluster.bestImagePath || cluster.bestImageUrl || (cluster.gallery && cluster.gallery[0]) || null;
+
+      // 2. Direct Sync into Postgres Student Record
+      try {
+        await authFetch(`${API_BASE}/students/sync-enrollment`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            usn: targetUsn,
+            studentId: cluster.assignedStudent?.studentId || (cluster as any).student_id,
+            faceSamples: count,
+            profilePhoto: photoPath,
+          }),
+        });
+      } catch (dbErr) {
+        console.warn("Direct student sync fallback error:", dbErr);
+      }
+
+      // 3. Direct Sync of Session Clusters in Postgres
+      try {
+        await authFetch(`${API_BASE}/enrollment/sessions/${targetSid}/sync-clusters`, {
+          method: "POST",
+        });
+      } catch (syncErr) {
+        console.warn("Session cluster sync error:", syncErr);
+      }
+
+      setAddedCount(count);
+      setEnrolledSuccess(true);
+      onEnrolled(cluster.id);
+    } catch (err: any) {
+      setError(err.message || "Failed to enroll cluster vectors into FAISS database");
+    } finally {
+      setEnrolling(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+      <motion.div className="absolute inset-0 bg-bg-primary/80 backdrop-blur-xl" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
+      <motion.div
+        initial={{ opacity: 0, y: 24, scale: 0.97 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 24, scale: 0.97 }}
+        transition={{ type: "spring", stiffness: 340, damping: 28 }}
+        className="relative w-full max-w-md bg-bg-secondary border border-purple-500/40 rounded-2xl shadow-[0_0_50px_rgba(168,85,247,0.25)] overflow-hidden"
+      >
+        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-purple-500/80 to-transparent" />
+
+        <div className="flex items-center justify-between px-6 py-4 border-b border-glass-border">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/40 flex items-center justify-center">
+              <Fingerprint className="w-4 h-4 text-purple-400" />
+            </div>
+            <div>
+              <h2 className="text-sm font-bold text-text-primary">FAISS Vector Index Registration</h2>
+              <p className="text-[10px] text-text-muted">{cluster.clusterId || `Cluster #${cluster.clusterNumber}`}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-glass-light hover:bg-glass-medium text-text-muted hover:text-text-primary flex items-center justify-center transition-all">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {error && (
+          <div className="mx-6 mt-4 px-3 py-2 rounded-xl bg-red-500/10 border border-red-500/25 text-xs text-red-400 flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {error}
+          </div>
+        )}
+
+        {enrolledSuccess ? (
+          <div className="p-6 space-y-4 text-center">
+            <div className="w-16 h-16 mx-auto rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400">
+              <CheckCircle2 className="w-8 h-8" />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-emerald-400">Successfully Enrolled in FAISS!</h3>
+              <p className="text-xs text-text-muted mt-1">
+                {addedCount} ArcFace 512D facial embedding vectors registered into FAISS database for <strong>{studentName}</strong> (<code>{studentUsn}</code>).
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.4)]"
+            >
+              Done
+            </button>
+          </div>
+        ) : (
+          <div className="p-6 space-y-4 text-center">
+            <div className="flex justify-center">
+              <ClusterFace cluster={cluster} size={80} />
+            </div>
+
+            <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20 text-left space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-text-muted uppercase font-semibold">Student Identity</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">CONFIRMED</span>
+              </div>
+              <p className="text-sm font-bold text-text-primary">{studentName}</p>
+              <p className="text-xs font-mono text-purple-300">USN: {studentUsn}</p>
+              <div className="border-t border-purple-500/20 pt-2 text-[11px] text-text-muted flex justify-between">
+                <span>High-Quality 512D ArcFace Vectors:</span>
+                <span className="font-mono text-purple-300 font-bold">{cluster.sampleCount} vectors</span>
+              </div>
+            </div>
+
+            <p className="text-xs text-text-muted leading-relaxed text-left">
+              This will register the verified ArcFace 512D facial embedding vectors into the production FAISS database for automatic classroom attendance recognition.
+            </p>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={enrolling}
+                className="flex-1 py-2.5 bg-glass-light hover:bg-glass-medium border border-glass-border text-text-secondary text-xs font-semibold rounded-xl transition-all"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleEnroll}
+                disabled={enrolling}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-60 text-white text-xs font-semibold rounded-xl transition-all shadow-[0_0_25px_rgba(168,85,247,0.4)]"
+              >
+                {enrolling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Fingerprint className="w-4 h-4" />}
+                {enrolling ? "Enrolling Vectors..." : "Enroll Face Data"}
+              </button>
+            </div>
+          </div>
+        )}
+      </motion.div>
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   CLUSTER DETAILS / GALLERY MODAL
+═══════════════════════════════════════════════════════════════════ */
+function ClusterDetailsModal({ cluster, onClose, onDelete }: { cluster: Cluster; onClose: () => void; onDelete?: (c: Cluster) => void }) {
   const [active, setActive] = useState(0);
-  const img = cluster.images[active];
+  const images = cluster.images.length > 0 ? cluster.images : (cluster.gallery || []).map((g, i) => ({
+    id: `${cluster.id}-g-${i}`,
+    frameNumber: i,
+    videoFileName: "classroom.mp4",
+    timestampSec: i * 2,
+    qualityScore: 0.88,
+    isBest: i === 0,
+    imageUrl: resolveCropUrl(g),
+  }));
+  const activeImg = images[active];
   const [imgFailed, setImgFailed] = useState(false);
 
-  // Reset imgFailed when switching images
   useEffect(() => { setImgFailed(false); }, [active]);
+
+  const studentName = cluster.assignedStudentName || cluster.assignedStudent?.name;
+  const studentUsn = cluster.assignedUsn || cluster.assignedStudent?.usn;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
@@ -755,115 +1341,136 @@ function GalleryModal({ cluster, onClose }: { cluster: Cluster; onClose: () => v
         transition={{ type: "spring", stiffness: 300, damping: 28 }}
         className="relative w-full max-w-5xl h-[82vh] bg-bg-secondary border border-glass-border rounded-2xl shadow-2xl overflow-hidden flex flex-col"
       >
-        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-purple-500/60 to-transparent" />
+        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-blue-500/60 to-transparent" />
 
         <div className="flex items-center justify-between px-6 py-4 border-b border-glass-border shrink-0">
           <div className="flex items-center gap-3">
             <ClusterFace cluster={cluster} size={38} />
             <div>
-              <h2 className="text-sm font-bold text-text-primary">Cluster #{cluster.clusterNumber} — Biometric Gallery</h2>
-              <p className="text-[11px] text-text-muted">{cluster.images.length} captured frames · {cluster.sampleCount.toLocaleString()} total detections · {Math.round(cluster.confidence * 100)}% identity confidence</p>
+              <h2 className="text-sm font-bold text-text-primary">
+                {cluster.clusterId || `Cluster #${cluster.clusterNumber}`} — Identity Details &amp; Crops
+              </h2>
+              <p className="text-[11px] text-text-muted">
+                {images.length} quality crops · {cluster.sampleCount} detections · {Math.round((cluster.qualityAvg > 1 ? cluster.qualityAvg : cluster.qualityAvg * 100))}% avg quality
+              </p>
             </div>
           </div>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-glass-light hover:bg-glass-medium text-text-muted hover:text-text-primary flex items-center justify-center transition-all">
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onDelete && (
+              <button
+                onClick={() => {
+                  onDelete(cluster);
+                  onClose();
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-semibold transition-all cursor-pointer"
+                title="Delete this cluster"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Delete Cluster</span>
+              </button>
+            )}
+            <button onClick={onClose} className="w-8 h-8 rounded-lg bg-glass-light hover:bg-glass-medium text-text-muted hover:text-text-primary flex items-center justify-center transition-all cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         <div className="flex flex-1 overflow-hidden">
-          {/* Main Viewer */}
+          {/* Main Face Preview */}
           <div className="flex-1 flex flex-col items-center justify-center bg-bg-primary/40 relative p-8">
             <div className="relative">
-              <div className="w-52 h-52 rounded-2xl bg-gradient-to-br from-purple-900/40 to-blue-900/40 border border-glass-border flex items-center justify-center relative overflow-hidden shadow-2xl">
-                {img?.imageUrl && !imgFailed ? (
+              <div className="w-56 h-56 rounded-2xl bg-gradient-to-br from-blue-900/30 to-purple-900/30 border border-glass-border flex items-center justify-center relative overflow-hidden shadow-2xl">
+                {activeImg?.imageUrl && !imgFailed ? (
                   <img
-                    src={img.imageUrl}
-                    alt={`Frame #${img.frameNumber}`}
+                    src={activeImg.imageUrl}
+                    alt={`Crop #${activeImg.frameNumber}`}
                     onError={() => setImgFailed(true)}
                     className="w-full h-full object-cover"
                   />
                 ) : (
-                  <>
-                    <FaceAvatar id={`${cluster.id}-${active}`} size={160} />
-                    <div className="absolute inset-0 bg-gradient-to-b from-transparent via-purple-500/10 to-transparent animate-[slideDown_2s_ease-in-out_infinite]" />
-                  </>
+                  <FaceAvatar id={`${cluster.clusterId || cluster.id}-${active}`} size={160} />
                 )}
-                {img?.isBest && (
+                {activeImg?.isBest && (
                   <div className="absolute top-2.5 right-2.5 flex items-center gap-1 bg-yellow-500/20 border border-yellow-500/40 rounded-full px-2 py-1">
                     <Star className="w-3 h-3 text-yellow-400" fill="currentColor" />
-                    <span className="text-[9px] text-yellow-400 font-bold">BEST FRAME</span>
+                    <span className="text-[9px] text-yellow-400 font-bold">REPRESENTATIVE MEDOID</span>
                   </div>
                 )}
               </div>
               <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-bg-tertiary border border-glass-border rounded-full px-3 py-1 flex items-center gap-2">
-                <div className={cn("w-1.5 h-1.5 rounded-full", (img?.qualityScore || 0) >= 0.9 ? "bg-emerald-400" : "bg-yellow-400")} />
-                <span className="text-[10px] font-mono text-text-primary">{Math.round((img?.qualityScore || 0) * 100)}% quality</span>
+                <div className={cn("w-1.5 h-1.5 rounded-full", (activeImg?.qualityScore || 0.85) >= 0.85 ? "bg-emerald-400" : "bg-yellow-400")} />
+                <span className="text-[10px] font-mono text-text-primary">
+                  {Math.round((activeImg?.qualityScore || 0.85) > 1 ? (activeImg?.qualityScore || 85) : (activeImg?.qualityScore || 0.85) * 100)}% quality
+                </span>
               </div>
             </div>
 
-            <div className="mt-8 grid grid-cols-3 gap-3 w-full max-w-sm">
+            <div className="mt-8 grid grid-cols-3 gap-3 w-full max-w-md">
               {[
-                { label: "Frame #", value: `${img?.frameNumber ?? "—"}` },
-                { label: "Source", value: img?.videoFileName ? img.videoFileName.replace(/\.[^.]+$/, "").slice(-12) : "—" },
-                { label: "Timestamp", value: img?.timestampSec ? `${Math.floor(img.timestampSec / 60)}m ${Math.round(img.timestampSec % 60)}s` : "—" },
+                { label: "Sample #", value: `${active + 1} of ${images.length}` },
+                { label: "Track ID", value: `Track #${cluster.trackCount}` },
+                { label: "Consistency", value: `${Math.round(cluster.confidence * 100)}%` },
               ].map(({ label, value }) => (
                 <div key={label} className="text-center p-2.5 rounded-xl bg-glass-light border border-glass-border">
-                  <p className="text-[11px] font-semibold text-text-primary">{value}</p>
+                  <p className="text-xs font-semibold text-text-primary">{value}</p>
                   <p className="text-[9px] text-text-muted mt-0.5 uppercase tracking-wider">{label}</p>
                 </div>
               ))}
             </div>
 
-            <div className="mt-5 flex items-center gap-2">
-              <button className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-500/10 border border-yellow-500/20 hover:bg-yellow-500/20 text-yellow-400 rounded-lg text-xs font-medium transition-all">
-                <Star className="w-3.5 h-3.5" />Set as Best
-              </button>
-              <button className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 text-red-400 rounded-lg text-xs font-medium transition-all">
-                <Trash2 className="w-3.5 h-3.5" />Remove
-              </button>
-            </div>
+            {studentName && (
+              <div className="mt-4 px-4 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-center">
+                <p className="text-xs font-bold text-emerald-400">{studentName}</p>
+                <p className="text-[10px] font-mono text-text-muted mt-0.5">{studentUsn}</p>
+              </div>
+            )}
           </div>
 
-          {/* Filmstrip */}
-          <div className="w-56 border-l border-glass-border flex flex-col bg-bg-primary/20 shrink-0">
+          {/* Gallery Filmstrip */}
+          <div className="w-64 border-l border-glass-border flex flex-col bg-bg-primary/20 shrink-0">
             <div className="px-4 py-3 border-b border-glass-border shrink-0">
-              <p className="text-[10px] text-text-muted uppercase tracking-wider font-semibold">Captured Frames</p>
-              <p className="text-[9px] text-text-muted mt-0.5">{cluster.images.length} images</p>
+              <p className="text-[10px] text-text-muted uppercase tracking-wider font-semibold">Captured Face Samples</p>
+              <p className="text-[9px] text-text-muted mt-0.5">{images.length} representative crops</p>
             </div>
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
-              {cluster.images.length === 0 && (
-                <p className="text-xs text-text-muted text-center mt-4">No images saved</p>
+              {images.length === 0 && (
+                <p className="text-xs text-text-muted text-center mt-4">No crops stored</p>
               )}
-              {cluster.images.map((im, i) => (
-                <button key={im.id} onClick={() => setActive(i)}
+              {images.map((im, i) => (
+                <button
+                  key={im.id || i}
+                  onClick={() => setActive(i)}
                   className={cn(
                     "w-full flex items-center gap-2.5 p-2 rounded-xl border transition-all text-left",
-                    active === i ? "bg-purple-500/15 border-purple-500/40" : "bg-glass-light border-glass-border hover:bg-glass-light"
+                    active === i ? "bg-blue-500/15 border-blue-500/40 shadow-sm" : "bg-glass-light border-glass-border hover:bg-glass-medium"
+                  )}
+                >
+                  <div className={cn(
+                    "w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border overflow-hidden",
+                    active === i ? "bg-blue-500/20 border-blue-500/30" : "bg-glass-light border-glass-border"
                   )}>
-                  <div className={cn("w-9 h-9 rounded-lg flex items-center justify-center shrink-0 border overflow-hidden",
-                    active === i ? "bg-purple-500/20 border-purple-500/30" : "bg-glass-light border-glass-border")}>
                     {im.imageUrl ? (
                       <img src={im.imageUrl} alt="" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                     ) : (
-                      <ScanFace className={cn("w-4 h-4", active === i ? "text-purple-400" : "text-text-muted")} />
+                      <ScanFace className={cn("w-4 h-4", active === i ? "text-blue-400" : "text-text-muted")} />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="text-[11px] font-medium text-text-primary">Frame #{im.frameNumber}</p>
-                    <p className="text-[9px] text-text-muted truncate">{im.videoFileName || "—"}</p>
+                    <p className="text-xs font-medium text-text-primary truncate">Crop #{i + 1}</p>
+                    <p className="text-[9px] font-mono text-text-muted">
+                      {Math.round((im.qualityScore || 0.85) > 1 ? im.qualityScore : (im.qualityScore || 0.85) * 100)}% quality
+                    </p>
                   </div>
-                  {im.isBest && <Star className="w-3 h-3 text-yellow-400 shrink-0" fill="currentColor" />}
+                  {im.isBest && <Star className="w-3.5 h-3.5 text-yellow-400 shrink-0" fill="currentColor" />}
                 </button>
               ))}
             </div>
 
-            <div className="p-4 border-t border-glass-border space-y-2.5 shrink-0">
-              <p className="text-[10px] text-text-muted uppercase tracking-wider font-semibold mb-2">Identity Timeline</p>
-              <div className="space-y-1.5 font-mono text-[10px]">
-                <div className="flex justify-between"><span className="text-text-muted">First Seen</span><span className="text-text-primary">{cluster.firstSeenTime}</span></div>
-                <div className="flex justify-between"><span className="text-text-muted">Last Seen</span><span className="text-text-primary">{cluster.lastSeenTime}</span></div>
-                <div className="flex justify-between"><span className="text-text-muted">Detections</span><span className="text-blue-400">{cluster.sampleCount.toLocaleString()}</span></div>
-              </div>
+            <div className="p-4 border-t border-glass-border space-y-2 shrink-0 font-mono text-[10px]">
+              <div className="flex justify-between"><span className="text-text-muted">First Seen:</span><span className="text-text-primary">{cluster.firstSeenTime}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">Last Seen:</span><span className="text-text-primary">{cluster.lastSeenTime}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">Tracks:</span><span className="text-blue-400">{cluster.trackCount}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">Detections:</span><span className="text-emerald-400">{cluster.sampleCount}</span></div>
             </div>
           </div>
         </div>
@@ -875,113 +1482,304 @@ function GalleryModal({ cluster, onClose }: { cluster: Cluster; onClose: () => v
 /* ═══════════════════════════════════════════════════════════════════
    CLUSTER CARD
 ═══════════════════════════════════════════════════════════════════ */
-function ClusterCard({ c, onAssign, onReject, onGallery }: {
+function ClusterCard({
+  c,
+  onAssign,
+  onConfirmCandidate,
+  onReject,
+  onEnroll,
+  onDetails,
+  onDelete,
+}: {
   c: Cluster;
   onAssign: (c: Cluster) => void;
+  onConfirmCandidate: (c: Cluster) => void;
   onReject: (id: string) => void;
-  onGallery: (c: Cluster) => void;
+  onEnroll: (c: Cluster) => void;
+  onDetails: (c: Cluster) => void;
+  onDelete: (c: Cluster) => void;
 }) {
-  const sm = STATUS_META[c.status];
-  const q = c.qualityAvg;
+  const isCandidate = c.identity_status === "CANDIDATE";
+  const isConfirmed = c.identity_status === "CONFIRMED" || c.status === "ASSIGNED";
+  const isRejected = c.identity_status === "REJECTED" || c.status === "REJECTED";
+  const isUnknown = !isCandidate && !isConfirmed && !isRejected;
+
+  const sm = STATUS_META[c.identity_status] || STATUS_META[c.status] || STATUS_META.UNKNOWN;
+  const q = c.qualityAvg > 1 ? c.qualityAvg / 100 : c.qualityAvg;
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       whileHover={{ y: -2 }}
       transition={{ type: "spring", stiffness: 300, damping: 25 }}
       className={cn(
-        "relative rounded-2xl border overflow-hidden transition-all duration-200 group",
-        c.status === "ASSIGNED" ? "border-emerald-500/25 bg-emerald-500/5" :
-        c.status === "REJECTED" ? "border-red-500/20 bg-red-500/5 opacity-60" :
+        "relative rounded-2xl border overflow-hidden transition-all duration-200 group flex flex-col justify-between",
+        isConfirmed ? "border-emerald-500/30 bg-emerald-500/5 shadow-[0_0_20px_rgba(16,185,129,0.08)]" :
+        isCandidate ? "border-amber-500/30 bg-amber-500/5 shadow-[0_0_20px_rgba(245,158,11,0.08)]" :
+        isRejected ? "border-red-500/20 bg-red-500/5 opacity-60" :
         "border-glass-border bg-glass-light hover:border-blue-500/30 hover:bg-blue-500/5"
       )}
     >
       <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-transparent to-transparent group-hover:via-blue-500/40 transition-all duration-500" />
 
-      <div className="flex flex-col items-center gap-3 pt-5 pb-4 px-4 relative">
-        <div className={cn("absolute top-3 right-3 flex items-center gap-1.5 px-2 py-1 rounded-full border text-[9px] font-bold uppercase tracking-wider", sm.badge)}>
-          <div className={cn("w-1.5 h-1.5 rounded-full", sm.dot)} />
-          {sm.label}
-        </div>
-
-        <div className="relative">
-          <ClusterFace cluster={c} size={72} />
-          <div className="absolute -bottom-1 -right-1">
-            <QualityRing score={q} size={32} />
+      {/* Header with Cluster ID & Status Badge */}
+      <div className="pt-4 px-4 pb-2">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div className="flex flex-col">
+            <span className="font-mono text-xs font-bold text-text-primary">
+              {c.clusterId || `Cluster #${c.clusterNumber}`}
+            </span>
+            <span className="text-[10px] font-medium text-text-muted">Identity Candidate</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <div className={cn("flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase tracking-wider", sm.badge)}>
+              <div className={cn("w-1.5 h-1.5 rounded-full", sm.dot)} />
+              {isCandidate && c.candidateMatch ? `${Math.round(c.candidateMatch.similarity * 100)}% MATCH` : sm.label}
+            </div>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(c);
+              }}
+              className="p-1 rounded-lg bg-glass-light hover:bg-red-500/20 text-text-muted hover:text-red-400 transition-colors cursor-pointer"
+              title="Delete this cluster"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
           </div>
         </div>
 
-        <div className="text-center">
-          {c.assignedStudentName ? (
-            <>
-              <p className="text-sm font-bold text-emerald-400">{c.assignedStudentName}</p>
-              <p className="text-[10px] text-text-muted">Cluster #{c.clusterNumber}</p>
-            </>
-          ) : (
-            <>
-              <p className="text-sm font-bold text-text-primary">Cluster #{c.clusterNumber}</p>
-              <p className="text-[10px] text-text-muted">Unidentified Student</p>
-            </>
+        {/* Central Face Crop & Quality Ring */}
+        <div className="flex flex-col items-center gap-2.5 my-2">
+          <div className="relative">
+            <ClusterFace cluster={c} size={68} />
+            <div className="absolute -bottom-1 -right-1">
+              <QualityRing score={q} size={30} />
+            </div>
+          </div>
+
+          {/* Mini face crops thumbnail row */}
+          {c.gallery && Array.isArray(c.gallery) && c.gallery.length > 1 && (
+            <div className="flex items-center gap-1 mt-0.5">
+              {c.gallery.slice(1, 4).map((gItem, i) => {
+                const srcUrl = resolveCropUrl(gItem);
+                if (!srcUrl) return null;
+                return (
+                  <img
+                    key={i}
+                    src={srcUrl}
+                    alt=""
+                    className="w-6 h-6 rounded-md object-cover border border-glass-border opacity-70 hover:opacity-100 transition-opacity"
+                    onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                  />
+                );
+              })}
+              {c.gallery.length > 4 && (
+                <span className="text-[9px] font-mono text-text-muted px-1">+{c.gallery.length - 4}</span>
+              )}
+            </div>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-3 divide-x divide-glass-border border-y border-glass-border text-center">
-        {[
-          { label: "Faces", value: c.sampleCount >= 1000 ? `${(c.sampleCount / 1000).toFixed(1)}k` : c.sampleCount, color: "text-blue-400" },
-          { label: "Quality", value: `${Math.round(q * 100)}%`, color: q >= 0.9 ? "text-emerald-400" : q >= 0.75 ? "text-yellow-400" : "text-red-400" },
-          { label: "Conf.", value: `${Math.round(c.confidence * 100)}%`, color: "text-purple-400" },
-        ].map(({ label, value, color }) => (
-          <div key={label} className="py-2.5">
-            <p className={cn("text-xs font-bold", color)}>{value}</p>
-            <p className="text-[9px] text-text-muted uppercase tracking-wider">{label}</p>
-          </div>
-        ))}
+      {/* Biometric Metadata Stats Row */}
+      <div className="grid grid-cols-3 divide-x divide-glass-border border-y border-glass-border text-center bg-black/10">
+        <div className="py-2">
+          <p className="text-xs font-bold text-blue-400">{c.sampleCount}</p>
+          <p className="text-[9px] text-text-muted uppercase tracking-wider">Samples</p>
+        </div>
+        <div className="py-2">
+          <p className="text-xs font-bold text-yellow-400">{c.trackCount}</p>
+          <p className="text-[9px] text-text-muted uppercase tracking-wider">Tracks</p>
+        </div>
+        <div className="py-2">
+          <p className={cn("text-xs font-bold", q >= 0.85 ? "text-emerald-400" : "text-amber-400")}>
+            {Math.round(q * 100)}%
+          </p>
+          <p className="text-[9px] text-text-muted uppercase tracking-wider">Quality</p>
+        </div>
       </div>
 
-      <div className="px-4 py-3 flex items-center justify-between text-[10px] font-mono text-text-muted border-b border-glass-border">
+      {/* Frame & Time Span */}
+      <div className="px-4 py-2 flex items-center justify-between text-[10px] font-mono text-text-muted border-b border-glass-border bg-black/5">
         <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{c.firstSeenTime}</span>
         <div className="flex-1 mx-2 border-t border-dashed border-glass-border" />
         <span>{c.lastSeenTime}</span>
       </div>
 
-      <div className="p-3 space-y-2">
-        {c.status === "UNASSIGNED" && (
-          <>
-            <button onClick={() => onAssign(c)}
-              className="w-full flex items-center justify-center gap-2 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl transition-all shadow-[0_0_16px_rgba(59,130,246,0.2)] hover:shadow-[0_0_20px_rgba(59,130,246,0.35)]">
-              <UserPlus className="w-3.5 h-3.5" />Assign Student
-            </button>
-            <div className="grid grid-cols-2 gap-2">
-              <button onClick={() => onGallery(c)}
-                className="flex items-center justify-center gap-1.5 py-2 bg-glass-light hover:bg-purple-500/10 border border-glass-border hover:border-purple-500/30 text-text-muted hover:text-purple-400 rounded-xl text-[11px] font-medium transition-all">
-                <Eye className="w-3.5 h-3.5" />Gallery
+      {/* Identity Evidence & Cluster Purity Row */}
+      <div className="px-3 py-1.5 bg-black/20 border-b border-glass-border flex items-center justify-between text-[10px]">
+        <div className="flex items-center gap-1.5">
+          <span className="text-text-muted">Evidence:</span>
+          <span className={cn(
+            "font-semibold px-1.5 py-0.5 rounded text-[9px]",
+            (c.identityEvidence || c.identity_evidence) === "Strong" ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30" :
+            (c.identityEvidence || c.identity_evidence) === "Moderate" ? "bg-blue-500/15 text-blue-400 border border-blue-500/30" :
+            "bg-slate-500/15 text-slate-400 border border-slate-500/30"
+          )}>
+            {c.identityEvidence || c.identity_evidence || "Moderate"}
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="text-text-muted">Purity:</span>
+          <span className="font-mono font-bold text-text-secondary">{c.internalPurity || c.purity || 95}%</span>
+          {c.possibleMultiIdentity ? (
+            <span className="bg-red-500/20 text-red-400 border border-red-500/40 px-1 py-0.5 rounded text-[8px] font-bold animate-pulse">
+              MULTI-ID: YES
+            </span>
+          ) : (
+            <span className="text-text-muted text-[8px]">MULTI: NO</span>
+          )}
+        </div>
+      </div>
+
+      {/* Identity State Section */}
+      <div className="p-3 space-y-2.5">
+        {isConfirmed && (
+          <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/25">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[9px] font-bold text-emerald-400 uppercase tracking-wider">Confirmed Student</span>
+              <span className="text-[9px] font-mono text-emerald-400/80">{c.assignment_source || "MANUAL"}</span>
+            </div>
+            <p className="text-xs font-bold text-text-primary truncate">{c.assignedStudentName || c.assignedStudent?.name}</p>
+            <p className="text-[10px] font-mono text-emerald-400/90 truncate">{c.assignedUsn || c.assignedStudent?.usn}</p>
+          </div>
+        )}
+
+        {isCandidate && c.candidateMatch && (
+          <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/25">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-[9px] font-bold text-amber-400 uppercase tracking-wider">Candidate Match</span>
+              <span className="text-[9px] font-mono text-amber-400">{Math.round(c.candidateMatch.similarity * 100)}% Sim</span>
+            </div>
+            <p className="text-xs font-bold text-text-primary truncate">{c.candidateMatch.name}</p>
+            <p className="text-[10px] font-mono text-text-muted truncate">{c.candidateMatch.usn}</p>
+          </div>
+        )}
+
+        {isUnknown && (
+          <div className="p-2.5 rounded-xl bg-glass-light border border-glass-border text-center">
+            <p className="text-xs font-semibold text-text-secondary">Unidentified Face Profile</p>
+            <p className="text-[10px] text-text-muted mt-0.5">No database match found</p>
+          </div>
+        )}
+
+        {isRejected && (
+          <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/25 text-center">
+            <p className="text-xs font-semibold text-red-400">Cluster Excluded</p>
+            <p className="text-[10px] text-text-muted mt-0.5">Rejected from attendance recognition</p>
+          </div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="space-y-1.5 pt-1">
+          {isUnknown && (
+            <>
+              <button
+                onClick={() => onAssign(c)}
+                className="w-full flex items-center justify-center gap-2 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-xl transition-all shadow-[0_0_16px_rgba(59,130,246,0.25)]"
+              >
+                <UserPlus className="w-3.5 h-3.5" /> Assign Student
               </button>
-              <button onClick={() => onReject(c.id)}
-                className="flex items-center justify-center gap-1.5 py-2 bg-glass-light hover:bg-red-500/10 border border-glass-border hover:border-red-500/30 text-text-muted hover:text-red-400 rounded-xl text-[11px] font-medium transition-all">
-                <XCircle className="w-3.5 h-3.5" />Reject
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  onClick={() => onDetails(c)}
+                  className="flex items-center justify-center gap-1.5 py-1.5 bg-glass-light hover:bg-glass-medium border border-glass-border text-text-muted hover:text-text-primary rounded-xl text-[11px] font-medium transition-all"
+                >
+                  <Eye className="w-3 h-3" /> View Details
+                </button>
+                <button
+                  onClick={() => onReject(c.id)}
+                  className="flex items-center justify-center gap-1.5 py-1.5 bg-glass-light hover:bg-red-500/10 border border-glass-border hover:border-red-500/30 text-text-muted hover:text-red-400 rounded-xl text-[11px] font-medium transition-all"
+                >
+                  <XCircle className="w-3 h-3" /> Reject
+                </button>
+              </div>
+            </>
+          )}
+
+          {isCandidate && (
+            <>
+              <button
+                onClick={() => onConfirmCandidate(c)}
+                className="w-full flex items-center justify-center gap-2 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-all shadow-[0_0_16px_rgba(16,185,129,0.3)]"
+              >
+                <Check className="w-3.5 h-3.5" /> Confirm Match
+              </button>
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  onClick={() => onAssign(c)}
+                  className="flex items-center justify-center gap-1.5 py-1.5 bg-glass-light hover:bg-blue-500/10 border border-glass-border hover:border-blue-500/30 text-text-muted hover:text-blue-400 rounded-xl text-[11px] font-medium transition-all"
+                >
+                  <UserPlus className="w-3 h-3" /> Assign Other
+                </button>
+                <button
+                  onClick={() => onReject(c.id)}
+                  className="flex items-center justify-center gap-1.5 py-1.5 bg-glass-light hover:bg-red-500/10 border border-glass-border hover:border-red-500/30 text-text-muted hover:text-red-400 rounded-xl text-[11px] font-medium transition-all"
+                >
+                  <XCircle className="w-3 h-3" /> Reject
+                </button>
+              </div>
+            </>
+          )}
+
+          {isConfirmed && (
+            <>
+              {(c.isEnrolled || c.enrolled) ? (
+                <div className="w-full flex items-center justify-center gap-2 py-2 bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-xs font-semibold rounded-xl shadow-[0_0_15px_rgba(16,185,129,0.25)]">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                  <span>Enrolled in FAISS ({c.sampleCount} vectors)</span>
+                </div>
+              ) : (
+                <button
+                  onClick={() => onEnroll(c)}
+                  className="w-full flex items-center justify-center gap-2 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(168,85,247,0.35)]"
+                >
+                  <Fingerprint className="w-3.5 h-3.5" /> Enroll Face Data
+                </button>
+              )}
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  onClick={() => onDetails(c)}
+                  className="flex items-center justify-center gap-1.5 py-1.5 bg-glass-light hover:bg-glass-medium border border-glass-border text-text-muted hover:text-text-primary rounded-xl text-[11px] font-medium transition-all"
+                >
+                  <Eye className="w-3 h-3" /> Details
+                </button>
+                <button
+                  onClick={() => onAssign(c)}
+                  className="flex items-center justify-center gap-1.5 py-1.5 bg-glass-light hover:bg-amber-500/10 border border-glass-border hover:border-amber-500/30 text-text-muted hover:text-amber-400 rounded-xl text-[11px] font-medium transition-all"
+                >
+                  <RotateCcw className="w-3 h-3" /> Reassign
+                </button>
+              </div>
+            </>
+          )}
+
+          {isRejected && (
+            <div className="grid grid-cols-2 gap-1.5">
+              <button
+                onClick={() => onAssign(c)}
+                className="flex items-center justify-center gap-1.5 py-2 bg-glass-light hover:bg-emerald-500/10 border border-glass-border hover:border-emerald-500/30 text-text-muted hover:text-emerald-400 rounded-xl text-xs font-semibold transition-all"
+              >
+                <RotateCcw className="w-3 h-3" /> Reassign
+              </button>
+              <button
+                onClick={() => onDetails(c)}
+                className="flex items-center justify-center gap-1.5 py-2 bg-glass-light hover:bg-glass-medium border border-glass-border text-text-muted hover:text-text-primary rounded-xl text-xs font-semibold transition-all"
+              >
+                <Eye className="w-3 h-3" /> Details
               </button>
             </div>
-          </>
-        )}
-        {c.status === "ASSIGNED" && (
-          <div className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-400 font-medium">
-            <CheckCircle2 className="w-3.5 h-3.5" />Student Enrolled
-          </div>
-        )}
-        {c.status === "REJECTED" && (
-          <div className="flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 border border-red-500/20 text-xs text-red-400 font-medium">
-            <XCircle className="w-3.5 h-3.5" />Cluster Rejected
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </motion.div>
   );
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   SESSION LIST ITEM
+   SESSION ITEM
 ═══════════════════════════════════════════════════════════════════ */
 function SessionItem({ s, active, onClick, onDelete }: { s: Session; active: boolean; onClick: () => void; onDelete: (e: React.MouseEvent) => void }) {
   const sm = STATUS_META[s.status] || STATUS_META.PENDING;
@@ -993,7 +1791,7 @@ function SessionItem({ s, active, onClick, onDelete }: { s: Session; active: boo
       className={cn(
         "w-full text-left p-3.5 rounded-xl border transition-all duration-200 group relative overflow-hidden cursor-pointer select-none",
         active ? "bg-blue-500/10 border-blue-500/35 shadow-[0_0_20px_rgba(59,130,246,0.1)]"
-               : "bg-glass-light border-glass-border hover:bg-glass-light hover:border-glass-border"
+               : "bg-glass-light border-glass-border hover:bg-glass-medium hover:border-glass-border"
       )}>
       {active && <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-blue-500 rounded-r" />}
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -1034,43 +1832,6 @@ function SessionItem({ s, active, onClick, onDelete }: { s: Session; active: boo
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   EMPTY STATE
-═══════════════════════════════════════════════════════════════════ */
-function EmptyState({ status, onStart }: { status: SessionStatus; onStart: () => void }) {
-  if (status === "PROCESSING") {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-center">
-        <div className="relative mb-6">
-          <div className="w-20 h-20 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-            <Cpu className="w-8 h-8 text-blue-400" />
-          </div>
-          <div className="absolute inset-0 rounded-full border border-blue-500/30 animate-ping" />
-        </div>
-        <h3 className="text-base font-bold text-text-primary mb-2">AI Pipeline Running</h3>
-        <p className="text-sm text-text-muted max-w-xs leading-relaxed">
-          InsightFace detection · ArcFace embedding · Identity clustering in progress…
-        </p>
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-col items-center justify-center h-full text-center">
-      <div className="w-20 h-20 rounded-2xl bg-blue-500/8 border border-blue-500/15 flex items-center justify-center mb-5">
-        <Play className="w-9 h-9 text-blue-400" />
-      </div>
-      <h3 className="text-base font-bold text-text-primary mb-2">Ready to Process</h3>
-      <p className="text-sm text-text-muted max-w-[280px] mb-6 leading-relaxed">
-        Click <strong className="text-text-primary">Start AI Processing</strong> to detect and cluster student identities from the uploaded videos.
-      </p>
-      <button onClick={onStart}
-        className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-all shadow-[0_0_24px_rgba(59,130,246,0.3)]">
-        <Play className="w-4 h-4" />Start AI Processing
-      </button>
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════════════
    TOAST
 ═══════════════════════════════════════════════════════════════════ */
 function Toast({ msg, onDismiss }: { msg: string; onDismiss: () => void }) {
@@ -1097,11 +1858,12 @@ export default function FaceEnrollmentPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [clusters, setClusters] = useState<Cluster[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<"ALL" | ClusterStatus>("ALL");
+  const [filterTab, setFilterTab] = useState<"ALL" | "PENDING" | "CONFIRMED" | "CANDIDATE" | "UNKNOWN" | "REJECTED">("ALL");
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [assignTarget, setAssignTarget] = useState<Cluster | null>(null);
-  const [galleryTarget, setGalleryTarget] = useState<Cluster | null>(null);
+  const [enrollTarget, setEnrollTarget] = useState<Cluster | null>(null);
+  const [detailsTarget, setDetailsTarget] = useState<Cluster | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loadingClusters, setLoadingClusters] = useState(false);
@@ -1114,19 +1876,19 @@ export default function FaceEnrollmentPage() {
     setTimeout(() => setToast(null), 5000);
   };
 
-  /* ── Load Sessions from API ── */
+  /* ── Load Sessions ── */
   const loadSessions = useCallback(async () => {
     try {
       const res = await authFetch(`${API_BASE}/enrollment/sessions`);
       const data = await res.json();
-      const list: Session[] = (data.data || data || []).map(mapSession);
+      const rawList: Session[] = (data.data || data || []).map(mapSession);
+      const list = Array.from(new Map(rawList.map(s => [s.id, s])).values());
       setSessions(list);
-      // Auto-select first session
       if (list.length > 0 && !activeId) {
         setActiveId(list[0].id);
       }
     } catch {
-      // API not running — show empty state gracefully
+      /* API fallback */
     } finally {
       setLoadingSessions(false);
     }
@@ -1135,21 +1897,83 @@ export default function FaceEnrollmentPage() {
   useEffect(() => { loadSessions(); }, []);
 
   /* ── Load Clusters for Active Session ── */
-  const loadClusters = useCallback(async (sessionId: string) => {
-    setLoadingClusters(true);
+  const loadClusters = useCallback(async (sessionId: string, silent = false) => {
+    if (!silent) setLoadingClusters(true);
     try {
-      const res = await authFetch(`${API_BASE}/enrollment/sessions/${sessionId}/clusters`);
-      const data = await res.json();
-      const list: Cluster[] = (data.data || data || []).map((c: any) => mapCluster(c, sessionId));
+      // 1. Check AI service cluster list first for full real-time pipeline analytics
+      let aiList: any[] = [];
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
+        const aiRes = await fetch(`${AI_BASE}/api/v1/sessions/${sessionId}/clusters`, { signal: controller.signal });
+        clearTimeout(timeoutId);
+        if (aiRes.ok) {
+          const aiData = await aiRes.json();
+          aiList = Array.isArray(aiData.clusters) ? aiData.clusters : [];
+        }
+      } catch {}
+
+      // 2. Check NestJS database clusters
+      let dbList: any[] = [];
+      try {
+        const res = await authFetch(`${API_BASE}/enrollment/sessions/${sessionId}/clusters`);
+        if (res.ok) {
+          const data = await res.json();
+          dbList = Array.isArray(data.data) ? data.data : (Array.isArray(data) ? data : []);
+        }
+      } catch {}
+
+      // Merge AI list with DB list so assignments and enrollment flags from both sources are preserved
+      let mergedList: any[] = [];
+      if (aiList.length > 0) {
+        mergedList = aiList.map((ac: any) => {
+          const dbMatch = dbList.find((dc: any) => 
+            (dc.clusterNumber && ac.clusterNumber && dc.clusterNumber === ac.clusterNumber) ||
+            dc.id === ac.id || dc.clusterId === ac.clusterId
+          );
+          if (dbMatch) {
+            const isEnr = Boolean(ac.isEnrolled || ac.enrolled || dbMatch.isEnrolled);
+            return {
+              ...dbMatch,
+              ...ac,
+              isEnrolled: isEnr,
+              enrolled: isEnr,
+              assignedStudent: ac.assignedStudent || (dbMatch.assignedStudentName ? {
+                name: dbMatch.assignedStudentName,
+                usn: dbMatch.assignedStudentUsn || dbMatch.assignedUsn,
+                status: "CONFIRMED"
+              } : null),
+              assignedStudentName: ac.assignedStudentName || dbMatch.assignedStudentName,
+              assignedUsn: ac.assignedUsn || dbMatch.assignedUsn,
+              identity_status: (isEnr || ac.identity_status === "CONFIRMED" || dbMatch.status === "ASSIGNED") ? "CONFIRMED" : (ac.identity_status || dbMatch.status || "UNKNOWN"),
+              status: (isEnr || ac.status === "ASSIGNED" || dbMatch.status === "ASSIGNED") ? "ASSIGNED" : (ac.status || "UNASSIGNED"),
+            };
+          }
+          return ac;
+        });
+      } else {
+        mergedList = dbList;
+      }
+
+      const rawList: Cluster[] = mergedList.map((c: any) => {
+        try {
+          return mapCluster(c, sessionId);
+        } catch {
+          return null;
+        }
+      }).filter(Boolean) as Cluster[];
+
+      const list = Array.from(new Map(rawList.map(c => [c.id, c])).values());
+
       setClusters(prev => {
-        // Keep clusters from other sessions, replace for this session
         const other = prev.filter(c => c.sessionId !== sessionId);
-        return [...other, ...list];
+        const combined = [...other, ...list];
+        return Array.from(new Map(combined.map(c => [c.id, c])).values());
       });
     } catch {
-      // ignore
+      /* ignore */
     } finally {
-      setLoadingClusters(false);
+      if (!silent) setLoadingClusters(false);
     }
   }, []);
 
@@ -1160,7 +1984,7 @@ export default function FaceEnrollmentPage() {
   const sessionsRef = useRef(sessions);
   useEffect(() => { sessionsRef.current = sessions; }, [sessions]);
 
-  /* ── Real-Time Auto-Refresh for Active Processing Sessions ── */
+  /* ── Auto-Refresh for Active Processing Sessions ── */
   useEffect(() => {
     const interval = setInterval(async () => {
       const isProcessing = sessionsRef.current.some(s => s.status === "PROCESSING");
@@ -1170,28 +1994,33 @@ export default function FaceEnrollmentPage() {
         const res = await authFetch(`${API_BASE}/enrollment/sessions`);
         if (!res.ok) return;
         const data = await res.json();
-        const list: Session[] = (data.data || data || []).map(mapSession);
+        const rawList: Session[] = (data.data || data || []).map(mapSession);
+        const list = Array.from(new Map(rawList.map(s => [s.id, s])).values());
 
         const prev = sessionsRef.current;
         list.forEach(newS => {
           const oldS = prev.find(p => p.id === newS.id);
           if (oldS && oldS.status === "PROCESSING" && (newS.status === "REVIEW_REQUIRED" || newS.status === "COMPLETED")) {
             authFetch(`${API_BASE}/enrollment/sessions/${newS.id}/sync-clusters`, { method: "POST" })
-              .then(() => loadClusters(newS.id));
+              .then(() => loadClusters(newS.id, true));
             pushToast(`✅ AI processing complete for session "${newS.name}"!`);
           }
         });
 
         setSessions(list);
+
+        if (activeId && list.some(s => s.id === activeId && s.status === "PROCESSING")) {
+          loadClusters(activeId, true);
+        }
       } catch {
         /* transient fetch error */
       }
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [loadClusters]);
+  }, [activeId, loadClusters]);
 
-  /* ── WebSocket for real-time processing updates ── */
+  /* ── WebSocket Connection ── */
   const connectWs = useCallback((sessionId: string) => {
     if (wsRef.current) {
       wsRef.current.close();
@@ -1215,11 +2044,24 @@ export default function FaceEnrollmentPage() {
               framesWithFaces: msg.frames_with_faces ?? msg.diagnostics?.frames_with_faces ?? s.framesWithFaces ?? 0,
               detectedFacesCount: msg.detectedFacesCount ?? msg.face_detections ?? s.detectedFacesCount,
               currentFrameFaces: msg.current_frame_faces ?? s.currentFrameFaces ?? 0,
-              generatedClusters: msg.generatedClusters ?? s.generatedClusters,
+              qualitySamples: msg.qualitySamples ?? msg.diagnostics?.quality_samples ?? s.qualitySamples,
+              arcfaceEmbeddings: msg.arcfaceEmbeddings ?? msg.diagnostics?.arcface_embeddings ?? s.arcfaceEmbeddings,
+              activeTracks: msg.activeTracks ?? msg.diagnostics?.active_tracks ?? s.activeTracks,
+              totalTracks: msg.totalTracks ?? msg.diagnostics?.total_tracks ?? s.totalTracks,
+              processingFps: msg.processingFps ?? msg.diagnostics?.processing_fps ?? s.processingFps,
+              generatedClusters: msg.generatedClusters ?? msg.clusters?.length ?? s.generatedClusters,
             } : s));
+
+            if (msg.clusters && Array.isArray(msg.clusters) && msg.clusters.length > 0) {
+              const liveList: Cluster[] = msg.clusters.map((c: any) => mapCluster(c, sessionId));
+              setClusters(prev => {
+                const other = prev.filter(c => c.sessionId !== sessionId);
+                const combined = [...other, ...liveList];
+                return Array.from(new Map(combined.map(c => [c.id, c])).values());
+              });
+            }
           }
           if (msg.event === "ENROLLMENT_COMPLETED") {
-            // Pipeline done — sync clusters from AI to DB, then reload
             authFetch(`${API_BASE}/enrollment/sessions/${sessionId}/sync-clusters`, { method: "POST" })
               .then(() => loadClusters(sessionId))
               .then(() => loadSessions());
@@ -1227,14 +2069,13 @@ export default function FaceEnrollmentPage() {
               ...s, status: "REVIEW_REQUIRED", progressPercentage: 100,
               generatedClusters: msg.totalClusters || s.generatedClusters,
             } : s));
-            pushToast(`✅ AI processing complete! ${msg.totalClusters || 0} identities detected. Review clusters below.`);
+            pushToast(`✅ AI processing complete! ${msg.totalClusters || 0} clusters generated. Review and assign below.`);
             ws.close();
           }
         } catch { /* bad JSON */ }
       };
 
       ws.onerror = () => {
-        // WS failed — poll instead
         pollProgress(sessionId);
       };
     } catch {
@@ -1242,7 +2083,6 @@ export default function FaceEnrollmentPage() {
     }
   }, [loadClusters, loadSessions]);
 
-  /* ── Fallback polling when WebSocket unavailable ── */
   const pollProgress = useCallback((sessionId: string) => {
     let attempts = 0;
     const interval = setInterval(async () => {
@@ -1255,18 +2095,18 @@ export default function FaceEnrollmentPage() {
 
         if (session.status === "REVIEW_REQUIRED" || session.status === "COMPLETED" || session.status === "FAILED") {
           clearInterval(interval);
-          if (session.status === "REVIEW_REQUIRED") {
+          if (session.status === "REVIEW_REQUIRED" || session.status === "COMPLETED") {
             await loadClusters(sessionId);
-            pushToast("✅ Processing complete! Clusters are ready for review.");
+            pushToast("✅ Processing complete! Identity clusters ready for review.");
           }
         }
       } catch { /* ignore */ }
-      if (attempts > 120) clearInterval(interval); // 10 min max
-    }, 5000);
+      if (attempts > 120) clearInterval(interval);
+    }, 4000);
     return () => clearInterval(interval);
   }, [loadClusters]);
 
-  /* ── Start AI Processing ── */
+  /* ── Action Handlers ── */
   const handleStartProcessing = useCallback(async () => {
     if (!activeId) return;
     setProcessingSessionId(activeId);
@@ -1285,8 +2125,7 @@ export default function FaceEnrollmentPage() {
         pushToast(`❌ ${errMsg}`);
         return;
       }
-      pushToast("🚀 AI pipeline started! Processing classroom video frames…");
-      // Connect WebSocket for real-time updates
+      pushToast("🚀 AI pipeline started! Processing classroom video frames...");
       connectWs(activeId);
     } catch (err: any) {
       setSessions(prev => prev.map(s => s.id === activeId ? { ...s, status: "PENDING" } : s));
@@ -1294,20 +2133,63 @@ export default function FaceEnrollmentPage() {
     } finally {
       setProcessingSessionId(null);
     }
-  }, [activeId, connectWs]);
+  }, [activeId, connectWs, selectedDetector]);
 
-  /* ── Stop AI Processing ── */
   const handleStopProcessing = useCallback(async (sessionId: string) => {
     try {
-      await authFetch(`${API_BASE}/enrollment/sessions/${sessionId}/stop`, { method: "POST" });
-      setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, status: "STOPPED" } : s));
-      pushToast("🛑 AI processing stopped by user.");
+      pushToast("⏳ Finalizing detections & extracting ArcFace identity clusters...");
+      const res = await authFetch(`${API_BASE}/enrollment/sessions/${sessionId}/stop`, { method: "POST" });
+      if (res.ok) {
+        await loadClusters(sessionId);
+        await loadSessions();
+        pushToast("✅ Detections finalized & identity clusters ready for review!");
+      } else {
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, status: "STOPPED" } : s));
+        pushToast("🛑 AI processing stopped.");
+      }
     } catch {
       pushToast("❌ Failed to stop processing.");
     }
-  }, []);
+  }, [loadClusters, loadSessions]);
 
-  /* ── Delete Session ── */
+  const handleReclusterSession = useCallback(async (sessionId: string) => {
+    try {
+      pushToast("🔄 Extracting ArcFace features & clustering tracks...");
+      await fetch(`${AI_BASE}/api/v1/sessions/${sessionId}/cluster-tracks`, { method: "POST" });
+      await authFetch(`${API_BASE}/enrollment/sessions/${sessionId}/sync-clusters`, { method: "POST" });
+      await loadClusters(sessionId);
+      await loadSessions();
+      pushToast("✅ Identity clusters generated successfully!");
+    } catch (err: any) {
+      pushToast(`❌ Failed to cluster tracks: ${err.message}`);
+    }
+  }, [loadClusters, loadSessions]);
+
+  const handleDeleteCluster = useCallback(async (cluster: Cluster) => {
+    const cid = cluster.clusterId || cluster.id;
+    const sId = cluster.sessionId || activeId;
+    if (!confirm(`Are you sure you want to delete Cluster #${cluster.clusterNumber || cid}? This will remove it from the identity candidate pool.`)) {
+      return;
+    }
+    try {
+      pushToast(`🗑️ Deleting Cluster #${cluster.clusterNumber}...`);
+      if (sId) {
+        try {
+          await fetch(`${AI_BASE}/api/v1/sessions/${sId}/clusters/${cid}`, { method: "DELETE" });
+        } catch {}
+      }
+      if (cluster.id) {
+        try {
+          await authFetch(`${API_BASE}/enrollment/clusters/${cluster.id}`, { method: "DELETE" });
+        } catch {}
+      }
+      setClusters(prev => prev.filter(c => c.id !== cluster.id && c.clusterId !== cid));
+      pushToast(`🗑️ Cluster #${cluster.clusterNumber} deleted.`);
+    } catch (err: any) {
+      pushToast(`❌ Failed to delete cluster: ${err.message}`);
+    }
+  }, [activeId]);
+
   const handleDeleteSession = useCallback(async (sessionId: string, sessionName: string) => {
     if (!confirm(`Are you sure you want to delete session "${sessionName}"? This action will remove all videos and detected identity clusters.`)) {
       return;
@@ -1325,77 +2207,164 @@ export default function FaceEnrollmentPage() {
     }
   }, [activeId]);
 
-  /* ── Finalize Session ── */
   const handleFinalize = useCallback(async () => {
     if (!activeId) return;
     try {
       await authFetch(`${API_BASE}/enrollment/sessions/${activeId}/finalize`, { method: "POST" });
       setSessions(prev => prev.map(s => s.id === activeId ? { ...s, status: "COMPLETED" } : s));
-      pushToast("🎉 Session finalized. All verified biometrics written to the FAISS vector database.");
+      pushToast("🎉 Session finalized. All verified biometric profiles stored.");
     } catch {
       pushToast("❌ Failed to finalize session.");
     }
   }, [activeId]);
 
-  /* ── Cluster Actions ── */
   const handleAssigned = useCallback((clusterId: string, name: string) => {
-    setClusters(prev => prev.map(c => c.id === clusterId ? { ...c, status: "ASSIGNED", assignedStudentName: name } : c));
+    setClusters(prev => prev.map(c => c.id === clusterId ? {
+      ...c,
+      identity_status: "CONFIRMED",
+      status: "ASSIGNED",
+      assignment_source: "MANUAL",
+      assignedStudentName: name,
+      assignedStudent: {
+        usn: c.assignedUsn || "",
+        name,
+        confidence: 1.0,
+        status: "CONFIRMED",
+        source: "MANUAL",
+      }
+    } : c));
     setAssignTarget(null);
-    pushToast(`✅ "${name}" enrolled. ArcFace embedding stored and FAISS index updated.`);
+    pushToast(`✅ "${name}" identity assigned to cluster! Click [ Enroll Face Data ] to register in FAISS.`);
+  }, []);
+
+  const handleConfirmCandidate = useCallback(async (cluster: Cluster) => {
+    try {
+      const aiCid = cluster.clusterId || cluster.id;
+      await fetch(`${AI_BASE}/api/v1/sessions/${cluster.sessionId}/clusters/${aiCid}/confirm`, {
+        method: "POST",
+      });
+
+      setClusters(prev => prev.map(c => c.id === cluster.id ? {
+        ...c,
+        identity_status: "CONFIRMED",
+        status: "ASSIGNED",
+        assignment_source: "AUTOMATIC",
+        assignedStudent: {
+          ...(c.assignedStudent || { usn: c.candidateMatch?.usn || "", name: c.candidateMatch?.name || "" }),
+          status: "CONFIRMED",
+        }
+      } : c));
+
+      pushToast(`✅ Match confirmed for "${cluster.candidateMatch?.name || 'Student'}"!`);
+    } catch {
+      pushToast("❌ Failed to confirm candidate match.");
+    }
   }, []);
 
   const handleReject = useCallback(async (id: string) => {
-    setClusters(prev => prev.map(c => c.id === id ? { ...c, status: "REJECTED" } : c));
-    pushToast("Cluster rejected and excluded from biometric database.");
-    // Optionally call API to persist rejection
+    setClusters(prev => prev.map(c => c.id === id ? {
+      ...c,
+      identity_status: "REJECTED",
+      status: "REJECTED",
+      assignedStudent: null,
+      assignedStudentName: undefined,
+    } : c));
+    pushToast("Cluster rejected and excluded from biometric recognition.");
     try {
-      await authFetch(`${API_BASE}/enrollment/clusters/${id}/reject`, { method: "POST" });
+      const targetCluster = clusters.find(c => c.id === id);
+      const aiCid = targetCluster?.clusterId || id;
+      if (activeId) {
+        await fetch(`${AI_BASE}/api/v1/sessions/${activeId}/clusters/${aiCid}/reject`, { method: "POST" });
+      }
     } catch { /* best-effort */ }
+  }, [clusters, activeId]);
+
+  const handleEnrolled = useCallback((clusterId: string) => {
+    setClusters(prev => prev.map(c => (c.id === clusterId || c.clusterId === clusterId) ? {
+      ...c,
+      isEnrolled: true,
+      enrolled: true,
+      identity_status: "CONFIRMED",
+      status: "ASSIGNED",
+    } : c));
+    pushToast("🎉 Biometric face embeddings successfully registered into FAISS vector database!");
   }, []);
 
   const handleCreated = useCallback((s: Session) => {
-    setSessions(prev => [s, ...prev]);
+    setSessions(prev => {
+      const filtered = prev.filter(item => item.id !== s.id);
+      return [s, ...filtered];
+    });
     setActiveId(s.id);
     setShowCreate(false);
-    pushToast(`🎬 Session "${s.name}" created. Start AI processing when ready.`);
+    pushToast(`🎬 Session "${s.name}" created. Click Start AI Processing when ready.`);
   }, []);
 
-  // Cleanup WS on unmount
   useEffect(() => () => { wsRef.current?.close(); }, []);
 
   const active = sessions.find(s => s.id === activeId);
-  const sessionClusters = clusters.filter(c => c.sessionId === activeId);
-  const counts = {
-    all: sessionClusters.length,
-    unassigned: sessionClusters.filter(c => c.status === "UNASSIGNED").length,
-    assigned: sessionClusters.filter(c => c.status === "ASSIGNED").length,
-    rejected: sessionClusters.filter(c => c.status === "REJECTED").length,
-  };
 
-  const visible = sessionClusters
-    .filter(c => filter === "ALL" || c.status === filter)
-    .filter(c => !search || `cluster ${c.clusterNumber}`.includes(search.toLowerCase()) ||
-      (c.assignedStudentName && c.assignedStudentName.toLowerCase().includes(search.toLowerCase())));
+  const sessionClusters = useMemo(() => {
+    const matched = clusters.filter(c => c.sessionId === activeId);
+    return Array.from(new Map(matched.map(c => [c.id, c])).values());
+  }, [clusters, activeId]);
+
+  const counts = useMemo(() => {
+    return {
+      all: sessionClusters.length,
+      pending: sessionClusters.filter(c => c.identity_status === "UNKNOWN" || c.identity_status === "CANDIDATE" || c.status === "UNASSIGNED").length,
+      confirmed: sessionClusters.filter(c => c.identity_status === "CONFIRMED" || c.status === "ASSIGNED").length,
+      candidate: sessionClusters.filter(c => c.identity_status === "CANDIDATE").length,
+      unknown: sessionClusters.filter(c => c.identity_status === "UNKNOWN" || (c.status === "UNASSIGNED" && c.identity_status !== "CANDIDATE")).length,
+      rejected: sessionClusters.filter(c => c.identity_status === "REJECTED" || c.status === "REJECTED").length,
+    };
+  }, [sessionClusters]);
+
+  const visibleClusters = useMemo(() => {
+    return sessionClusters.filter(c => {
+      if (filterTab === "PENDING") {
+        if (!(c.identity_status === "UNKNOWN" || c.identity_status === "CANDIDATE" || c.status === "UNASSIGNED")) return false;
+      } else if (filterTab === "CONFIRMED") {
+        if (!(c.identity_status === "CONFIRMED" || c.status === "ASSIGNED")) return false;
+      } else if (filterTab === "CANDIDATE") {
+        if (c.identity_status !== "CANDIDATE") return false;
+      } else if (filterTab === "UNKNOWN") {
+        if (!(c.identity_status === "UNKNOWN" || (c.status === "UNASSIGNED" && c.identity_status !== "CANDIDATE"))) return false;
+      } else if (filterTab === "REJECTED") {
+        if (!(c.identity_status === "REJECTED" || c.status === "REJECTED")) return false;
+      }
+
+      if (search.trim()) {
+        const q = search.toLowerCase();
+        const matchesId = c.clusterId.toLowerCase().includes(q) || `cluster #${c.clusterNumber}`.includes(q);
+        const matchesName = c.assignedStudentName?.toLowerCase().includes(q) || c.assignedStudent?.name?.toLowerCase().includes(q);
+        const matchesUsn = c.assignedUsn?.toLowerCase().includes(q) || c.assignedStudent?.usn?.toLowerCase().includes(q);
+        const matchesCandidate = c.candidateMatch?.name?.toLowerCase().includes(q) || c.candidateMatch?.usn?.toLowerCase().includes(q);
+        const matchesStatus = c.identity_status.toLowerCase().includes(q);
+        return matchesId || matchesName || matchesUsn || matchesCandidate || matchesStatus;
+      }
+      return true;
+    });
+  }, [sessionClusters, filterTab, search]);
 
   return (
     <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-bg-primary">
 
-      {/* ── Toast ── */}
+      {/* ── Toast Notifications ── */}
       <AnimatePresence>
         {toast && <Toast msg={toast} onDismiss={() => setToast(null)} />}
       </AnimatePresence>
 
-      {/* ── Modals ── */}
+      {/* ── Interactive Modals ── */}
       <AnimatePresence>
-        {showCreate  && <CreateSessionModal onClose={() => setShowCreate(false)} onCreated={handleCreated} />}
+        {showCreate && <CreateSessionModal onClose={() => setShowCreate(false)} onCreated={handleCreated} />}
         {assignTarget && <AssignModal cluster={assignTarget} onClose={() => setAssignTarget(null)} onDone={handleAssigned} />}
-        {galleryTarget && <GalleryModal cluster={galleryTarget} onClose={() => setGalleryTarget(null)} />}
+        {enrollTarget && <EnrollModal cluster={enrollTarget} activeSessionId={activeId} onClose={() => setEnrollTarget(null)} onEnrolled={handleEnrolled} />}
+        {detailsTarget && <ClusterDetailsModal cluster={detailsTarget} onClose={() => setDetailsTarget(null)} onDelete={handleDeleteCluster} />}
       </AnimatePresence>
 
       {/* ═══ LEFT SIDEBAR ═══════════════════════════════════════════ */}
       <aside className="w-72 shrink-0 flex flex-col border-r border-glass-border bg-glass-medium backdrop-blur-2xl">
-
-        {/* Header */}
         <div className="px-4 pt-5 pb-4 border-b border-glass-border">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2.5">
@@ -1423,8 +2392,8 @@ export default function FaceEnrollmentPage() {
           <div className="grid grid-cols-3 gap-2 text-center">
             {[
               { n: sessions.length, l: "Sessions", c: "text-text-primary" },
-              { n: clusters.filter(c => c.status === "ASSIGNED").length, l: "Enrolled", c: "text-emerald-400" },
-              { n: clusters.filter(c => c.status === "UNASSIGNED").length, l: "Pending", c: "text-amber-400" },
+              { n: clusters.filter(c => c.identity_status === "CONFIRMED" || c.status === "ASSIGNED").length, l: "Confirmed", c: "text-emerald-400" },
+              { n: clusters.filter(c => c.identity_status === "UNKNOWN" || c.status === "UNASSIGNED").length, l: "Pending", c: "text-amber-400" },
             ].map(({ n, l, c }) => (
               <div key={l} className="bg-glass-light rounded-xl py-2 border border-glass-border">
                 <p className={cn("text-sm font-bold", c)}>{n}</p>
@@ -1434,11 +2403,11 @@ export default function FaceEnrollmentPage() {
           </div>
         </div>
 
-        {/* List */}
+        {/* Sessions List */}
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {loadingSessions && (
             <div className="flex items-center justify-center py-8 text-text-muted text-xs gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading sessions…
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading sessions...
             </div>
           )}
           {!loadingSessions && sessions.length === 0 && (
@@ -1464,17 +2433,16 @@ export default function FaceEnrollmentPage() {
         <div className="p-4 border-t border-glass-border">
           <button onClick={() => setShowCreate(true)}
             className="w-full flex items-center justify-center gap-2 py-2.5 bg-glass-light hover:bg-blue-500/10 border border-glass-border hover:border-blue-500/30 text-text-muted hover:text-blue-400 rounded-xl text-xs font-medium transition-all">
-            <Plus className="w-3.5 h-3.5" />New Enrollment Session
+            <Plus className="w-3.5 h-3.5" /> New Enrollment Session
           </button>
         </div>
       </aside>
 
       {/* ═══ MAIN CONTENT ═══════════════════════════════════════════ */}
       <main className="flex-1 flex flex-col overflow-hidden">
-
         {active ? (
           <>
-            {/* ── Session Header ── */}
+            {/* ── Active Session Top Summary ── */}
             <div className="px-6 py-4 border-b border-glass-border bg-glass-light backdrop-blur-xl shrink-0">
               <div className="flex items-start justify-between gap-4 mb-4">
                 <div>
@@ -1493,7 +2461,7 @@ export default function FaceEnrollmentPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  {active.status === "PENDING" && (
+                  {(active.status === "PENDING" || active.status === "FAILED") && (
                     <div className="flex items-center gap-2">
                       <select
                         value={selectedDetector}
@@ -1507,31 +2475,32 @@ export default function FaceEnrollmentPage() {
                       <button onClick={handleStartProcessing} disabled={!!processingSessionId}
                         className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)]">
                         {processingSessionId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                        Start AI Processing
+                        {active.status === "FAILED" ? "Retry AI Processing" : "Start AI Processing"}
                       </button>
                     </div>
                   )}
-                  {active.status === "REVIEW_REQUIRED" && counts.unassigned === 0 && (
+                  {active.status === "REVIEW_REQUIRED" && counts.pending === 0 && (
                     <button onClick={handleFinalize}
                       className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]">
-                      <Shield className="w-4 h-4" />Finalize &amp; Update FAISS
+                      <Shield className="w-4 h-4" /> Finalize Session
                     </button>
                   )}
-                  {active.status === "REVIEW_REQUIRED" && counts.unassigned > 0 && (
-                    <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/25 rounded-xl">
-                      <AlertTriangle className="w-4 h-4 text-amber-400" />
-                      <span className="text-xs text-amber-400 font-medium">{counts.unassigned} cluster{counts.unassigned > 1 ? "s" : ""} need review</span>
-                    </div>
+                  {active.status !== "PROCESSING" && active.status !== "PENDING" && active.status !== "FAILED" && (
+                    <button onClick={() => handleReclusterSession(active.id)}
+                      title="Re-run ArcFace feature extraction & HDBSCAN clustering on session tracks"
+                      className="flex items-center gap-1.5 px-3 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-xl text-xs font-semibold transition-all">
+                      <Sparkles className="w-3.5 h-3.5" /> Re-Cluster Tracks
+                    </button>
                   )}
                   {active.status === "PROCESSING" && (
                     <div className="flex items-center gap-2">
                       <button onClick={() => handleStopProcessing(active.id)}
                         className="flex items-center gap-1.5 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 rounded-xl text-xs font-semibold transition-all">
-                        <XCircle className="w-3.5 h-3.5" />Stop Processing
+                        <XCircle className="w-3.5 h-3.5" /> Stop & Cluster
                       </button>
                       <button onClick={() => loadClusters(active.id)}
                         className="flex items-center gap-2 px-3 py-2 bg-glass-light hover:bg-glass-medium border border-glass-border text-text-muted rounded-xl text-xs transition-all">
-                        <RefreshCw className="w-3.5 h-3.5" />Refresh
+                        <RefreshCw className="w-3.5 h-3.5" /> Refresh
                       </button>
                     </div>
                   )}
@@ -1543,19 +2512,39 @@ export default function FaceEnrollmentPage() {
                 </div>
               </div>
 
-              {/* Stats Row */}
+              {/* Real Metrics Row */}
               <div className="flex items-center gap-2.5 flex-wrap">
                 <StatChip icon={FileVideo} label="Videos" value={active.totalVideos} color="text-blue-400" />
                 <StatChip icon={ImageIcon} label="Frames" value={(active.evaluatedFrames ?? active.processedFrames ?? 0).toLocaleString()} color="text-purple-400" />
                 <StatChip icon={ScanFace} label="Detections" value={(active.detectedFacesCount ?? 0).toLocaleString()} color="text-cyan-400" />
                 <StatChip icon={Layers} label="Tracks" value={(active.totalTracks ?? active.activeTracks ?? 0).toLocaleString()} color="text-yellow-400" />
                 <StatChip icon={Sparkles} label="Samples" value={(active.qualitySamples ?? 0).toLocaleString()} color="text-pink-400" />
-                <StatChip icon={Fingerprint} label="ArcFace 512D" value={(active.arcfaceEmbeddings ?? 0).toLocaleString()} color="text-blue-400" />
-                <StatChip icon={Users} label="Clusters" value={active.generatedClusters || sessionClusters.length || 0} color="text-amber-400" />
-                <StatChip icon={CheckCircle2} label="Enrolled" value={counts.assigned} color="text-emerald-400" />
+                <StatChip icon={Users} label="Identity Candidates" value={counts.all} color="text-amber-400" />
+                <StatChip icon={CheckCircle2} label="Confirmed Students" value={counts.confirmed} color="text-emerald-400" />
               </div>
 
-              {/* Progress & Live Tracking Feed */}
+              {/* Failure Banner (when status === "FAILED") */}
+              {active.status === "FAILED" && (
+                <div className="mt-4 p-3.5 bg-red-500/10 border border-red-500/30 rounded-2xl flex items-center justify-between gap-3 text-red-400 text-xs flex-wrap">
+                  <div className="flex items-center gap-2.5">
+                    <AlertTriangle className="w-4 h-4 shrink-0 text-red-400" />
+                    <span>
+                      <strong className="text-red-300">AI Processing Failed:</strong>{" "}
+                      {active.errorMessage || "The AI service on port 8000 was unreachable or encountered an error."}
+                    </span>
+                  </div>
+                  <button
+                    onClick={handleStartProcessing}
+                    disabled={!!processingSessionId}
+                    className="px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 rounded-xl text-white font-semibold text-xs flex items-center gap-1.5 transition-all shadow-sm"
+                  >
+                    {processingSessionId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    Retry Processing
+                  </button>
+                </div>
+              )}
+
+              {/* Live Tracking Feed Panel (during processing) */}
               {active.status === "PROCESSING" && (
                 <div className="mt-4 space-y-3">
                   <div className="p-3 bg-glass-medium border border-blue-500/30 rounded-2xl">
@@ -1576,18 +2565,18 @@ export default function FaceEnrollmentPage() {
                     <div className="flex justify-between items-center text-[10px] font-mono text-text-muted mt-2 flex-wrap gap-2">
                       <span>Evaluated Frames: {(active.evaluatedFrames ?? active.processedFrames ?? 0).toLocaleString()}</span>
                       <span>Active Tracks: {active.activeTracks ?? 0}</span>
-                      <span>Total Tracks: {active.totalTracks ?? active.generatedClusters ?? 0}</span>
+                      <span>Total Tracks: {active.totalTracks ?? 0}</span>
                       <span>Quality Samples: {active.qualitySamples ?? 0}</span>
-                      <span>ArcFace 512D Embeddings: {active.arcfaceEmbeddings ?? active.detectedFacesCount ?? 0}</span>
+                      <span>ArcFace 512D: {active.arcfaceEmbeddings ?? 0}</span>
                       <span>Current Frame Faces: {active.currentFrameFaces ?? 0}</span>
-                      <span>FPS: {active.processingFps ?? 0.6}</span>
+                      <span>FPS: {active.processingFps ? active.processingFps.toFixed(1) : "0.0"}</span>
                       <span>Progress: {Math.round(active.progressPercentage)}%</span>
                     </div>
                   </div>
 
                   <div>
                     <div className="flex justify-between text-[10px] text-text-muted mb-1.5">
-                      <span className="flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin text-blue-400" /><span>AI pipeline processing {active.totalVideos} videos…</span></span>
+                      <span className="flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin text-blue-400" /><span>AI pipeline evaluating video frames...</span></span>
                       <span className="font-mono">{Math.round(active.progressPercentage)}%</span>
                     </div>
                     <div className="h-1.5 bg-glass-light rounded-full overflow-hidden">
@@ -1599,59 +2588,125 @@ export default function FaceEnrollmentPage() {
               )}
             </div>
 
-            {/* ── Cluster Toolbar ── */}
-            <div className="px-6 py-3 border-b border-glass-border shrink-0 flex items-center gap-3 bg-glass-light">
+            {/* ═══ CLUSTER MANAGEMENT & STUDENT ASSIGNMENT AREA ═══════════════ */}
+            <div className="px-6 py-3 border-b border-glass-border shrink-0 flex items-center gap-3 bg-glass-light flex-wrap">
+              {/* Search Clusters Input */}
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-muted" />
-                <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search clusters…"
-                  className="bg-glass-light border border-glass-border rounded-xl pl-9 pr-4 py-2 text-xs text-text-primary focus:outline-none focus:border-blue-500/50 placeholder:text-text-muted w-48 transition-all" />
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Search clusters, USN, student name..."
+                  className="bg-glass-light border border-glass-border rounded-xl pl-9 pr-4 py-2 text-xs text-text-primary focus:outline-none focus:border-blue-500/50 placeholder:text-text-muted w-60 transition-all"
+                />
               </div>
 
+              {/* Category Filter Tabs */}
               <div className="flex items-center gap-1.5 flex-wrap">
                 {([
-                  ["ALL",        `All (${counts.all})`],
-                  ["UNASSIGNED", `Pending (${counts.unassigned})`],
-                  ["ASSIGNED",   `Enrolled (${counts.assigned})`],
-                  ["REJECTED",   `Rejected (${counts.rejected})`],
+                  ["ALL",       `All (${counts.all})`],
+                  ["PENDING",   `Pending (${counts.pending})`],
+                  ["CONFIRMED", `Confirmed (${counts.confirmed})`],
+                  ["CANDIDATE", `Candidate (${counts.candidate})`],
+                  ["UNKNOWN",   `Unknown (${counts.unknown})`],
+                  ["REJECTED",  `Rejected (${counts.rejected})`],
                 ] as const).map(([f, label]) => (
-                  <button key={f} onClick={() => setFilter(f)}
+                  <button
+                    key={f}
+                    onClick={() => setFilterTab(f)}
                     className={cn(
                       "px-3 py-1.5 rounded-xl text-[11px] font-semibold border transition-all",
-                      filter === f
-                        ? f === "UNASSIGNED" ? "bg-amber-500/15 border-amber-500/40 text-amber-400"
-                        : f === "ASSIGNED"   ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400"
-                        : f === "REJECTED"   ? "bg-red-500/15 border-red-500/35 text-red-400"
-                        : "bg-blue-500/15 border-blue-500/40 text-blue-400"
-                        : "bg-glass-light border-glass-border text-text-muted hover:bg-glass-light"
-                    )}>
+                      filterTab === f
+                        ? f === "PENDING"   ? "bg-amber-500/15 border-amber-500/40 text-amber-400 shadow-sm"
+                        : f === "CONFIRMED" ? "bg-emerald-500/15 border-emerald-500/40 text-emerald-400 shadow-sm"
+                        : f === "CANDIDATE" ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-400 shadow-sm"
+                        : f === "UNKNOWN"   ? "bg-slate-500/15 border-slate-500/40 text-slate-300 shadow-sm"
+                        : f === "REJECTED"  ? "bg-red-500/15 border-red-500/35 text-red-400 shadow-sm"
+                        : "bg-blue-500/15 border-blue-500/40 text-blue-400 shadow-sm"
+                        : "bg-glass-light border-glass-border text-text-muted hover:bg-glass-medium"
+                    )}
+                  >
                     {label}
                   </button>
                 ))}
               </div>
 
-              <div className="ml-auto flex items-center gap-1.5 text-[10px] text-text-muted">
-                <Zap className="w-3 h-3" />
-                <span>ArcFace 512-D embeddings · Greedy identity clustering</span>
+              <div className="ml-auto flex items-center gap-2.5 text-[10px] text-text-muted">
+                {active.status === "PROCESSING" && (
+                  <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/35 text-emerald-400 font-bold tracking-wide shadow-sm">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    LIVE FACE TRACKING ({sessionClusters.length} IDENTITIES)
+                  </span>
+                )}
+                <div className="flex items-center gap-1.5">
+                  <Zap className="w-3.5 h-3.5 text-blue-400" />
+                  <span>HDBSCAN 512D Identity Clusters · Real FAISS Multi-Sample Verification</span>
+                </div>
               </div>
             </div>
 
-            {/* ── Cluster Grid ── */}
+            {/* ── Clusters Cards Grid ── */}
             <div className="flex-1 overflow-y-auto p-6">
               {loadingClusters ? (
-                <div className="flex items-center justify-center h-full">
+                <div className="flex items-center justify-center h-64">
                   <div className="flex items-center gap-3 text-text-muted text-sm">
-                    <Loader2 className="w-5 h-5 animate-spin" /> Loading clusters…
+                    <Loader2 className="w-5 h-5 animate-spin text-blue-400" /> Loading identity clusters from AI pipeline...
                   </div>
                 </div>
-              ) : visible.length === 0 ? (
-                <EmptyState status={active.status} onStart={handleStartProcessing} />
+              ) : visibleClusters.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-64 text-center">
+                  <div className={cn(
+                    "w-16 h-16 rounded-2xl flex items-center justify-center mb-4 border",
+                    active.status === "FAILED" ? "bg-red-500/10 border-red-500/20" : "bg-blue-500/10 border-blue-500/20"
+                  )}>
+                    {active.status === "FAILED" ? (
+                      <AlertTriangle className="w-8 h-8 text-red-400" />
+                    ) : (
+                      <ScanFace className="w-8 h-8 text-blue-400" />
+                    )}
+                  </div>
+                  <h3 className="text-sm font-bold text-text-primary mb-1">
+                    {search
+                      ? "No matching clusters found"
+                      : active.status === "PROCESSING"
+                      ? "Detecting Faces & Initializing Tracks..."
+                      : active.status === "FAILED"
+                      ? "AI Processing Failed"
+                      : "No Clusters Available"}
+                  </h3>
+                  <p className="text-xs text-text-muted max-w-sm leading-relaxed">
+                    {search
+                      ? "Try adjusting your search query or filter tab."
+                      : active.status === "PROCESSING"
+                      ? "Live face tracks and student identity cards will appear here in real-time as faces are detected in the classroom video."
+                      : active.status === "FAILED"
+                      ? (active.errorMessage || "The AI processing encountered an issue. Ensure the AI service is running and click Retry below.")
+                      : "Start AI Processing to detect faces and generate student identity clusters from video."}
+                  </p>
+                  {(active.status === "PENDING" || active.status === "FAILED") && (
+                    <button onClick={handleStartProcessing} disabled={!!processingSessionId}
+                      className="mt-4 flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-xs font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)]">
+                      {processingSessionId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : active.status === "FAILED" ? <RefreshCw className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                      {active.status === "FAILED" ? "Retry AI Processing" : "Start AI Processing"}
+                    </button>
+                  )}
+                </div>
               ) : (
-                <div className="grid gap-4"
-                  style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}>
-                  {visible.map((c, i) => (
-                    <motion.div key={c.id} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
-                      <ClusterCard c={c} onAssign={setAssignTarget} onReject={handleReject} onGallery={setGalleryTarget} />
-                    </motion.div>
+                <div
+                  className="grid gap-4"
+                  style={{ gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))" }}
+                >
+                  {visibleClusters.map((c) => (
+                    <ClusterCard
+                      key={c.id}
+                      c={c}
+                      onAssign={setAssignTarget}
+                      onConfirmCandidate={handleConfirmCandidate}
+                      onReject={handleReject}
+                      onEnroll={setEnrollTarget}
+                      onDetails={setDetailsTarget}
+                      onDelete={handleDeleteCluster}
+                    />
                   ))}
                 </div>
               )}
@@ -1669,7 +2724,7 @@ export default function FaceEnrollmentPage() {
             </p>
             <button onClick={() => setShowCreate(true)}
               className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold rounded-xl transition-all shadow-[0_0_24px_rgba(59,130,246,0.3)]">
-              <Plus className="w-4 h-4" />Create Enrollment Session
+              <Plus className="w-4 h-4" /> Create Enrollment Session
             </button>
           </div>
         )}

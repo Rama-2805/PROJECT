@@ -173,9 +173,10 @@ from .api.websocket import websocket_manager
 
 
 @app.websocket("/api/v1/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """Global WebSocket endpoint for real-time enrollment updates."""
-    await websocket_manager.connect(websocket)
+@app.websocket("/api/v1/ws/{session_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str = None):
+    """WebSocket endpoint for real-time enrollment updates (global and session-specific)."""
+    await websocket_manager.connect(websocket, group_id=session_id)
     try:
         while True:
             # Keep the connection alive
@@ -183,7 +184,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception:
         pass
     finally:
-        websocket_manager.disconnect(websocket)
+        websocket_manager.disconnect(websocket, group_id=session_id)
 
 
 @app.get("/health")

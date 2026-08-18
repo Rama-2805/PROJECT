@@ -12,6 +12,7 @@ import {
 } from "@nestjs/common";
 import { FilesInterceptor } from "@nestjs/platform-express";
 import { EnrollmentService } from "./enrollment.service";
+import { multerStorage } from "./enrollment.module";
 import {
   CreateEnrollmentJobDto,
   UpdateEnrollmentJobDto,
@@ -173,7 +174,12 @@ export class EnrollmentController {
 
   @Post("sessions/:id/upload")
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
-  @UseInterceptors(FilesInterceptor("videos", 20))
+  @UseInterceptors(
+    FilesInterceptor("videos", 20, {
+      storage: multerStorage,
+      limits: { fileSize: 4 * 1024 * 1024 * 1024 }, // 4 GB per file
+    })
+  )
   uploadVideoFiles(
     @Param("id") id: string,
     @UploadedFiles() files: Express.Multer.File[]

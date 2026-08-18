@@ -37,8 +37,10 @@ class MediaPipeFaceQuality:
             self._initialized = True
             logger.info("[MEDIAPIPE] MediaPipe Face Landmarker initialized successfully.")
         except Exception as e:
-            logger.error(f"[MEDIAPIPE] Failed to initialize MediaPipe: {e}")
             self._face_mesh = None
+            if not self._initialized:
+                logger.info(f"[MEDIAPIPE] MediaPipe package not available ({e}). Using OpenCV multi-factor quality fallback.")
+            self._initialized = True
 
     def evaluate_crop(self, crop: np.ndarray) -> Dict[str, Any]:
         """Evaluate a face crop image using MediaPipe Face Landmarker.
@@ -61,10 +63,10 @@ class MediaPipeFaceQuality:
             }
 
         h, w = crop.shape[:2]
-        min_w = getattr(settings, "min_face_width", 40)
-        min_h = getattr(settings, "min_face_height", 40)
+        min_w = getattr(settings, "min_face_width", 16)
+        min_h = getattr(settings, "min_face_height", 16)
 
-        # 1. Face Size Check
+        # 1. Face Size Check (minimum raw requirement 16x16)
         if w < min_w or h < min_h:
             logger.debug(f"[MEDIAPIPE] Crop rejected due to size: {w}x{h} < {min_w}x{min_h}")
             return {
@@ -93,18 +95,29 @@ class MediaPipeFaceQuality:
         yaw, pitch, roll = 0.0, 0.0, 0.0
 
         if self._face_mesh is not None:
-            rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-            results = self._face_mesh.process(rgb_crop)
-
-            if results and results.multi_face_landmarks:
-                landmarks = results.multi_face_landmarks[0].landmark
-                landmark_detected = True
-                yaw, pitch, roll = self._estimate_head_pose(landmarks, w, h)
+            try:
+                rgb_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
+                results = self._face_mesh.process(rgb_crop)
+                if results and results.multi_face_landmarks:
+                    landmarks = results.multi_face_landmarks[0].landmark
+                    landmark_detected = True
+                    yaw, pitch, roll = self._estimate_head_pose(landmarks, w, h)
+            except Exception as mp_err:
+                logger.debug(f"[MEDIAPIPE] FaceMesh evaluation error: {mp_err}")
+                try:
+                    self._face_mesh = self.mp_face_mesh.FaceMesh(
+                        static_image_mode=True,
+                        max_num_faces=1,
+                        refine_landmarks=True,
+                        min_detection_confidence=0.5,
+                    )
+                except Exception:
+                    pass
 
         # 4. Pose Angle Limits
-        max_yaw = getattr(settings, "max_yaw", 30.0)
-        max_pitch = getattr(settings, "max_pitch", 25.0)
-        max_roll = getattr(settings, "max_roll", 25.0)
+        max_yaw = getattr(settings, "max_yaw", 35.0)
+        max_pitch = getattr(settings, "max_pitch", 30.0)
+        max_roll = getattr(settings, "max_roll", 30.0)
 
         is_pose_acceptable = (
             abs(yaw) <= max_yaw and
@@ -113,32 +126,32 @@ class MediaPipeFaceQuality:
         )
 
         # 5. Composite Quality Score Calculation (0.0 to 1.0)
-        # Size score (max at 120px)
-        size_score = min(1.0, (w * h) / (120.0 * 120.0))
-        # Sharpness score (normalized at 100.0)
-        sharp_score = min(1.0, sharpness / 100.0)
+        # Size score: normalized for upscaled crops (max at 64px or above)
+        size_score = min(1.0, (w * h) / (64.0 * 64.0))
+        # Sharpness score (normalized at 25.0 for small crops)
+        sharp_score = min(1.0, sharpness / 25.0)
         # Brightness score (ideal around 128)
         bright_score = 1.0 - abs(brightness - 128.0) / 128.0
         bright_score = max(0.0, min(1.0, bright_score))
         # Pose score (penalty for non-frontal angles)
         pose_penalty = (abs(yaw) / 45.0 + abs(pitch) / 35.0 + abs(roll) / 35.0) / 3.0
         pose_score = max(0.0, 1.0 - pose_penalty)
-        # Landmark score
-        lm_score = 1.0 if landmark_detected else 0.5
+        # Landmark score: bonus if 3D face mesh fitted
+        lm_score = 1.0 if landmark_detected else 0.65
 
         overall_quality_score = round(
-            0.30 * size_score +
-            0.25 * sharp_score +
+            0.20 * size_score +
+            0.30 * sharp_score +
             0.25 * pose_score +
             0.10 * bright_score +
-            0.10 * lm_score,
+            0.15 * lm_score,
             3
         )
 
         rejection_reason = None
         if not is_pose_acceptable:
             rejection_reason = f"pose_angle_exceeded_y{yaw:.1f}_p{pitch:.1f}_r{roll:.1f}"
-        elif overall_quality_score < getattr(settings, "min_track_quality", 0.70):
+        elif overall_quality_score < getattr(settings, "min_track_quality", 0.35):
             rejection_reason = f"quality_below_threshold_{overall_quality_score:.2f}"
 
         is_acceptable = (rejection_reason is None)

@@ -16,7 +16,9 @@ export default function StudentProfilePage() {
     semester: "Semester 4",
     id: "—",
     phone: "—",
-    campusCardStatus: "Active"
+    campusCardStatus: "Active",
+    profilePhoto: null as string | null,
+    faceEnrolled: false,
   });
 
   const [newPassword, setNewPassword] = useState("");
@@ -37,6 +39,8 @@ export default function StudentProfilePage() {
           const dept = stu.department?.name || u.department || "Computer Science & Engineering";
           const sem = stu.semester ? `Semester ${stu.semester}` : "Semester 4";
           const phone = stu.phone || u.phoneNumber || "—";
+          const photo = stu.profilePhoto || stu.primaryFaceImagePath || u.profilePhoto || null;
+          const enrolled = Boolean(stu.faceEnrolled);
 
           setStudent({
             fullName: name,
@@ -46,7 +50,9 @@ export default function StudentProfilePage() {
             semester: sem,
             id: usn,
             phone: phone,
-            campusCardStatus: "Active"
+            campusCardStatus: "Active",
+            profilePhoto: photo,
+            faceEnrolled: enrolled,
           });
           localStorage.setItem("currentUserName", name);
           localStorage.setItem("currentUserEmail", u.email);
@@ -69,7 +75,9 @@ export default function StudentProfilePage() {
             semester: users[email].semester ? `Semester ${users[email].semester}` : "Semester 4",
             id: users[email].studentId || "—",
             phone: "—",
-            campusCardStatus: "Active"
+            campusCardStatus: "Active",
+            profilePhoto: null,
+            faceEnrolled: false,
           });
         } else if (email) {
           setStudent({
@@ -80,7 +88,9 @@ export default function StudentProfilePage() {
             semester: "Semester 4",
             id: usn || "—",
             phone: "—",
-            campusCardStatus: "Active"
+            campusCardStatus: "Active",
+            profilePhoto: null,
+            faceEnrolled: false,
           });
         }
       }
@@ -136,17 +146,45 @@ export default function StudentProfilePage() {
         {/* Left Card: Avatar & Basic Info */}
         <div className="md:col-span-1 space-y-6">
           <GlassCard className="text-center p-6 flex flex-col items-center">
-            <div className="h-24 w-24 rounded-full bg-gradient-to-br from-blue-500 via-indigo-600 to-purple-600 p-[2px] mb-4">
-              <div className="h-full w-full rounded-full bg-bg-secondary flex items-center justify-center border border-glass-border">
-                <User className="h-10 w-10 text-text-primary" />
-              </div>
+            <div className="relative mb-4">
+              {student.profilePhoto ? (
+                <img
+                  src={
+                    student.profilePhoto.startsWith("http") || student.profilePhoto.startsWith("data:")
+                      ? student.profilePhoto
+                      : `${process.env.NEXT_PUBLIC_AI_URL || "http://localhost:8000"}${student.profilePhoto.startsWith("/") ? "" : "/"}${student.profilePhoto}`
+                  }
+                  alt={student.fullName}
+                  className={`h-24 w-24 rounded-2xl object-cover border-2 shadow-lg ${
+                    student.faceEnrolled ? "border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.35)]" : "border-glass-border"
+                  }`}
+                />
+              ) : (
+                <div className="h-24 w-24 rounded-2xl bg-gradient-to-br from-blue-500 via-indigo-600 to-purple-600 p-[2px]">
+                  <div className="h-full w-full rounded-2xl bg-bg-secondary flex items-center justify-center border border-glass-border">
+                    <User className="h-10 w-10 text-text-primary" />
+                  </div>
+                </div>
+              )}
+              {student.faceEnrolled && (
+                <span className="absolute -bottom-1 -right-1 p-1 bg-emerald-500 rounded-full text-black shadow" title="FAISS Biometric Active">
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                </span>
+              )}
             </div>
 
             <h3 className="text-lg font-bold text-text-primary">{student.fullName}</h3>
             <p className="text-xs text-text-muted mb-2">Student Enrolled</p>
-            <span className="inline-flex px-2.5 py-1 rounded-full text-[10px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 uppercase tracking-wider">
-              {student.id}
-            </span>
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              <span className="inline-flex px-2.5 py-1 rounded-full text-[10px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 uppercase tracking-wider font-mono">
+                {student.id}
+              </span>
+              {student.faceEnrolled && (
+                <span className="inline-flex px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase tracking-wider font-mono">
+                  ✓ Face Enrolled
+                </span>
+              )}
+            </div>
 
             <div className="w-full border-t border-glass-border mt-6 pt-6 space-y-3.5 text-left text-xs text-text-secondary">
               <div className="flex items-center gap-3">

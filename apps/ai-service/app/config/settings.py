@@ -64,11 +64,13 @@ class Settings(BaseSettings):
     detection_confidence_threshold: float = 0.70  # Reject false positive detections < 0.70
     # MediaPipe Face Landmarker & Pose Quality Stage
     enable_mediapipe_quality: bool = True
+    max_quality_attempts_per_track: int = 15  # Max crops evaluated by MediaPipe per track to prevent FPS spikes
+    enable_roi_recovery: bool = False         # Bypass redundant ROI re-detection when multi-scale SCRFD is active
     max_yaw: float = 30.0    # Max head yaw angle in degrees
     max_pitch: float = 25.0  # Max head pitch angle in degrees
     max_roll: float = 25.0   # Max head roll angle in degrees
-    min_face_width: int = 25  # Min face crop width in pixels (25px captures far/back-row faces)
-    min_face_height: int = 25 # Min face crop height in pixels (25px captures far/back-row faces)
+    min_face_width: int = 16  # Min face crop width in pixels (16px captures far/back-row classroom faces)
+    min_face_height: int = 16 # Min face crop height in pixels (16px captures far/back-row classroom faces)
     faiss_top_k: int = 3      # Top-K candidate search depth for recognition diagnostics
     margin_ambiguity_threshold: float = 0.10 # Similarity margin below which identity is marked AMBIGUOUS
     min_face_area_ratio: float = 0.0001            # Minimum face area / frame area ratio

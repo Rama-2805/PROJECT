@@ -9,8 +9,10 @@ import cv2
 import time
 import logging
 import uuid
+import threading
 import numpy as np
 from datetime import datetime
+from typing import List, Dict, Any, Optional, Tuple
 from sqlalchemy.orm import Session
 from ..config.settings import settings
 from ..config.database import SessionLocal
@@ -45,6 +47,8 @@ class AttendanceEngine:
         self.broadcast_cooldowns = {}
         # Track cooldowns for saving unknown face crops (cluster_id -> last_save_time)
         self.unknown_face_cooldowns = {}
+        # Recognized students set for quick session tallying: usn -> {name, confidence, time}
+        self.session_recognized_students = {}
         
         # Cache for the last processed/annotated frame to be used by the MJPEG stream
         self.annotated_frames = {}
@@ -69,7 +73,7 @@ class AttendanceEngine:
 
             self.active_sessions[camera_id] = {
                 "class_id": class_id,
-                "tracker": IoUTracker(iou_threshold=0.35, max_lost_frames=12),
+                "tracker": IoUTracker(iou_threshold=0.22, max_lost_frames=90),
                 "running": True,
                 "thread": None
             }
@@ -136,9 +140,6 @@ class AttendanceEngine:
                 # Create scoped database session for this frame iteration
                 db = SessionLocal()
                 try:
-                    # Create annotated copy for live stream overlays
-                    annotated = frame.copy()
-
                     # 1. Face Detection
                     detections = face_detector.detect_faces(frame)
                     face_detected = len(detections) > 0 if detections else False
@@ -160,11 +161,16 @@ class AttendanceEngine:
 
                     # 3. Analyze each tracked face
                     any_recognized = False
+                    h_f, w_f = frame.shape[:2]
                     for track in active_tracks:
-                        # Extract crop image from frame
-                        x1, y1, x2, y2 = track.bbox
-                        crop = frame[y1:y2, x1:x2].copy()
-                        if crop.size == 0:
+                        # Extract crop image from frame safely with integer bounds
+                        bx1, by1, bx2, by2 = [int(round(float(v))) for v in track.bbox]
+                        bx1 = max(0, min(bx1, w_f - 1))
+                        by1 = max(0, min(by1, h_f - 1))
+                        bx2 = max(bx1 + 1, min(bx2, w_f))
+                        by2 = max(by1 + 1, min(by2, h_f))
+                        crop = frame[by1:by2, bx1:bx2].copy()
+                        if crop.size == 0 or crop.shape[0] < 8 or crop.shape[1] < 8:
                             continue
 
                         # Perform Face Recognition & Decision Logic
@@ -179,18 +185,10 @@ class AttendanceEngine:
                         face_recognized=any_recognized if face_detected else None
                     )
 
-                    # Draw visual overlay on live view
-                    for t in active_tracks:
-                        tx1, ty1, tx2, ty2 = t.bbox
-                        is_rec = hasattr(t, "student_usn") and t.student_usn is not None
-                        color = (0, 255, 0) if is_rec else (0, 0, 255)  # Green = Recognized, Red = Unknown
-                        
-                        label = f"ID: {t.track_id}"
-                        if is_rec:
-                            label += f" ({t.student_usn})"
-                            
-                        cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), color, 2)
-                        cv2.putText(annotated, label, (tx1, ty1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                    # Draw visual HUD & bounding box overlay on live view
+                    cap_source = camera_service._sources.get(camera_id, "")
+                    video_name = os.path.basename(cap_source) if cap_source else ""
+                    annotated = self._draw_overlay(frame, active_tracks, video_name)
 
                     with self._lock:
                         self.annotated_frames[camera_id] = annotated
@@ -211,44 +209,107 @@ class AttendanceEngine:
         except Exception as fatal_err:
             logger.error(f"Fatal error in attendance loop: {fatal_err}")
 
+    def _draw_overlay(self, frame: np.ndarray, active_tracks: List[TrackedFace], video_name: str = "") -> np.ndarray:
+        """Render high-contrast HUD and bounding box overlays on live frame."""
+        annotated = frame.copy()
+        h, w = annotated.shape[:2]
+
+        # 1. Top HUD Bar
+        hud_h = 38
+        cv2.rectangle(annotated, (0, 0), (w, hud_h), (20, 15, 12), -1)
+        cv2.line(annotated, (0, hud_h), (w, hud_h), (60, 50, 45), 1)
+
+        # Blinking live indicator
+        now_sec = int(time.time() * 2)
+        dot_color = (0, 0, 255) if now_sec % 2 == 0 else (0, 100, 255)
+        cv2.circle(annotated, (18, hud_h // 2), 5, dot_color, -1)
+        cv2.putText(annotated, "LIVE MONITORING", (30, hud_h // 2 + 4), cv2.FONT_HERSHEY_DUPLEX, 0.45, (240, 240, 240), 1, cv2.LINE_AA)
+
+        # Video Name
+        vid_title = f"FEED: {video_name}" if video_name else "CCTV STREAM"
+        cv2.putText(annotated, vid_title, (190, hud_h // 2 + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 215, 255), 1, cv2.LINE_AA)
+
+        rec_count = sum(1 for t in active_tracks if getattr(t, "student_usn", None))
+        stats_label = f"TRACKS: {len(active_tracks)}  |  PRESENT: {len(self.session_recognized_students)}"
+        cv2.putText(annotated, stats_label, (max(350, w - 240), hud_h // 2 + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 128), 1, cv2.LINE_AA)
+
+        # 2. Draw tracks with modern corner brackets and labels
+        for t in active_tracks:
+            tx1, ty1, tx2, ty2 = [int(round(float(v))) for v in t.bbox]
+            tx1, ty1 = max(0, tx1), max(0, ty1)
+            tx2, ty2 = min(w, tx2), min(h, ty2)
+
+            is_rec = hasattr(t, "student_usn") and t.student_usn is not None
+            student_name = getattr(t, "student_name", t.student_usn if is_rec else "")
+            conf = getattr(t, "recognition_confidence", 0.0)
+
+            if is_rec:
+                # Recognized Student: Emerald Green
+                box_color = (60, 230, 100)
+                bracket_len = max(6, min(16, (tx2 - tx1) // 3))
+
+                # Corner brackets
+                cv2.line(annotated, (tx1, ty1), (tx1 + bracket_len, ty1), box_color, 2)
+                cv2.line(annotated, (tx1, ty1), (tx1, ty1 + bracket_len), box_color, 2)
+                cv2.line(annotated, (tx2, ty1), (tx2 - bracket_len, ty1), box_color, 2)
+                cv2.line(annotated, (tx2, ty1), (tx2, ty1 + bracket_len), box_color, 2)
+                cv2.line(annotated, (tx1, ty2), (tx1 + bracket_len, ty2), box_color, 2)
+                cv2.line(annotated, (tx1, ty2), (tx1, ty2 - bracket_len), box_color, 2)
+                cv2.line(annotated, (tx2, ty2), (tx2 - bracket_len, ty2), box_color, 2)
+                cv2.line(annotated, (tx2, ty2), (tx2, ty2 - bracket_len), box_color, 2)
+
+                # Badge
+                badge_text = f"✓ {student_name}"
+                sub_text = f"{t.student_usn} · {int(conf*100)}%"
+
+                badge_y = max(hud_h + 24, ty1 - 6)
+                badge_w = max(len(badge_text), len(sub_text)) * 8 + 12
+                cv2.rectangle(annotated, (tx1 - 2, badge_y - 24), (tx1 + badge_w, badge_y), (15, 20, 15), -1)
+                cv2.rectangle(annotated, (tx1 - 2, badge_y - 24), (tx1 + badge_w, badge_y), box_color, 1)
+                cv2.putText(annotated, badge_text, (tx1 + 4, badge_y - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1, cv2.LINE_AA)
+                cv2.putText(annotated, sub_text, (tx1 + 4, badge_y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.32, box_color, 1, cv2.LINE_AA)
+
+            else:
+                # Unassigned / Unknown Face: Amber/Cyan
+                box_color = (220, 160, 40)
+                cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), box_color, 1)
+                lbl = f"ID:{t.track_id}"
+                cv2.rectangle(annotated, (tx1, ty1 - 14), (tx1 + len(lbl)*7 + 6, ty1), (20, 20, 20), -1)
+                cv2.putText(annotated, lbl, (tx1 + 2, ty1 - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1, cv2.LINE_AA)
+
+        return annotated
+
     def _process_tracked_face(self, db: Session, camera_id: str, class_id: str, track: TrackedFace, crop: np.ndarray):
         """Evaluates a tracked face and executes matching, attendance, or learning candidates."""
-        # CHANGE 6: Minimum face size check for attendance recognition
-        h, w = crop.shape[:2]
-        logger.info(f"Processing face track {track.track_id} with crop dimensions: {w}x{h}")
-        if w < 50 or h < 50:
-            logger.info(f"Skipping track {track.track_id} because crop is too small: {w}x{h} < 50x50")
-            return
+        # If track is already successfully recognized, skip redundant expensive re-inference
+        if getattr(track, "student_usn", None):
+            return True
 
-        # Use pre-detected details if available, otherwise fallback to re-detection
-        if hasattr(track, "raw_face") and track.raw_face is not None and hasattr(track, "crop") and track.crop is not None:
-            det_crop = track.crop
-            det_raw_face = track.raw_face
-        else:
-            from .face_detector import face_detector
-            detections = face_detector.detect_faces(crop)
-            if not detections:
-                return
-            det_crop = detections[0]["crop"]
-            det_raw_face = detections[0]["raw_face"]
-        
-        # Analyze Face Quality
-        quality = face_quality_service.analyze_quality(det_crop, det_raw_face)
-        
-        # Extract Embedding (prefer direct pre-computed embedding from raw face)
-        if hasattr(det_raw_face, "embedding") and det_raw_face.embedding is not None:
+        h, w = crop.shape[:2]
+        if w < 16 or h < 16:
+            return False
+
+        # Use pre-detected raw face embedding if available
+        det_raw_face = getattr(track, "raw_face", None)
+        emb = None
+        if det_raw_face is not None and hasattr(det_raw_face, "embedding") and det_raw_face.embedding is not None:
             emb = det_raw_face.embedding.copy()
             norm = np.linalg.norm(emb)
             if norm > 0:
                 emb = emb / norm
-        else:
-            emb = embedding_service.generate_embedding(det_crop)
+
+        if emb is None:
+            emb = embedding_service.generate_embedding(crop)
             
         if emb is None:
-            return
+            return False
 
-        # Query FAISS Index
-        match = faiss_service.search_face(emb, threshold=0.0)  # query with zero threshold to inspect score
+        # Query FAISS Index with CCTV threshold (0.15 for high-angle distant CCTV faces)
+        rec_thresh = getattr(settings, "recognition_confidence_threshold", 0.15)
+        if rec_thresh > 0.35:
+            rec_thresh = 0.15
+            
+        match = faiss_service.search_face(emb, threshold=rec_thresh)
         
         confidence = 0.0
         matched_usn = None
@@ -256,7 +317,6 @@ class AttendanceEngine:
         if match:
             matched_usn, confidence = match
 
-        # CHANGE 5: Store last 10 confidence scores in track history
         if not hasattr(track, "confidence_history"):
             track.confidence_history = []
         track.confidence_history.append(confidence)
@@ -266,40 +326,40 @@ class AttendanceEngine:
         avg_conf = np.mean(track.confidence_history) if track.confidence_history else 0.0
 
         # --- Business Decision Pipeline ---
-
-        # Case A: Recognized Student (Change 4: threshold from settings.py)
-        if confidence >= settings.recognition_confidence_threshold:
+        if matched_usn and confidence >= rec_thresh:
+            student = db.query(Student).filter(Student.usn == matched_usn).first()
+            student_name = student.name if student else matched_usn
+            
             track.student_usn = matched_usn
+            track.student_name = student_name
             track.recognition_confidence = confidence
             
-            # Broadcast RECOGNIZED event (with cooldown to prevent spamming client)
+            self.session_recognized_students[matched_usn] = {
+                "name": student_name,
+                "confidence": float(confidence),
+                "time": datetime.now().strftime("%I:%M:%S %p")
+            }
+
+            # Broadcast ATTENDANCE_MARKED and STUDENT_RECOGNIZED events
             now = time.time()
-            if now - self.broadcast_cooldowns.get(matched_usn, 0) > 10.0:
-                student = db.query(Student).filter(Student.usn == matched_usn).first()
-                if student:
-                    websocket_manager.broadcast_sync("STUDENT_RECOGNIZED", {
-                        "usn": student.usn,
-                        "name": student.name,
-                        "confidence": round(confidence, 3),
-                        "camera_id": camera_id
-                    })
-                    self.broadcast_cooldowns[matched_usn] = now
+            if now - self.broadcast_cooldowns.get(matched_usn, 0) > 8.0:
+                self.broadcast_cooldowns[matched_usn] = now
+                event_data = {
+                    "attendance_id": f"att_{int(time.time()*1000)}_{matched_usn}",
+                    "usn": matched_usn,
+                    "studentId": matched_usn,
+                    "name": student_name,
+                    "studentName": student_name,
+                    "class_id": class_id,
+                    "time": datetime.now().strftime("%I:%M:%S %p"),
+                    "confidence": round(float(confidence), 3),
+                    "camera_id": camera_id
+                }
+                websocket_manager.broadcast_sync("ATTENDANCE_MARKED", event_data)
+                websocket_manager.broadcast_sync("STUDENT_RECOGNIZED", event_data)
 
-            # CHANGE 5: Rule: Visibility >= 5 seconds AND average confidence of last 10 frames >= threshold
-            track_duration = time.time() - track.first_seen
-            if track_duration >= 5.0 and avg_conf >= settings.recognition_confidence_threshold:
-                self._mark_student_attendance(db, matched_usn, class_id, avg_conf, camera_id)
-
-            # Continuous learning check (Change 6: Keep 100x100 for candidates)
-            w_crop, h_crop = quality["dimensions"]["width"], quality["dimensions"]["height"]
-            lap_var = cv2.Laplacian(cv2.cvtColor(det_crop, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
-            
-            if (confidence > 0.98 and 
-                quality["score"] > 85.0 and 
-                w_crop >= 100 and h_crop >= 100 and 
-                lap_var >= 60.0):
-                self._process_learning_candidate(db, matched_usn, det_crop, emb, quality["score"], confidence)
-
+            # Mark student attendance in DB
+            self._mark_student_attendance(db, matched_usn, class_id, avg_conf, camera_id)
             return True
 
         # Save unrecognized face detections below recognition threshold
@@ -502,6 +562,7 @@ class AttendanceEngine:
         class_id: str = "CSE_7A",
         confidence_threshold: float = 0.58,
         required_confirmations: int = 3,
+        max_frames: Optional[int] = None,
     ) -> dict:
         """Process a classroom video file for attendance recognition against FAISS."""
         if not os.path.exists(video_path):
@@ -545,6 +606,9 @@ class AttendanceEngine:
             if not ret:
                 break
             frame_idx += 1
+
+            if max_frames is not None and frame_idx >= max_frames:
+                break
 
             timestamp_sec = frame_idx / fps if fps > 0 else 0.0
 

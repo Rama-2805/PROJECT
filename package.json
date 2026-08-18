@@ -8,7 +8,7 @@
     "dev": "cd apps/web && npm run dev",
     "dev:api": "cd apps/api && npm run start:dev",
     "dev:ai": "bash apps/ai-service/start.sh",
-    "dev:all": "(npm run docker:dev || echo \"Docker not running or not found. Starting servers locally...\") && npx concurrently --kill-others \"npm run dev:api\" \"npm run dev\"",
+    "dev:all": "(npm run docker:dev || echo \"Docker not running or not found. Starting servers locally...\") && npx concurrently --kill-others --names \"API,WEB,AI\" --prefix-colors \"blue,green,yellow\" \"npm run dev:api\" \"npm run dev\" \"npm run dev:ai\"",
     "dev:full": "(npm run docker:dev || echo \"Docker not running\") && npx concurrently --kill-others --names \"API,WEB,AI\" --prefix-colors \"blue,green,yellow\" \"npm run dev:api\" \"npm run dev\" \"npm run dev:ai\"",
     "dev:demo": "cross-env DEMO_MODE=true npm run dev",
     "docker:start": "docker compose --env-file .env up -d",

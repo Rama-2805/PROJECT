@@ -1,8 +1,9 @@
-import { Injectable, NotFoundException, BadRequestException } from "@nestjs/common";
+import { Injectable, NotFoundException, BadRequestException, Logger } from "@nestjs/common";
 import * as path from "path";
 import * as fs from "fs";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateEnrollmentJobDto, UpdateEnrollmentJobDto, AssignClusterDto, SyncClustersDto } from "./enrollment.dto";
+import { resolveStorageDir } from "./enrollment.module";
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://127.0.0.1:8000";
 
@@ -136,9 +137,24 @@ export class EnrollmentService {
   }
 
   async deleteCluster(clusterId: string) {
-    const cluster = await this.prisma.faceCluster.findUnique({ where: { id: clusterId } });
-    if (!cluster) throw new NotFoundException("Cluster not found");
-    return this.prisma.faceCluster.delete({ where: { id: clusterId } });
+    const studentCluster = await this.prisma.studentCluster.findFirst({
+      where: {
+        OR: [
+          { id: clusterId },
+          { bestImagePath: { contains: clusterId } },
+        ],
+      },
+    });
+    if (studentCluster) {
+      await this.prisma.clusterImage.deleteMany({ where: { studentClusterId: studentCluster.id } });
+      await this.prisma.clusterAssignment.deleteMany({ where: { studentClusterId: studentCluster.id } });
+      return this.prisma.studentCluster.delete({ where: { id: studentCluster.id } });
+    }
+    const faceCluster = await this.prisma.faceCluster.findUnique({ where: { id: clusterId } });
+    if (faceCluster) {
+      return this.prisma.faceCluster.delete({ where: { id: clusterId } });
+    }
+    return { success: true, message: `Cluster ${clusterId} removed` };
   }
 
   async createEmbedding(studentId: string, embeddingVector: number[], confidence: number, thumbnailPath?: string) {
@@ -348,17 +364,44 @@ export class EnrollmentService {
     if (!files || files.length === 0) throw new BadRequestException("No video files provided");
 
     const createdVideos = await Promise.all(
-      files.map((file) =>
-        this.prisma.enrollmentVideo.create({
+      files.map(async (file) => {
+        let finalPath = file.path;
+        if (!finalPath && file.destination && file.filename) {
+          finalPath = path.join(file.destination, file.filename);
+        }
+        if (!finalPath) {
+          const destDir = resolveStorageDir(sessionId);
+          finalPath = path.join(destDir, `${Date.now()}_${file.originalname || "video.mp4"}`);
+          if (file.buffer) {
+            fs.writeFileSync(finalPath, file.buffer);
+          }
+        }
+
+        // Ensure file is inside the target session directory
+        const correctDir = resolveStorageDir(sessionId);
+        if (finalPath && !finalPath.includes(sessionId) && fs.existsSync(finalPath)) {
+          const filename = path.basename(finalPath);
+          const correctPath = path.join(correctDir, filename);
+          try {
+            fs.renameSync(finalPath, correctPath);
+            finalPath = correctPath;
+          } catch {
+            /* best effort */
+          }
+        }
+
+        const fileSize = file.size || (fs.existsSync(finalPath) ? fs.statSync(finalPath).size : 0);
+
+        return this.prisma.enrollmentVideo.create({
           data: {
             enrollmentSessionId: sessionId,
-            fileName: file.originalname,
-            filePath: file.path,
-            fileSize: file.size,
+            fileName: file.originalname || path.basename(finalPath),
+            filePath: finalPath,
+            fileSize,
             status: "QUEUED",
           },
-        })
-      )
+        });
+      })
     );
 
     await this.prisma.enrollmentSession.update({
@@ -372,7 +415,7 @@ export class EnrollmentService {
         action: "VIDEOS_UPLOADED",
         details: JSON.stringify({
           count: createdVideos.length,
-          files: files.map((f) => ({ name: f.originalname, size: f.size, path: f.path })),
+          files: createdVideos.map((v) => ({ name: v.fileName, size: v.fileSize, path: v.filePath })),
         }),
       },
     });
@@ -580,8 +623,8 @@ export class EnrollmentService {
       detectedFacesCount: aiStatus?.detectedFacesCount ?? aiStatus?.face_detections ?? session.detectedFacesCount,
       framesWithFaces: aiStatus?.frames_with_faces ?? diag.frames_with_faces ?? 0,
       currentFrameFaces: aiStatus?.current_frame_faces ?? 0,
-      qualitySamples: aiStatus?.qualitySamples ?? diag.quality_samples ?? session.detectedFacesCount ?? 0,
-      arcfaceEmbeddings: aiStatus?.arcfaceEmbeddings ?? diag.arcface_embeddings ?? session.detectedFacesCount ?? 0,
+      qualitySamples: aiStatus?.qualitySamples ?? diag.quality_samples ?? 0,
+      arcfaceEmbeddings: aiStatus?.arcfaceEmbeddings ?? diag.arcface_embeddings ?? 0,
       processingFps: aiStatus?.processingFps ?? diag.processing_fps ?? 0.0,
       generatedClusters: session.studentClusters.length || session.generatedClusters || aiStatus?.generatedClusters || 0,
       aiStatus,
@@ -651,24 +694,109 @@ export class EnrollmentService {
   }
 
   async assignClusterStudent(dto: any) {
-    const cluster = await this.prisma.studentCluster.findUnique({
-      where: { id: dto.clusterId },
-      include: { session: true, images: true },
-    });
+    let cluster: any = null;
+    try {
+      cluster = await this.prisma.studentCluster.findUnique({
+        where: { id: dto.clusterId },
+        include: { session: true, images: true },
+      });
+    } catch {}
+
+    if (!cluster) {
+      const clusterNum = parseInt(String(dto.clusterId).replace(/\D/g, ""), 10);
+      if (!isNaN(clusterNum) && dto.sessionId) {
+        cluster = await this.prisma.studentCluster.findFirst({
+          where: { enrollmentSessionId: dto.sessionId, clusterNumber: clusterNum },
+          include: { session: true, images: true },
+        });
+      } else if (!isNaN(clusterNum)) {
+        cluster = await this.prisma.studentCluster.findFirst({
+          where: { clusterNumber: clusterNum },
+          include: { session: true, images: true },
+        });
+      }
+    }
+
+    if (!cluster && dto.sessionId) {
+      try {
+        await this.syncAiClusters(dto.sessionId);
+        const clusterNum = parseInt(String(dto.clusterId).replace(/\D/g, ""), 10);
+        cluster = await this.prisma.studentCluster.findFirst({
+          where: { enrollmentSessionId: dto.sessionId, ...(isNaN(clusterNum) ? {} : { clusterNumber: clusterNum }) },
+          include: { session: true, images: true },
+        });
+      } catch {}
+    }
+
+    if (!cluster) {
+      const session = dto.sessionId ? await this.prisma.enrollmentSession.findUnique({ where: { id: dto.sessionId } }) : await this.prisma.enrollmentSession.findFirst();
+      if (session) {
+        const clusterNum = parseInt(String(dto.clusterId).replace(/\D/g, ""), 10) || 1;
+        cluster = await this.prisma.studentCluster.create({
+          data: {
+            enrollmentSessionId: session.id,
+            clusterNumber: clusterNum,
+            sampleCount: dto.sampleCount || 1,
+            qualityAvg: 85,
+            confidence: 0.95,
+            bestImagePath: dto.bestImagePath,
+            status: "ASSIGNED",
+          },
+          include: { session: true, images: true },
+        });
+      }
+    }
+
     if (!cluster) throw new NotFoundException("Student cluster not found");
 
     let studentId = dto.existingStudentId || dto.studentId;
 
     // Check if student exists by USN or name if studentId was not provided
     if (!studentId && dto.usn) {
+      const rawUsn = String(dto.usn).trim();
+      const upperUsn = rawUsn.toUpperCase();
+      const usnVariants = Array.from(new Set([
+        rawUsn,
+        upperUsn,
+        rawUsn.toLowerCase(),
+        upperUsn.replace(/^1V1/, "1VI"),
+        upperUsn.replace(/^1VI/, "1V1"),
+        upperUsn.replace(/1V1/g, "1VI"),
+        upperUsn.replace(/1VI/g, "1V1"),
+        upperUsn.replace(/CSO/g, "CS0"),
+        upperUsn.replace(/CS0/g, "CSO"),
+      ]));
+
       const found = await this.prisma.student.findFirst({
-        where: { OR: [{ rollNumber: dto.usn }, { studentId: dto.usn }] },
+        where: {
+          OR: [
+            { rollNumber: { in: usnVariants } },
+            { studentId: { in: usnVariants } },
+            { usn: { in: usnVariants } },
+            { rollNumber: { contains: rawUsn.slice(-6), mode: "insensitive" } },
+            { studentId: { contains: rawUsn.slice(-6), mode: "insensitive" } },
+            { fullName: { equals: dto.fullName || dto.usn, mode: "insensitive" } },
+          ],
+        },
       });
       if (found) studentId = found.id;
     }
 
+    // Check for duplicate student assignment within the same session
+    if (studentId && !dto.force) {
+      const alreadyAssigned = await this.prisma.studentCluster.findFirst({
+        where: {
+          enrollmentSessionId: cluster.enrollmentSessionId,
+          assignedStudentId: studentId,
+          id: { not: cluster.id },
+        },
+      });
+      if (alreadyAssigned) {
+        Logger.warn(`Student is already assigned to Cluster #${alreadyAssigned.clusterNumber}`, "EnrollmentService");
+      }
+    }
+
     if (!studentId && dto.fullName) {
-      // Find valid default dept & course
       const defaultDept = await this.prisma.department.findFirst();
       const defaultCourse = await this.prisma.course.findFirst();
 
@@ -694,13 +822,15 @@ export class EnrollmentService {
         where: { id: studentId },
         data: {
           faceEnrolled: true,
-          profilePhoto: cluster.bestImagePath,
+          faceSamples: cluster.sampleCount || 1,
+          profilePhoto: cluster.bestImagePath || undefined,
+          primaryFaceImagePath: cluster.bestImagePath || undefined,
         },
       });
     }
 
     await this.prisma.studentCluster.update({
-      where: { id: dto.clusterId },
+      where: { id: cluster.id },
       data: {
         assignedStudentId: studentId,
         status: "ASSIGNED",
@@ -709,28 +839,37 @@ export class EnrollmentService {
 
     if (studentId) {
       const existingAssign = await this.prisma.clusterAssignment.findFirst({
-        where: { studentClusterId: dto.clusterId, studentId },
+        where: { studentClusterId: cluster.id, studentId },
       });
       if (!existingAssign) {
         await this.prisma.clusterAssignment.create({
           data: {
-            studentClusterId: dto.clusterId,
+            studentClusterId: cluster.id,
             studentId,
           },
         });
       }
 
-      // Sync cluster embedding into FAISS vector index in AI Service
+      // Sync cluster embedding and enroll in FAISS vector index in AI Service
       const studentObj = await this.prisma.student.findUnique({ where: { id: studentId } });
-      const usn = studentObj?.rollNumber || studentObj?.usn || studentObj?.studentId || dto.usn;
+      const usn = studentObj?.rollNumber || studentObj?.studentId || studentObj?.usn || dto.usn;
+      const sId = cluster.session?.id || dto.sessionId;
 
-      if (usn) {
+      if (usn && sId) {
         try {
-          const enrollUrl = `${AI_SERVICE_URL}/api/v1/sessions/${cluster.session.id}/enroll-cluster`;
-          await fetch(enrollUrl, {
+          const aiCid = dto.clusterId || `cluster_${String(cluster.clusterNumber).padStart(3, "0")}`;
+          // 1. Assign in AI service
+          await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sId}/clusters/${aiCid}/assign`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ usn, clusterId: dto.clusterId }),
+            body: JSON.stringify({ usn, name: studentObj?.fullName || dto.fullName, studentId }),
+            signal: AbortSignal.timeout(3000),
+          });
+          // 2. Enroll in FAISS
+          await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sId}/enroll-cluster`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ usn, clusterId: aiCid }),
             signal: AbortSignal.timeout(3000),
           });
         } catch {
@@ -739,7 +878,7 @@ export class EnrollmentService {
       }
     }
 
-    return { success: true, clusterId: dto.clusterId, studentId };
+    return { success: true, clusterId: cluster.id, studentId };
   }
 
   async finalizeEnrollmentSession(sessionId: string) {
@@ -793,7 +932,19 @@ export class EnrollmentService {
       data: { status: "PROCESSING", progressPercentage: 5 },
     });
 
-    const videoPaths = session.videos.map((v) => v.filePath);
+    const videoPaths = session.videos.map((v) => {
+      if (path.isAbsolute(v.filePath) && fs.existsSync(v.filePath)) return v.filePath;
+      const candidates = [
+        path.resolve(v.filePath),
+        path.resolve(process.cwd(), v.filePath),
+        path.resolve(process.cwd(), "..", "..", v.filePath),
+        path.resolve(process.cwd(), "..", v.filePath),
+      ];
+      for (const p of candidates) {
+        if (fs.existsSync(p)) return p;
+      }
+      return v.filePath;
+    });
 
     console.log(`[DIAGNOSTIC-NESTJS] Processing session '${sessionId}': total videos = ${session.videos.length}`);
     for (const v of session.videos) {
@@ -884,16 +1035,29 @@ export class EnrollmentService {
     try {
       await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/stop`, {
         method: "POST",
-        signal: AbortSignal.timeout(3000),
+        signal: AbortSignal.timeout(10000),
       });
     } catch {}
 
+    try {
+      await this.syncAiClusters(sessionId);
+    } catch (syncErr) {
+      console.warn(`[stopSessionProcessing] Error syncing AI clusters for ${sessionId}:`, syncErr);
+    }
+
+    const clusterCount = await this.prisma.studentCluster.count({ where: { enrollmentSessionId: sessionId } });
+    const finalStatus = clusterCount > 0 ? "REVIEW_REQUIRED" : "STOPPED";
+
     await this.prisma.enrollmentSession.update({
       where: { id: sessionId },
-      data: { status: "FAILED", errorMessage: "Stopped by user" },
+      data: {
+        status: finalStatus,
+        progressPercentage: 100,
+        errorMessage: clusterCount > 0 ? null : "Stopped by user",
+      },
     });
 
-    return { success: true, sessionId, status: "STOPPED" };
+    return { success: true, sessionId, status: finalStatus, clusterCount };
   }
 
   async deleteEnrollmentSession(sessionId: string) {
@@ -961,7 +1125,33 @@ export class EnrollmentService {
     for (const [idx, c] of clusters.entries()) {
       const aiClusterId = c.clusterId;
 
-      // Try to find existing cluster by the AI-assigned cluster ID stored in bestImagePath or by clusterNumber
+      // Check if AI suggested or confirmed a student
+      let matchedStudentId: string | null = null;
+      const studentUsn = c.assignedStudent?.usn || c.usn || c.assignedUsn;
+      if (studentUsn) {
+        const student = await this.prisma.student.findFirst({
+          where: {
+            OR: [
+              { rollNumber: studentUsn },
+              { studentId: studentUsn },
+              { usn: studentUsn },
+              { rollNumber: { equals: studentUsn, mode: "insensitive" } },
+              { studentId: { equals: studentUsn, mode: "insensitive" } },
+              { fullName: { equals: studentUsn, mode: "insensitive" } },
+            ],
+          },
+        });
+        if (student) {
+          matchedStudentId = student.id;
+        }
+      }
+
+      const isEnrolled = Boolean(c.isEnrolled || c.enrolled);
+      const clusterStatus = (c.identity_status === "CONFIRMED" || isEnrolled)
+        ? "ASSIGNED"
+        : (c.identity_status === "REJECTED" ? "REJECTED" : (matchedStudentId ? "ASSIGNED" : "UNASSIGNED"));
+
+      // Try to find existing cluster by clusterNumber
       let cluster = await this.prisma.studentCluster.findFirst({
         where: {
           enrollmentSessionId: sessionId,
@@ -976,10 +1166,12 @@ export class EnrollmentService {
           data: {
             sampleCount: c.sampleCount || 0,
             qualityAvg: c.qualityAvg || 0,
-            confidence: c.confidence || 0.85,
+            confidence: c.identity_mean_similarity || c.confidence || 0.85,
             bestImagePath: c.bestImagePath,
             firstSeenTime: c.firstSeenTime,
             lastSeenTime: c.lastSeenTime,
+            assignedStudentId: matchedStudentId || cluster.assignedStudentId,
+            status: clusterStatus,
           },
         });
       } else {
@@ -990,13 +1182,44 @@ export class EnrollmentService {
             clusterNumber: c.clusterNumber || idx + 1,
             sampleCount: c.sampleCount || 0,
             qualityAvg: c.qualityAvg || 0,
-            confidence: c.confidence || 0.85,
+            confidence: c.identity_mean_similarity || c.confidence || 0.85,
             bestImagePath: c.bestImagePath,
             firstSeenTime: c.firstSeenTime,
             lastSeenTime: c.lastSeenTime,
-            status: "UNASSIGNED",
+            assignedStudentId: matchedStudentId,
+            status: clusterStatus,
           },
         });
+      }
+
+      if (matchedStudentId) {
+        if (isEnrolled) {
+          try {
+            await this.prisma.student.update({
+              where: { id: matchedStudentId },
+              data: {
+                faceEnrolled: true,
+                faceSamples: c.sampleCount || 1,
+                profilePhoto: c.bestImagePath || undefined,
+                primaryFaceImagePath: c.bestImagePath || undefined,
+              },
+            });
+          } catch {}
+        }
+
+        const existingAss = await this.prisma.clusterAssignment.findFirst({
+          where: { studentClusterId: cluster.id, studentId: matchedStudentId },
+        });
+        if (!existingAss) {
+          await this.prisma.clusterAssignment.create({
+            data: {
+              studentClusterId: cluster.id,
+              studentId: matchedStudentId,
+              confidence: c.identity_mean_similarity || c.confidence || 0.85,
+              assignedBy: c.assignment_source || "AUTO",
+            },
+          });
+        }
       }
 
       // Insert gallery images that don't exist yet
