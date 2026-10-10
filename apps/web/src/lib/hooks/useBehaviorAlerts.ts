@@ -43,8 +43,10 @@ export function useBehaviorAlerts() {
           ? "/behavior/alerts"
           : `/behavior/alerts?section=${sectionFilter}`;
       const res = await api.get<BehaviorAlertItem[]>(url);
-      if (Array.isArray(res)) {
-        setAlerts(res);
+      if (res && res.data && Array.isArray(res.data)) {
+        setAlerts(res.data);
+      } else if (Array.isArray(res)) {
+        setAlerts(res as any);
       }
     } catch (err) {
       console.warn("Failed to fetch behavior alerts:", err);
