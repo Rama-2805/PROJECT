@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { cn } from "@/lib/utils/cn";
 import Link from "next/link";
+import { useBehaviorAlerts } from "@/lib/hooks/useBehaviorAlerts";
 
 export function TopNavbar() {
   const toggleCommandPalette = useUIStore((s) => s.toggleCommandPalette);
@@ -17,6 +18,17 @@ export function TopNavbar() {
 
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
+
+  const {
+    alerts,
+    unreadCount,
+    sectionFilter,
+    setSectionFilter,
+    acknowledgeAlert,
+    isTeacher,
+    isHod,
+    isAdmin,
+  } = useBehaviorAlerts();
 
   const profileRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
@@ -97,53 +109,131 @@ export function TopNavbar() {
           <button 
             onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
             className="relative rounded-xl border border-glass-border bg-glass-light p-2.5 text-text-secondary hover:bg-glass-medium hover:border-glass-border/30 hover:text-text-primary transition-all shadow-glass group"
+            title="Real-time Behavioral & System Notifications"
           >
-            <span className="absolute top-1.5 right-1.5 h-2.5 w-2.5 rounded-full bg-red-505 border-2 border-bg-primary animate-pulse"></span>
+            {unreadCount > 0 ? (
+              <span className="absolute -top-1 -right-1 h-4 min-w-[16px] px-1 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center animate-pulse shadow-md">
+                {unreadCount}
+              </span>
+            ) : (
+              <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-green-500 border border-bg-primary"></span>
+            )}
             <Bell className="h-4 w-4 group-hover:scale-110 transition-transform" />
           </button>
           
           {isNotificationsOpen && (
-            <div className="absolute right-0 top-full mt-2 w-80 rounded-xl bg-bg-secondary/95 backdrop-blur-[45px] border border-glass-border p-3 shadow-2xl z-[100] text-xs transition-colors duration-300">
+            <div className="absolute right-0 top-full mt-2 w-88 sm:w-96 rounded-xl bg-bg-secondary/95 backdrop-blur-[45px] border border-glass-border p-3 shadow-2xl z-[100] text-xs transition-colors duration-300">
               <div className="flex justify-between items-center pb-2 mb-2 border-b border-glass-border">
-                <span className="font-bold text-text-primary">Notifications</span>
-                <span className="text-[10px] text-text-muted hover:text-text-primary cursor-pointer">Mark all read</span>
+                <div className="flex items-center gap-1.5">
+                  <span className="font-bold text-text-primary">Behavioral & Class Alerts</span>
+                  {unreadCount > 0 && (
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30">
+                      {unreadCount} New
+                    </span>
+                  )}
+                </div>
+                {/* Section filter tabs for HOD / Admin */}
+                {(isHod || isAdmin) && (
+                  <div className="flex items-center gap-1 bg-black/30 p-0.5 rounded-lg border border-white/5">
+                    {(["ALL", "A", "B"] as const).map((sec) => (
+                      <button
+                        key={sec}
+                        onClick={() => setSectionFilter(sec)}
+                        className={cn(
+                          "px-2 py-0.5 rounded text-[10px] font-medium transition-all",
+                          sectionFilter === sec
+                            ? "bg-ai-blue text-black font-bold shadow-sm"
+                            : "text-text-muted hover:text-text-primary",
+                        )}
+                      >
+                        {sec === "ALL" ? "All" : `Sec ${sec}`}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {isTeacher && !isHod && (
+                  <span className="text-[10px] font-semibold text-ai-blue bg-ai-blue/10 px-2 py-0.5 rounded border border-ai-blue/20">
+                    Section A
+                  </span>
+                )}
               </div>
-              <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                <div className="p-2 rounded-lg bg-glass-light hover:bg-glass-medium transition-colors border border-glass-border">
-                  <div className="flex justify-between font-bold text-text-primary text-[10px]">
-                    <span className="text-amber-500">Attendance Alert</span>
-                    <span className="text-text-muted font-normal">2m ago</span>
+
+              <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
+                {alerts.length === 0 ? (
+                  <div className="text-center py-8 text-text-muted">
+                    <p className="text-xs">No active behavioral alerts</p>
+                    <p className="text-[10px] text-text-dim mt-1">All monitored students are attentive and alert.</p>
                   </div>
-                  <p className="text-text-secondary mt-0.5 leading-normal">Room 302: 4 students flagged for anomalies.</p>
-                </div>
-                <div className="p-2 rounded-lg bg-glass-light hover:bg-glass-medium transition-colors border border-glass-border">
-                  <div className="flex justify-between font-bold text-text-primary text-[10px]">
-                    <span className="text-red-500">Unknown Face</span>
-                    <span className="text-text-muted font-normal">10m ago</span>
-                  </div>
-                  <p className="text-text-secondary mt-0.5 leading-normal">Unidentified person detected at entrance camera.</p>
-                </div>
-                <div className="p-2 rounded-lg bg-glass-light hover:bg-glass-medium transition-colors border border-glass-border">
-                  <div className="flex justify-between font-bold text-text-primary text-[10px]">
-                    <span className="text-green-500">Student Enrollment</span>
-                    <span className="text-text-muted font-normal">1h ago</span>
-                  </div>
-                  <p className="text-text-secondary mt-0.5 leading-normal">USN 1VI23CS001 registered face successfully.</p>
-                </div>
-                <div className="p-2 rounded-lg bg-glass-light hover:bg-glass-medium transition-colors border border-glass-border">
-                  <div className="flex justify-between font-bold text-text-primary text-[10px]">
-                    <span className="text-blue-500">Teacher Activity</span>
-                    <span className="text-text-muted font-normal">2h ago</span>
-                  </div>
-                  <p className="text-text-secondary mt-0.5 leading-normal">Dr. Anil started attendance session BCS301.</p>
-                </div>
-                <div className="p-2 rounded-lg bg-glass-light hover:bg-glass-medium transition-colors border border-glass-border">
-                  <div className="flex justify-between font-bold text-text-primary text-[10px]">
-                    <span className="text-red-400">System Warning</span>
-                    <span className="text-text-muted font-normal">4h ago</span>
-                  </div>
-                  <p className="text-text-secondary mt-0.5 leading-normal">Camera feed 4 latency exceeded 120ms.</p>
-                </div>
+                ) : (
+                  alerts.map((alert) => {
+                    const isPhone = alert.title.includes("Phone") || alert.description?.includes("phone");
+                    const isSleeping = alert.title.includes("Sleeping") || alert.title.includes("Inactive") || alert.description?.includes("sleeping");
+
+                    return (
+                      <div
+                        key={alert.id}
+                        className={cn(
+                          "p-2.5 rounded-xl transition-all border",
+                          alert.severity === "CRITICAL"
+                            ? "bg-red-500/10 border-red-500/30 hover:border-red-500/50"
+                            : alert.severity === "WARNING"
+                            ? "bg-amber-500/10 border-amber-500/30 hover:border-amber-500/50"
+                            : "bg-glass-light border-glass-border hover:bg-glass-medium",
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-base shrink-0">
+                              {isPhone ? "📱" : isSleeping ? "💤" : "⚠️"}
+                            </span>
+                            <span
+                              className={cn(
+                                "font-bold text-[11px] truncate",
+                                alert.severity === "CRITICAL"
+                                  ? "text-red-400"
+                                  : alert.severity === "WARNING"
+                                  ? "text-amber-400"
+                                  : "text-ai-blue",
+                              )}
+                            >
+                              {alert.title}
+                            </span>
+                          </div>
+                          <span className="text-[9px] text-text-muted shrink-0 font-mono">
+                            {new Date(alert.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        </div>
+
+                        {alert.description && (
+                          <p className="text-text-secondary text-[11px] mt-1 leading-snug">
+                            {alert.description}
+                          </p>
+                        )}
+
+                        <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-white/5">
+                          <div className="flex items-center gap-1.5">
+                            {alert.section && (
+                              <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-white/10 text-text-muted">
+                                Section {alert.section}
+                              </span>
+                            )}
+                            {alert.confidence > 0 && (
+                              <span className="text-[9px] text-text-dim">
+                                AI Conf: {(alert.confidence * 100).toFixed(0)}%
+                              </span>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => acknowledgeAlert(alert.id)}
+                            className="px-2 py-0.5 rounded text-[10px] font-medium bg-white/10 hover:bg-white/20 text-text-primary transition-colors cursor-pointer"
+                          >
+                            Acknowledge
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           )}

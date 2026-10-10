@@ -7,9 +7,22 @@ export class BehaviorService {
   constructor(private prisma: PrismaService) {}
 
   async ingest(dto: IngestBehaviorDto) {
-    return this.prisma.behaviorEvent.create({
+    let student = null;
+    if (dto.studentId) {
+      student = await this.prisma.student.findFirst({
+        where: {
+          OR: [
+            { id: dto.studentId },
+            { usn: dto.studentId },
+            { rollNumber: dto.studentId },
+          ],
+        },
+      });
+    }
+
+    const event = await this.prisma.behaviorEvent.create({
       data: {
-        studentId: dto.studentId,
+        studentId: student?.id || dto.studentId,
         sessionId: dto.sessionId,
         behaviorType: dto.behaviorType,
         confidence: dto.confidence,
@@ -18,6 +31,51 @@ export class BehaviorService {
         metadata: dto.metadata ? JSON.stringify(dto.metadata) : undefined,
       },
     });
+
+    const alertableTypes = ["PHONE_USAGE", "SLEEPING", "INACTIVE", "DISTRACTED", "ABSENT_FROM_SEAT"];
+    if (alertableTypes.includes(dto.behaviorType)) {
+      const studentName = student?.fullName || dto.metadata?.studentName || "Student";
+      const studentUsn = student?.rollNumber || student?.usn || dto.studentId || "Unknown USN";
+      const section = student?.section || dto.metadata?.section || "A";
+
+      let severity = "WARNING";
+      let title = "";
+      let description = "";
+
+      if (dto.behaviorType === "PHONE_USAGE") {
+        severity = "WARNING";
+        title = `[Section ${section}] 📱 Phone Detected: ${studentName} (${studentUsn})`;
+        description = `Student ${studentName} (${studentUsn}) in Section ${section} was detected using a mobile phone.`;
+      } else if (dto.behaviorType === "SLEEPING" || dto.behaviorType === "INACTIVE") {
+        severity = "CRITICAL";
+        title = `[Section ${section}] 💤 Student Inactive / Sleeping: ${studentName} (${studentUsn})`;
+        description = `Student ${studentName} (${studentUsn}) in Section ${section} is not active (head down / sleeping detected).`;
+      } else if (dto.behaviorType === "DISTRACTED") {
+        severity = "INFO";
+        title = `[Section ${section}] 👀 Inattentive: ${studentName} (${studentUsn})`;
+        description = `Student ${studentName} (${studentUsn}) in Section ${section} is not alert (prolonged distraction).`;
+      } else {
+        severity = "INFO";
+        title = `[Section ${section}] ⚠️ Alert: ${studentName} (${studentUsn})`;
+        description = `Behavior anomaly (${dto.behaviorType}) detected for ${studentName} in Section ${section}.`;
+      }
+
+      const alert = await this.prisma.behaviorAlert.create({
+        data: {
+          behaviorEventId: event.id,
+          studentId: student?.id || dto.studentId,
+          severity,
+          title,
+          description,
+          confidence: dto.confidence,
+          status: "ACTIVE",
+        },
+      });
+
+      return { event, alert };
+    }
+
+    return event;
   }
 
   async queryEvents(query: BehaviorQueryDto) {
@@ -85,15 +143,63 @@ export class BehaviorService {
     };
   }
 
-  async getAlerts(severity?: string) {
+  async getAlerts(severity?: string, section?: string) {
     const where: any = { status: "ACTIVE" };
     if (severity) where.severity = severity;
 
-    return this.prisma.behaviorAlert.findMany({
+    const alerts = await this.prisma.behaviorAlert.findMany({
       where,
       orderBy: { createdAt: "desc" },
-      take: 50,
+      take: 60,
     });
+
+    const studentIds = alerts.map((a) => a.studentId).filter(Boolean) as string[];
+    const students = studentIds.length > 0
+      ? await this.prisma.student.findMany({
+          where: {
+            OR: [
+              { id: { in: studentIds } },
+              { usn: { in: studentIds } },
+              { rollNumber: { in: studentIds } },
+            ],
+          },
+          select: { id: true, usn: true, rollNumber: true, fullName: true, section: true },
+        })
+      : [];
+
+    const studentMap = new Map();
+    for (const s of students) {
+      studentMap.set(s.id, s);
+      if (s.usn) studentMap.set(s.usn, s);
+      if (s.rollNumber) studentMap.set(s.rollNumber, s);
+    }
+
+    const enrichedAlerts = alerts.map((a) => {
+      const student = a.studentId ? studentMap.get(a.studentId) : null;
+      let detectedSection = student?.section;
+      if (!detectedSection) {
+        if (a.title.includes("[Section B]") || a.description?.includes("Section B")) {
+          detectedSection = "B";
+        } else {
+          detectedSection = "A";
+        }
+      }
+
+      return {
+        ...a,
+        studentName: student?.fullName || null,
+        studentUsn: student?.rollNumber || student?.usn || null,
+        section: detectedSection,
+      };
+    });
+
+    if (section && section !== "ALL") {
+      return enrichedAlerts.filter(
+        (a) => a.section?.toUpperCase() === section.toUpperCase(),
+      );
+    }
+
+    return enrichedAlerts;
   }
 
   async acknowledgeAlert(alertId: string, dto: AcknowledgeAlertDto) {

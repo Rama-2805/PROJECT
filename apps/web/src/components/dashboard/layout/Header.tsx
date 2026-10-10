@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
 import { getUsers } from "@/lib/userStore";
 import { apiRequest } from "@/lib/api/client";
+import { useBehaviorAlerts } from "@/lib/hooks/useBehaviorAlerts";
 
 /* ─── Header Component ─────────────────────────────────────────── */
 export interface HeaderProps {
@@ -110,12 +111,16 @@ export function Header({ title, breadcrumbs }: HeaderProps) {
     }
   };
 
-  const notifications = [
-    { id: 1, text: "Siddharth Saxena marked PRESENT (DSA class)", severity: "info", time: "Just now" },
-    { id: 2, text: "Unknown face cluster CLUST-01 reoccurred in Lab 301", severity: "warning", time: "5m ago" },
-    { id: 3, text: "FAISS vector database rebuilt successfully", severity: "info", time: "1h ago" },
-    { id: 4, text: "Edge CCTV Camera Lab 301 offline alert!", severity: "critical", time: "2h ago" },
-  ];
+  const {
+    alerts,
+    unreadCount,
+    sectionFilter,
+    setSectionFilter,
+    acknowledgeAlert,
+    isTeacher,
+    isHod,
+    isAdmin,
+  } = useBehaviorAlerts();
 
   return (
     <header className="sticky top-0 z-30 bg-white/5 backdrop-blur-[40px] saturate-200 border-b border-white/10 h-16">
@@ -217,9 +222,13 @@ export function Header({ title, breadcrumbs }: HeaderProps) {
               <svg className="w-4 h-4 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
               </svg>
-              <span className="absolute -top-0.5 -right-0.5 h-4 w-4 rounded-full bg-error text-[8px] font-bold text-white flex items-center justify-center">
-                {notifications.length}
-              </span>
+              {unreadCount > 0 ? (
+                <span className="absolute -top-0.5 -right-0.5 h-4 min-w-[16px] px-1 rounded-full bg-error text-[8px] font-bold text-white flex items-center justify-center animate-pulse">
+                  {unreadCount}
+                </span>
+              ) : (
+                <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-success"></span>
+              )}
             </button>
 
             <AnimatePresence>
@@ -228,27 +237,96 @@ export function Header({ title, breadcrumbs }: HeaderProps) {
                   initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: 8 }}
-                  className="absolute right-0 top-full mt-2 w-80 glass-heavy border border-glass-border rounded-xl p-3 shadow-xl"
+                  className="absolute right-0 top-full mt-2 w-88 sm:w-96 glass-heavy border border-glass-border rounded-xl p-3 shadow-xl z-50"
                 >
                   <div className="flex items-center justify-between mb-3 border-b border-glass-border pb-2">
-                    <span className="text-xs font-bold text-text-primary">System Notification Center</span>
-                    <button className="text-[10px] text-ai-blue hover:underline" onClick={() => setNotifOpen(false)}>Dismiss</button>
-                  </div>
-                  <div className="space-y-2">
-                    {notifications.map((n) => (
-                      <div key={n.id} className="flex gap-2.5 p-2 rounded-lg hover:bg-glass-light transition-colors text-xs border border-transparent hover:border-glass-border">
-                        <div className={cn(
-                          "mt-1 h-2 w-2 rounded-full shrink-0",
-                          n.severity === "critical" && "bg-error animate-glow-pulse",
-                          n.severity === "warning" && "bg-warning",
-                          n.severity === "info" && "bg-ai-blue",
-                        )} />
-                        <div className="min-w-0">
-                          <p className="text-text-primary leading-tight">{n.text}</p>
-                          <p className="text-[9px] text-text-muted mt-0.5">{n.time}</p>
-                        </div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-bold text-text-primary">Behavioral & Class Alerts</span>
+                      {unreadCount > 0 && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-error/20 text-error">
+                          {unreadCount} New
+                        </span>
+                      )}
+                    </div>
+                    {(isHod || isAdmin) && (
+                      <div className="flex items-center gap-1 bg-black/40 p-0.5 rounded-lg border border-white/5">
+                        {(["ALL", "A", "B"] as const).map((sec) => (
+                          <button
+                            key={sec}
+                            onClick={() => setSectionFilter(sec)}
+                            className={cn(
+                              "px-2 py-0.5 rounded text-[10px] font-medium transition-all",
+                              sectionFilter === sec
+                                ? "bg-ai-blue text-black font-bold"
+                                : "text-text-muted hover:text-text-primary",
+                            )}
+                          >
+                            {sec === "ALL" ? "All" : `Sec ${sec}`}
+                          </button>
+                        ))}
                       </div>
-                    ))}
+                    )}
+                    {isTeacher && !isHod && (
+                      <span className="text-[10px] font-semibold text-ai-blue bg-ai-blue/10 px-2 py-0.5 rounded border border-ai-blue/20">
+                        Section A
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
+                    {alerts.length === 0 ? (
+                      <div className="text-center py-6 text-text-muted text-xs">
+                        No active behavioral alerts.
+                      </div>
+                    ) : (
+                      alerts.map((n) => {
+                        const isPhone = n.title.includes("Phone") || n.description?.includes("phone");
+                        const isSleeping = n.title.includes("Sleeping") || n.title.includes("Inactive") || n.description?.includes("sleeping");
+
+                        return (
+                          <div
+                            key={n.id}
+                            className={cn(
+                              "flex flex-col gap-1.5 p-2 rounded-lg text-xs border transition-colors",
+                              n.severity === "CRITICAL"
+                                ? "bg-error/10 border-error/30"
+                                : n.severity === "WARNING"
+                                ? "bg-warning/10 border-warning/30"
+                                : "bg-glass-light border-glass-border hover:bg-glass-medium",
+                            )}
+                          >
+                            <div className="flex items-center justify-between gap-1">
+                              <div className="flex items-center gap-1.5 font-semibold text-[11px] truncate">
+                                <span>{isPhone ? "📱" : isSleeping ? "💤" : "⚠️"}</span>
+                                <span className={cn(
+                                  n.severity === "CRITICAL" ? "text-error" : n.severity === "WARNING" ? "text-warning" : "text-ai-blue"
+                                )}>
+                                  {n.title}
+                                </span>
+                              </div>
+                              <span className="text-[9px] text-text-muted font-mono shrink-0">
+                                {new Date(n.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                              </span>
+                            </div>
+                            {n.description && (
+                              <p className="text-text-secondary text-[11px] leading-snug">{n.description}</p>
+                            )}
+                            <div className="flex items-center justify-between pt-1 border-t border-white/5">
+                              {n.section && (
+                                <span className="text-[9px] text-text-muted bg-white/10 px-1.5 py-0.5 rounded">
+                                  Section {n.section}
+                                </span>
+                              )}
+                              <button
+                                onClick={() => acknowledgeAlert(n.id)}
+                                className="text-[10px] text-ai-blue hover:underline cursor-pointer ml-auto"
+                              >
+                                Mark Read
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 </motion.div>
               )}

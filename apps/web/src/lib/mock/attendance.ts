@@ -14,7 +14,15 @@ export interface AttendanceSession {
 }
 
 export interface LiveAttendanceEvent {
-  type: "ATTENDANCE_DETECTED" | "STUDENT_ENTERED" | "STUDENT_LEFT" | "UNKNOWN_PERSON" | "CAMERA_OFFLINE";
+  type:
+    | "ATTENDANCE_DETECTED"
+    | "STUDENT_ENTERED"
+    | "STUDENT_LEFT"
+    | "UNKNOWN_PERSON"
+    | "CAMERA_OFFLINE"
+    | "PHONE_USAGE"
+    | "SLEEPING"
+    | "DISTRACTED";
   studentId?: string;
   studentName?: string;
   confidence?: number;
