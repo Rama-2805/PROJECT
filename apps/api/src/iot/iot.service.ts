@@ -8,7 +8,7 @@ import {
   DeviceFilterDto,
   AuthDeviceDto,
 } from "./iot.dto";
-import { v4 as uuid } from "uuid";
+import { randomUUID as uuid } from "node:crypto";
 
 @Injectable()
 export class IotService {

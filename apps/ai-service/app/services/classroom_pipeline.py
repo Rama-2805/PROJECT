@@ -985,8 +985,8 @@ class ClassroomPipeline:
                 elif seat_dist <= 65.0 and sim >= 0.58:
                     is_merge = True
                     score = 5.0 + sim + (1.0 - seat_dist / 65.0)
-                # Merge Rule 3: High ArcFace similarity (sim >= 0.66)
-                elif sim >= 0.66:
+                # Merge Rule 3: Definite ArcFace identity match (sim >= 0.82)
+                elif sim >= 0.82:
                     is_merge = True
                     score = 3.0 + sim
 
@@ -1362,7 +1362,7 @@ class ClassroomPipeline:
                 for tr in s_tracks:
                     placed = False
                     for sc in sub_clusters:
-                        if all(float(np.dot(tr["centroid"], m["centroid"])) >= 0.60 for m in sc):
+                        if all(float(np.dot(tr["centroid"], m["centroid"])) >= 0.78 for m in sc):
                             sc.append(tr)
                             placed = True
                             break
@@ -1509,18 +1509,18 @@ class ClassroomPipeline:
                     # Rule 2: Same physical desk anchor (<= 65px) with compatible face (sim >= 0.58)
                     is_seat_merge = same_seat
 
-                    # Rule 3: Direct Appearance Cosine Merge
+                    # Rule 3: Direct Appearance Cosine Merge (Must have high confidence evidence)
                     is_appearance_merge = (
-                        c_sim >= 0.68 and
-                        r_sim >= 0.64 and
-                        min_track_sim >= 0.58
+                        c_sim >= 0.78 and
+                        r_sim >= 0.74 and
+                        min_track_sim >= 0.65
                     )
 
                     # Rule 4: High-confidence multi-sample match
                     is_multi_sample_merge = (
-                        c_sim >= 0.72 and
+                        c_sim >= 0.78 and
                         supporting_pairs_80 >= 2 and
-                        min_track_sim >= 0.58
+                        min_track_sim >= 0.65
                     )
 
                     if not (is_enrolled_merge or is_seat_merge or is_appearance_merge or is_multi_sample_merge):

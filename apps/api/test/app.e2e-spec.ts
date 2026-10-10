@@ -13,14 +13,26 @@ describe('AppController (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    app.setGlobalPrefix('api');
     await app.init();
   });
 
-  it('/ (GET)', () => {
-    return request(app.getHttpServer())
-      .get('/')
-      .expect(200)
-      .expect('Hello World!');
+  it('POST /api/auth/login and GET /api/behavior/alerts (Authenticated)', async () => {
+    const loginRes = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ email: 'kalaiselvis@vemanait.edu.in', password: 'teacher@vemana' })
+      .expect(200);
+
+    expect(loginRes.body.success).toBe(true);
+    const token = loginRes.body.data.tokens.accessToken;
+    expect(token).toBeDefined();
+
+    const alertsRes = await request(app.getHttpServer())
+      .get('/api/behavior/alerts')
+      .set('Authorization', `Bearer ${token}`)
+      .expect(200);
+
+    expect(Array.isArray(alertsRes.body)).toBe(true);
   });
 
   afterEach(async () => {
