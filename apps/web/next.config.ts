@@ -1,5 +1,11 @@
 import type { NextConfig } from "next";
 
+const AI_SERVICE_URL =
+  process.env.AI_SERVICE_URL ||
+  process.env.NEXT_PUBLIC_AI_URL ||
+  process.env.NEXT_PUBLIC_AI_SERVICE_URL ||
+  "http://localhost:8000";
+
 const nextConfig: NextConfig = {
 
   // Image optimization
@@ -15,11 +21,11 @@ const nextConfig: NextConfig = {
     return [
       {
         source: "/storage/:path*",
-        destination: "http://localhost:8000/storage/:path*",
+        destination: `${AI_SERVICE_URL}/storage/:path*`,
       },
       {
         source: "/api/v1/:path*",
-        destination: "http://localhost:8000/api/v1/:path*",
+        destination: `${AI_SERVICE_URL}/api/v1/:path*`,
       },
     ];
   },
