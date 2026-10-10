@@ -65,7 +65,7 @@ export default function SystemPage() {
     faissSearchTime: "4ms",
     optimizerStatus: "IDLE (Next run Scheduled)",
     modelStatus: "LOADED (ArcFace ResNet50)",
-    vectorCount: 12540,
+    vectorCount: 130,
   });
 
   const [historicalMetrics, setHistoricalMetrics] = useState<any[]>([]);
@@ -89,7 +89,7 @@ export default function SystemPage() {
           if (res.success && res.data) {
             setAiMetrics(prev => ({
               ...prev,
-              vectorCount: res.data.datasets?.[0]?.versions?.[0]?.vectorCount || 12540,
+              vectorCount: res.data.datasets?.[0]?.versions?.[0]?.vectorCount || 130,
             }));
           }
         }).catch(() => null);

@@ -80,8 +80,22 @@ export async function apiRequest<T = unknown>(
     }
   }
 
-  const json = await res.json();
-  return json;
+  let json: any = null;
+  try {
+    json = await res.json();
+  } catch {
+    json = null;
+  }
+
+  if (json && typeof json === "object" && "success" in json) {
+    return json;
+  }
+
+  if (res.ok) {
+    return { success: true, data: json as T };
+  }
+
+  return { success: false, error: json?.message || "Request failed" };
 }
 
 /* ─── Typed API helpers ─────────────────────────────────────────── */

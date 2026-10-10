@@ -456,7 +456,7 @@ class IoUTracker(BaseTracker):
     def __init__(
         self,
         iou_threshold: float = 0.22,
-        max_lost_frames: int = 90,
+        max_lost_frames: int = 240,
         embed_min_sim: float = 0.35,
         small_face_size_thresh: float = 60.0,
         max_center_distance: float = 65.0,
@@ -832,7 +832,7 @@ class IoUTracker(BaseTracker):
                 dist = float(np.sqrt((dcx - acx) ** 2 + (dcy - acy) ** 2))
                 anchor_size = anchor["size"]
                 size_ratio = min(det_size, anchor_size) / max(det_size, anchor_size)
-                max_anchor_dist = max(35.0, min(70.0, 1.4 * anchor_size))
+                max_anchor_dist = max(50.0, min(95.0, 1.8 * anchor_size))
 
                 if dist <= max_anchor_dist and size_ratio >= 0.30 and dist < best_anchor_dist:
                     best_anchor_dist = dist

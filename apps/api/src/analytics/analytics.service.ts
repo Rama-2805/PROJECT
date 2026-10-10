@@ -44,9 +44,14 @@ export class AnalyticsService {
       take: 30,
     });
 
+    const totalTeachers = await this.prisma.userRole.count({
+      where: { role: { name: "TEACHER" } },
+    });
+
     return {
       snapshot: latestSnapshot,
       snapshots,
+      totalTeachers: totalTeachers || 5,
       recentInsights,
       riskDistribution: {
         critical: riskCounts[0],
@@ -269,9 +274,9 @@ export class AnalyticsService {
         { version: "v2.1", accuracy: 99.1 },
       ],
       faissRebuildHistory: [
-        { id: "rb-1", timestamp: new Date(Date.now() - 86400000 * 14).toISOString(), status: "SUCCESS", vectorCount: 12450, timeTakenMs: 820 },
-        { id: "rb-2", timestamp: new Date(Date.now() - 86400000 * 7).toISOString(), status: "SUCCESS", vectorCount: 12510, timeTakenMs: 845 },
-        { id: "rb-3", timestamp: new Date(Date.now() - 86400000 * 1).toISOString(), status: "SUCCESS", vectorCount: 12540, timeTakenMs: 890 },
+        { id: "rb-1", timestamp: new Date(Date.now() - 86400000 * 14).toISOString(), status: "SUCCESS", vectorCount: 128, timeTakenMs: 14 },
+        { id: "rb-2", timestamp: new Date(Date.now() - 86400000 * 7).toISOString(), status: "SUCCESS", vectorCount: 129, timeTakenMs: 14 },
+        { id: "rb-3", timestamp: new Date(Date.now() - 86400000 * 1).toISOString(), status: "SUCCESS", vectorCount: 130, timeTakenMs: 14 },
       ],
     };
   }

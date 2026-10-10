@@ -112,11 +112,11 @@ export default function DashboardPage() {
           greeting: "Welcome back, Dr. Ramakrishna (HOD CSE)",
           summary: "Department of Computer Science & Engineering · Live classroom camera streams active in Room 023",
           roleTag: "HOD CSE PORTAL ACTIVE",
-          totalStudents: 1420,
-          attendanceToday: 95.4,
-          connectedDevices: { online: 18, total: 18 },
-          activeClassrooms: 14,
-          growth: 5.2,
+          totalStudents: 130,
+          attendanceToday: 93.1,
+          connectedDevices: { online: 6, total: 6 },
+          activeClassrooms: 4,
+          growth: 4.8,
           accuracy: 99.4,
           telemetryFeed: [
             { title: "1VI23CS058 Manjunatha R verified in Room 023", desc: "CSE Section A • 99.4% biometric confidence", type: "attendance" as const, severity: "info" as const },
@@ -125,7 +125,7 @@ export default function DashboardPage() {
             { title: "1VI23CS012 Ananya K verified in Room 023", desc: "CSE Section A • 98.8% match verified", type: "attendance" as const, severity: "info" as const },
             { title: "CSE Biometric Node 04 heartbeat OK", desc: "Bandwidth: 1.2 MB/s • 0 dropped frames", type: "system" as const, severity: "info" as const },
             { title: "1VI23CS045 Rahul S verified in Room 023", desc: "CSE Section A • 99.1% match verified", type: "attendance" as const, severity: "info" as const },
-            { title: "CSE Department Attendance High (95.4%)", desc: "1,355 of 1,420 students verified in session", type: "alert" as const, severity: "info" as const },
+            { title: "CSE Department Attendance High (93.1%)", desc: "122 of 130 students verified in session", type: "alert" as const, severity: "info" as const },
           ],
         };
       }
@@ -136,19 +136,19 @@ export default function DashboardPage() {
           summary: "CSE Faculty Portal · Advanced Data Structures (Section A) attendance session streaming live",
           roleTag: "FACULTY PORTAL ACTIVE",
           totalStudents: 64,
-          attendanceToday: 95.3,
+          attendanceToday: 93.8,
           connectedDevices: { online: 2, total: 2 },
           activeClassrooms: 1,
-          growth: 6.1,
+          growth: 5.1,
           accuracy: 99.2,
           telemetryFeed: [
             { title: "1VI23CS058 Manjunatha R marked PRESENT", desc: "Room 023 • 99.4% biometric confidence match", type: "attendance" as const, severity: "info" as const },
             { title: "CAM-023-A Lecture Capture stream active", desc: "25.1 FPS • 14ms ArcFace latency • 0 packet drop", type: "device" as const, severity: "info" as const },
             { title: "1VI23CS012 Ananya K marked PRESENT", desc: "Room 023 • 98.8% match verified", type: "attendance" as const, severity: "info" as const },
-            { title: "Classroom 023 Session: 61/64 Present", desc: "Advanced Data Structures • Attendance rate 95.3%", type: "attendance" as const, severity: "info" as const },
+            { title: "Classroom 023 Session: 60/64 Present", desc: "Advanced Data Structures • Attendance rate 93.8%", type: "attendance" as const, severity: "info" as const },
             { title: "1VI23CS045 Rahul S marked PRESENT", desc: "Room 023 • 99.1% match verified", type: "attendance" as const, severity: "info" as const },
             { title: "Live Face Verification: 100% on-time", desc: "ArcFace inference time 14ms • No unknown visitors", type: "system" as const, severity: "info" as const },
-            { title: "Student Engagement Index High (94%)", desc: "All 61 present students active in lecture hall", type: "alert" as const, severity: "info" as const },
+            { title: "Student Engagement Index High (94%)", desc: "All active students present in lecture hall", type: "alert" as const, severity: "info" as const },
           ],
         };
       }
@@ -174,22 +174,22 @@ export default function DashboardPage() {
       return {
         role: "admin",
         greeting: name ? `Welcome back, ${name}` : "Welcome back, System Admin",
-        summary: "Vemana IT Autonomous Campus Operating System · All 84 biometric edge devices connected",
+        summary: "Vemana IT Autonomous Campus Operating System · All 6 biometric edge devices connected",
         roleTag: "CAMPUS COMMAND CENTER",
-        totalStudents: 10542,
-        attendanceToday: 96.8,
-        connectedDevices: { online: 84, total: 86 },
-        activeClassrooms: 120,
+        totalStudents: 130,
+        attendanceToday: 93.1,
+        connectedDevices: { online: 6, total: 6 },
+        activeClassrooms: 4,
         growth: 4.8,
         accuracy: 99.2,
         telemetryFeed: [
           { title: "1VI23CS058 Manjunatha R recognized", desc: "Room 023 (Section A) • 99.4% biometric confidence", type: "attendance" as const, severity: "info" as const },
           { title: "Edge Camera CAM-023-A stream synced", desc: "CSE Classroom 023 • 25.1 FPS • 14ms ArcFace latency", type: "device" as const, severity: "info" as const },
-          { title: "1VI23CS012 Ananya K recognized", desc: "Room 023 (Section A) • 98.8% match verified", type: "attendance" as const, severity: "info" as const },
+          { title: "1VI23CS027 EKTA PRIYA V recognized", desc: "Room 023 (Section A) • 99.1% match verified", type: "attendance" as const, severity: "info" as const },
           { title: "Section A Attendance Session Active", desc: "Room 023 • 60/64 present • 93.8% presence rate", type: "attendance" as const, severity: "info" as const },
-          { title: "Biometric FAISS Index Synchronized", desc: "128 student vector centroids aligned in memory", type: "system" as const, severity: "info" as const },
-          { title: "1VI23CS045 Rahul S recognized", desc: "Room 023 (Section A) • 99.1% match verified", type: "attendance" as const, severity: "info" as const },
-          { title: "Classroom 023 Ambient Engagement High", desc: "Lecture engagement index 94.2% • All students focused", type: "alert" as const, severity: "info" as const },
+          { title: "Biometric FAISS Index Synchronized", desc: "130 student vector centroids aligned in memory", type: "system" as const, severity: "info" as const },
+          { title: "1VI24CS400 BHAVANA BHARAT PATIL recognized", desc: "Room 023 (Section A) • 99.4% match verified", type: "attendance" as const, severity: "info" as const },
+          { title: "Classroom 023 Ambient Engagement High", desc: "Lecture engagement index 93.8% • All students focused", type: "alert" as const, severity: "info" as const },
         ],
       };
     }
@@ -208,7 +208,7 @@ export default function DashboardPage() {
         connectedDevices: { online: userMeta.connectedDevices.online, total: userMeta.connectedDevices.total },
         monthlyAttendanceGrowth: userMeta.growth,
         averageEngagement: 89,
-        pendingAlerts: 2,
+        pendingAlerts: 0,
       };
 
       let baseModels: AIModelStatus[] = [
@@ -218,8 +218,10 @@ export default function DashboardPage() {
         { name: "FAISS Vector Search", status: "online", accuracy: 99.8 },
       ];
 
+      let recentApiEvents: ActivityEvent[] | null = null;
+
       try {
-        if (!demo && userMeta.role === "admin") {
+        if (!demo) {
           const res = await dashboardApi.getAdminSummary();
           if (res && res.success && res.data) {
             const apiData = res.data;
@@ -235,6 +237,17 @@ export default function DashboardPage() {
             };
             if (apiData.ai_models?.length) {
               baseModels = apiData.ai_models.map(m => ({ ...m, status: m.status as any }));
+            }
+            if (apiData.recent_events && apiData.recent_events.length > 0) {
+              recentApiEvents = apiData.recent_events.map(e => ({
+                id: e.id,
+                time: e.time,
+                type: e.type,
+                severity: e.severity,
+                title: e.title,
+                description: e.description,
+                timestamp: new Date(e.timestamp),
+              }));
             }
           }
         }
@@ -421,7 +434,7 @@ export default function DashboardPage() {
           <MetricCard
             label={currentRole === "teacher" ? "Class Enrolled" : currentRole === "hod" ? "CSE Students" : "Total Students"}
             value={stats.totalStudents}
-            suffix={currentRole === "admin" ? "K+" : ""}
+            suffix=""
             icon={<svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>}
             accent="from-blue-600 to-cyan-500"
           />

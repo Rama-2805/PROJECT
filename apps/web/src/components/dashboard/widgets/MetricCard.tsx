@@ -163,10 +163,13 @@ export function MetricCard({ label, value, suffix = "", icon, trend, accent = "f
       </div>
 
       {/* Value */}
-      <div className="relative mb-1.5 z-10">
+      <div className="relative mb-1.5 z-10 flex items-baseline">
         <span className="text-3xl sm:text-4xl font-bold tracking-tight bg-gradient-to-b from-text-primary via-text-primary to-text-secondary bg-clip-text text-transparent group-hover:text-text-primary transition-all duration-300">
           {display}
         </span>
+        {suffix === "%" && (
+          <span className="text-xl sm:text-2xl font-bold bg-gradient-to-b from-text-primary to-text-secondary bg-clip-text text-transparent ml-0.5">%</span>
+        )}
         {suffix && suffix !== "%" && suffix !== "K+" && (
           <span className="text-sm text-text-muted ml-1.5 font-medium">{suffix}</span>
         )}

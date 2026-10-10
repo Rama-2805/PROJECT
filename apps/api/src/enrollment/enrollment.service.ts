@@ -796,6 +796,15 @@ export class EnrollmentService {
       }
     }
 
+    // Determine target section based on student USN and session
+    let targetSection = dto.sectionId || dto.section || cluster.session?.sectionId || "A";
+    const checkUsn = (dto.usn || "").toUpperCase();
+    if (/^1VI23CS0(0[1-9]|[1-5][0-9]|6[0-4])$/.test(checkUsn)) {
+      targetSection = "A";
+    } else if (/^1VI23CS0(6[5-9]|[7-9][0-9])$/.test(checkUsn) || /^1VI23CS1/.test(checkUsn) || /^1VI24CS4/.test(checkUsn)) {
+      targetSection = "B";
+    }
+
     if (!studentId && dto.fullName) {
       const defaultDept = await this.prisma.department.findFirst();
       const defaultCourse = await this.prisma.course.findFirst();
@@ -810,14 +819,60 @@ export class EnrollmentService {
           fullName: dto.fullName,
           email: dto.email,
           phone: dto.phone,
-          section: dto.sectionId || cluster.session.sectionId || "A",
+          section: targetSection,
+          sectionId: targetSection,
           faceEnrolled: true,
-          faceSamples: cluster.sampleCount,
+          faceSamples: cluster.sampleCount || 1,
           profilePhoto: cluster.bestImagePath,
+          primaryFaceImagePath: cluster.bestImagePath,
         },
       });
       studentId = newStudent.id;
     } else if (studentId) {
+      // 1. Purge all other cluster assignments for this student so old clusters are deleted/unassigned
+      const oldClusters = await this.prisma.studentCluster.findMany({
+        where: {
+          assignedStudentId: studentId,
+          id: { not: cluster.id },
+        },
+      });
+
+      if (oldClusters.length > 0) {
+        const oldClusterIds = oldClusters.map((c) => c.id);
+        await this.prisma.clusterAssignment.deleteMany({
+          where: {
+            studentId,
+            studentClusterId: { in: oldClusterIds },
+          },
+        });
+        await this.prisma.studentCluster.updateMany({
+          where: { id: { in: oldClusterIds } },
+          data: {
+            assignedStudentId: null,
+            status: "UNASSIGNED",
+          },
+        });
+        Logger.log(`Unassigned ${oldClusters.length} old clusters for student ${studentId}`, "EnrollmentService");
+      }
+
+      // 2. Clear old FaceImage records so only new face representations exist
+      await this.prisma.faceImage.deleteMany({
+        where: { studentId },
+      });
+
+      // 3. Create new FaceImage record for the new cluster
+      if (cluster.bestImagePath) {
+        await this.prisma.faceImage.create({
+          data: {
+            studentId,
+            imagePath: cluster.bestImagePath,
+            isPrimary: true,
+            qualityScore: cluster.qualityAvg ? cluster.qualityAvg / 100 : 0.85,
+          },
+        });
+      }
+
+      // 4. Update student with new face profile and ensure target class section
       await this.prisma.student.update({
         where: { id: studentId },
         data: {
@@ -825,6 +880,8 @@ export class EnrollmentService {
           faceSamples: cluster.sampleCount || 1,
           profilePhoto: cluster.bestImagePath || undefined,
           primaryFaceImagePath: cluster.bestImagePath || undefined,
+          section: targetSection,
+          sectionId: targetSection,
         },
       });
     }
@@ -858,14 +915,14 @@ export class EnrollmentService {
       if (usn && sId) {
         try {
           const aiCid = dto.clusterId || `cluster_${String(cluster.clusterNumber).padStart(3, "0")}`;
-          // 1. Assign in AI service
+          // 1. Assign in AI service with force=true to unassign prior session clusters
           await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sId}/clusters/${aiCid}/assign`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ usn, name: studentObj?.fullName || dto.fullName, studentId }),
+            body: JSON.stringify({ usn, name: studentObj?.fullName || dto.fullName, studentId, force: true }),
             signal: AbortSignal.timeout(3000),
           });
-          // 2. Enroll in FAISS
+          // 2. Enroll in FAISS (AI service will purge old vectors for usn before adding new ones)
           await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sId}/enroll-cluster`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },

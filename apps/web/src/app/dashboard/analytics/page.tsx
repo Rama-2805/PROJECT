@@ -121,9 +121,9 @@ export default function AnalyticsPage() {
       { version: "v2.1", accuracy: 99.1 },
     ],
     rebuildHistory: [
-      { id: "rb-1", date: "June 05", status: "SUCCESS", vectors: 12450, latency: "820ms" },
-      { id: "rb-2", date: "June 12", status: "SUCCESS", vectors: 12510, latency: "845ms" },
-      { id: "rb-3", date: "June 19", status: "SUCCESS", vectors: 12540, latency: "890ms" },
+      { id: "rb-1", date: "June 05", status: "SUCCESS", vectors: 128, latency: "14ms" },
+      { id: "rb-2", date: "June 12", status: "SUCCESS", vectors: 129, latency: "14ms" },
+      { id: "rb-3", date: "June 19", status: "SUCCESS", vectors: 130, latency: "14ms" },
     ]
   });
 
@@ -193,14 +193,15 @@ export default function AnalyticsPage() {
           } else {
             // Process successful API responses
             setOverview({
-              totalStudents: ovRes.data.snapshot?.totalStudents || 12540,
-              averageAttendance: ovRes.data.snapshot?.attendanceRate || 95.6,
-              aiRecognitionAccuracy: ovRes.data.snapshot?.aiAccuracy || 99.2,
-              activeDevicesPercent: ovRes.data.snapshot?.totalDevices ? (ovRes.data.snapshot.activeDevices / ovRes.data.snapshot.totalDevices) * 100 : 98,
-              presentToday: ovRes.data.snapshot?.presentToday || 11820,
-              averageEngagement: ovRes.data.snapshot?.averageEngagement || 82.4,
-              totalAlerts: ovRes.data.snapshot?.behaviorAlerts || 47,
-              studentsAtRisk: ovRes.data.snapshot?.studentsAtRisk || 128,
+              totalStudents: ovRes.data.snapshot?.totalStudents ?? 130,
+              totalTeachers: ovRes.data.totalTeachers ?? 5,
+              averageAttendance: ovRes.data.snapshot?.attendanceRate ?? 93.8,
+              aiRecognitionAccuracy: ovRes.data.snapshot?.aiAccuracy ?? 99.2,
+              activeDevicesPercent: ovRes.data.snapshot?.totalDevices ? (ovRes.data.snapshot.activeDevices / ovRes.data.snapshot.totalDevices) * 100 : 100,
+              presentToday: ovRes.data.snapshot?.presentToday ?? 122,
+              averageEngagement: ovRes.data.snapshot?.averageEngagement ?? 88.5,
+              totalAlerts: ovRes.data.snapshot?.behaviorAlerts ?? 0,
+              studentsAtRisk: ovRes.data.snapshot?.studentsAtRisk ?? 2,
             });
             
             if (ovRes.data.snapshots) {
@@ -214,8 +215,16 @@ export default function AnalyticsPage() {
               })));
             }
 
-            if (deptsRes && deptsRes.success && deptsRes.data) {
-              setDepartments(deptsRes.data.departments || []);
+            if (deptsRes && deptsRes.success && deptsRes.data?.departments?.length > 0) {
+              setDepartments(deptsRes.data.departments.map((d: any) => ({
+                name: d.departmentName || "Computer Science & Engineering",
+                attendance: d.attendanceAverage || 93.8,
+                engagement: d.engagementAverage || 88.5,
+                performanceScore: d.performanceScore || 93.8,
+                totalStudents: d.totalStudents || 130,
+                alerts: d.totalAlerts || 0,
+                trend: "up" as const,
+              })));
             } else {
               getDepartmentRankings().then(setDepartments);
             }
@@ -426,7 +435,7 @@ export default function AnalyticsPage() {
             <GlassCard subtle>
               <p className="text-[10px] text-text-muted mb-1">Total Teachers</p>
               <p className="text-2xl font-bold text-text-primary">
-                <AnimatedCounter value={142} />
+                <AnimatedCounter value={overview.totalTeachers ?? 5} />
               </p>
             </GlassCard>
             <GlassCard subtle>
@@ -470,11 +479,12 @@ export default function AnalyticsPage() {
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={dailyTrends.length ? dailyTrends : [
-                    { date: "Mon", attendance: 94, engagement: 81, present: 11800, total: 12540, devices: 22 },
-                    { date: "Tue", attendance: 97, engagement: 84, present: 12100, total: 12540, devices: 24 },
-                    { date: "Wed", attendance: 95, engagement: 82, present: 11900, total: 12540, devices: 23 },
-                    { date: "Thu", attendance: 96, engagement: 83, present: 12000, total: 12540, devices: 24 },
-                    { date: "Fri", attendance: 93, engagement: 79, present: 11600, total: 12540, devices: 22 },
+                    { date: "Mon", attendance: 92.5, engagement: 88, present: 120, total: 130, devices: 6 },
+                    { date: "Tue", attendance: 92.9, engagement: 88, present: 121, total: 130, devices: 6 },
+                    { date: "Wed", attendance: 93.3, engagement: 89, present: 121, total: 130, devices: 6 },
+                    { date: "Thu", attendance: 93.7, engagement: 89, present: 122, total: 130, devices: 6 },
+                    { date: "Fri", attendance: 94.1, engagement: 89, present: 122, total: 130, devices: 6 },
+                    { date: "Sat", attendance: 94.9, engagement: 89, present: 123, total: 130, devices: 6 },
                   ]}>
                     <defs>
                       <linearGradient id="colorAtt" x1="0" y1="0" x2="0" y2="1">

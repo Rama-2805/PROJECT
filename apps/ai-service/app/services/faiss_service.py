@@ -134,6 +134,55 @@ class FaissService:
             added += 1
         return added
 
+    def remove_student_vectors(self, student_usn: str) -> int:
+        """Remove all existing vectors for the given student USN from the FAISS index.
+
+        Reconstructs the index and metadata without this student's embeddings.
+        Ensures that when a student is re-enrolled, previous cluster vectors are purged.
+
+        Args:
+            student_usn: Student USN to purge.
+
+        Returns:
+            Number of vectors removed.
+        """
+        if self.index is None or self.index.ntotal == 0:
+            return 0
+
+        target_usn = student_usn.strip().upper()
+        indices_to_remove = []
+        vectors_to_keep = []
+        new_metadata: Dict[str, str] = {}
+
+        total = self.index.ntotal
+        for i in range(total):
+            u = (self.metadata.get(str(i)) or "").strip().upper()
+            if u == target_usn or u.replace(" ", "") == target_usn.replace(" ", ""):
+                indices_to_remove.append(i)
+            else:
+                vec = self.index.reconstruct(i)
+                new_idx = len(vectors_to_keep)
+                vectors_to_keep.append(vec)
+                new_metadata[str(new_idx)] = self.metadata.get(str(i), "")
+
+        if not indices_to_remove:
+            logger.info(f"No existing vectors found in FAISS for student {student_usn}.")
+            return 0
+
+        # Reconstruct clean IndexFlatIP
+        new_index = faiss.IndexFlatIP(self.dimension)
+        if vectors_to_keep:
+            new_index.add(np.array(vectors_to_keep, dtype=np.float32))
+
+        self.index = new_index
+        self.metadata = new_metadata
+        self.save_index()
+        logger.info(
+            f"Removed {len(indices_to_remove)} old vectors for student {student_usn} from FAISS. "
+            f"Index now contains {self.index.ntotal} vectors."
+        )
+        return len(indices_to_remove)
+
     def search_face(self, embedding: np.ndarray, threshold: float = 0.70) -> Optional[Tuple[str, float]]:
         """Search for the closest matching student in FAISS for a given embedding.
 

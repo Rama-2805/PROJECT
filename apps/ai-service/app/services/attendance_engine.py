@@ -304,10 +304,8 @@ class AttendanceEngine:
         if emb is None:
             return False
 
-        # Query FAISS Index with CCTV threshold (0.15 for high-angle distant CCTV faces)
-        rec_thresh = getattr(settings, "recognition_confidence_threshold", 0.15)
-        if rec_thresh > 0.35:
-            rec_thresh = 0.15
+        # Query FAISS Index with classroom threshold (minimum 0.48 to prevent false positives)
+        rec_thresh = max(0.48, float(getattr(settings, "recognition_confidence_threshold", 0.50)))
             
         match = faiss_service.search_face(emb, threshold=rec_thresh)
         
@@ -315,7 +313,17 @@ class AttendanceEngine:
         matched_usn = None
         
         if match:
-            matched_usn, confidence = match
+            cand_usn, cand_conf = match
+            # Class Scope Guard: Only allow students belonging to this class section (1VI23CS001 to 1VI23CS064)
+            if cand_usn and cand_usn.startswith("1VI23CS"):
+                roll_part = cand_usn.replace("1VI23CS", "").strip()
+                if roll_part.isdigit() and 1 <= int(roll_part) <= 64:
+                    matched_usn = cand_usn
+                    confidence = cand_conf
+                else:
+                    logger.debug(f"Filtered out USN {cand_usn} outside class range (1VI23CS001 - 1VI23CS064)")
+            else:
+                logger.debug(f"Filtered out non-class USN: {cand_usn}")
 
         if not hasattr(track, "confidence_history"):
             track.confidence_history = []
@@ -363,11 +371,12 @@ class AttendanceEngine:
             return True
 
         # Save unrecognized face detections below recognition threshold
+        quality_val = float(getattr(track, "quality_score", 0.85))
         self._save_unknown_face(
             db, 
             crop, 
             emb, 
-            quality["score"], 
+            quality_val, 
             camera_id, 
             class_id, 
             suggestion_usn=matched_usn if matched_usn else None, 

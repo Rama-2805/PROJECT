@@ -243,7 +243,7 @@ class ClassroomPipeline:
 
         # Face Tracker
         from .face_tracker import IoUTracker
-        self.tracker = IoUTracker(iou_threshold=0.22, max_lost_frames=90)
+        self.tracker = IoUTracker(iou_threshold=0.22, max_lost_frames=240)
 
         # Diagnostics & Detection Tracking
         self.total_video_frames: int = 0
@@ -842,55 +842,70 @@ class ClassroomPipeline:
         return self.get_results()
 
     def get_live_clusters(self) -> List[dict]:
-        """Generate live cluster representations for actively detected tracks during real-time processing (pure in-memory)."""
-        live_clusters = []
-        all_tracks = []
+        """Generate live consolidated cluster representations for actively detected tracks during real-time processing.
+        
+        Consolidates raw tracks belonging to the same physical student based on:
+        1. Confirmed / candidate enrolled FAISS identity (same USN).
+        2. Stationary classroom seat proximity (within 65px desk anchor) + face feature compatibility (>= 0.58).
+        3. ArcFace cosine similarity (>= 0.66).
+        4. Transient / fleeting noise filtration (requires persistent presence or quality score >= 75).
+        5. Strictly bounded to physical classroom seating capacity (<= 64 students).
+        """
+        all_candidate_tracks = []
 
-        # 1. Fast in-memory extraction from tracker
+        # 1. Collect in-memory tracks from active tracker and dormant seat anchors
         if hasattr(self, "tracker") and hasattr(self.tracker, "tracks") and self.tracker.tracks:
             for tr_id, tr in self.tracker.tracks.items():
                 if getattr(tr, "selected_samples", None):
-                    all_tracks.append(tr)
+                    all_candidate_tracks.append(tr)
+
+            # Include high-confidence dormant tracks from seat anchors
+            if hasattr(self.tracker, "seat_anchors"):
+                for a_id, anchor in self.tracker.seat_anchors.items():
+                    a_tr = anchor.get("track")
+                    if a_tr and getattr(a_tr, "selected_samples", None):
+                        if a_tr not in all_candidate_tracks and getattr(a_tr, "track_id", "") not in [getattr(t, "track_id", "") for t in all_candidate_tracks]:
+                            all_candidate_tracks.append(a_tr)
+
         elif hasattr(self, "tracks_dir") and self.tracks_dir.exists():
             # Fallback to disk only if memory is empty
-            for t_dir in sorted(self.tracks_dir.glob("track_*"))[:50]:
+            for t_dir in sorted(self.tracks_dir.glob("track_*"))[:64]:
                 tr_id = t_dir.name
                 img_files = sorted(list(t_dir.glob("*.jpg")) + list(t_dir.glob("*.png")))
                 if img_files:
-                    all_tracks.append({
+                    all_candidate_tracks.append({
                         "track_id": tr_id,
                         "is_disk": True,
                         "img_files": img_files,
                     })
 
-        cluster_idx = 1
-        for tr in all_tracks:
+        # 2. Extract track representations & filter transient fleeting noise
+        from .faiss_service import faiss_service
+        from .embedding_service import embedding_service
+        
+        processed_tracks = []
+        for tr in all_candidate_tracks:
             if isinstance(tr, dict) and tr.get("is_disk"):
                 tr_id = tr["track_id"]
                 img_files = tr["img_files"]
-                gallery = [f"/storage/enrollment/{self.session_id}/tracks/{tr_id}/{f.name}" for f in img_files[:6]]
-                best_img_rel = f"storage/enrollment/{self.session_id}/tracks/{tr_id}/{img_files[0].name}"
-                best_url = gallery[0] if gallery else None
-                sample_count = len(img_files)
-                quality_avg = 85.0
-                cand_match = None
-                id_status = "UNKNOWN"
-                status = "UNASSIGNED"
+                processed_tracks.append({
+                    "track_id": tr_id,
+                    "samples": [{"sample_id": f.stem, "image_path": str(f), "quality_score": 85.0} for f in img_files],
+                    "centroid": None,
+                    "seat_center": (0.0, 0.0),
+                    "best_quality": 85.0,
+                    "hits": len(img_files),
+                    "best_match": None,
+                })
             else:
-                tr_id = getattr(tr, "track_id", f"track_{cluster_idx:03d}")
                 samples = getattr(tr, "selected_samples", [])
                 if not samples:
                     continue
-                gallery = []
-                for s in samples[:6]:
-                    s_id = s.get("sample_id", "sample")
-                    gallery.append(f"/storage/enrollment/{self.session_id}/tracks/{tr_id}/{s_id}.jpg")
-                best_s = getattr(tr, "best_sample", samples[0] if samples else None) or (samples[0] if samples else {})
-                best_s_id = best_s.get("sample_id", "sample")
-                best_img_rel = f"storage/enrollment/{self.session_id}/tracks/{tr_id}/{best_s_id}.jpg"
-                best_url = gallery[0] if gallery else None
-                sample_count = len(samples)
-                quality_avg = round(float(getattr(tr, "average_quality", 85.0)), 1)
+
+                tr_id = getattr(tr, "track_id", "track_001")
+                quality_avg = float(getattr(tr, "average_quality", 80.0))
+                best_q = float(getattr(tr, "best_quality", quality_avg))
+                hits = int(getattr(tr, "hits", len(samples)))
 
                 # Check FAISS recognition history
                 rec_hist = getattr(tr, "recognition_history", [])
@@ -900,23 +915,173 @@ class ClassroomPipeline:
                     sim = rec.get("similarity", 0.0)
                     if usn and usn != "UNKNOWN" and sim >= getattr(settings, "recognition_confidence_threshold", 0.58):
                         if best_match is None or sim > best_match.get("similarity", 0.0):
-                            best_match = rec
+                            best_match = {
+                                "usn": usn,
+                                "name": rec.get("student_name", usn),
+                                "similarity": round(float(sim), 3),
+                                "confidence": "HIGH"
+                            }
 
-                if best_match:
-                    cand_match = {
-                        "usn": best_match.get("student_id"),
-                        "name": best_match.get("student_name", best_match.get("student_id")),
-                        "similarity": round(float(best_match.get("similarity", 0.0)), 3),
-                        "confidence": "HIGH"
-                    }
-                    id_status = "CANDIDATE" if best_match.get("similarity", 0.0) < 0.75 else "CONFIRMED"
-                    status = "ASSIGNED" if id_status == "CONFIRMED" else "UNASSIGNED"
-                else:
-                    cand_match = None
-                    id_status = "UNKNOWN"
-                    status = "UNASSIGNED"
+                # Transient noise filter: single-sample tracks with low hits and no FAISS match are pruned
+                if len(samples) <= 1 and hits < 3 and best_q < 75.0 and not best_match:
+                    continue
 
+                # Obtain normalized centroid embedding
+                emb = getattr(tr, "track_centroid", None)
+                if emb is None:
+                    emb = getattr(tr, "rolling_embedding", None)
+                if emb is None and samples:
+                    best_crop = samples[0].get("crop")
+                    if best_crop is not None:
+                        gen_emb = embedding_service.generate_embedding(best_crop)
+                        if gen_emb is not None:
+                            norm = float(np.linalg.norm(gen_emb))
+                            if norm > 1e-6:
+                                emb = (gen_emb / norm).astype(np.float32)
+
+                seat = getattr(tr, "stable_seat_center", (0.0, 0.0))
+                processed_tracks.append({
+                    "track_id": tr_id,
+                    "samples": samples,
+                    "centroid": emb,
+                    "seat_center": seat,
+                    "best_quality": best_q,
+                    "hits": hits,
+                    "best_match": best_match,
+                    "track_obj": tr,
+                })
+
+        # 3. Consolidate tracks into identity groups
+        groups: List[Dict[str, Any]] = []
+
+        for item in processed_tracks:
+            tr_emb = item["centroid"]
+            tr_seat = item["seat_center"]
+            tr_usn = item["best_match"]["usn"] if item["best_match"] else None
+
+            best_group = None
+            best_group_score = -1.0
+
+            for grp in groups:
+                grp_usn = grp["usn"]
+                grp_emb = grp["centroid"]
+                grp_seat = grp["seat_center"]
+
+                # Hard Guard: Contradictory enrolled identities NEVER merge
+                if tr_usn and grp_usn and tr_usn != grp_usn:
+                    continue
+
+                sim = float(np.dot(tr_emb, grp_emb)) if (tr_emb is not None and grp_emb is not None) else 0.0
+                seat_dist = float(np.sqrt((tr_seat[0] - grp_seat[0])**2 + (tr_seat[1] - grp_seat[1])**2)) if (tr_seat != (0.0, 0.0) and grp_seat != (0.0, 0.0)) else 999.0
+
+                is_merge = False
+                score = 0.0
+
+                # Merge Rule 1: Same enrolled student USN
+                if tr_usn and grp_usn and tr_usn == grp_usn:
+                    is_merge = True
+                    score = 10.0 + sim
+                # Merge Rule 2: Same seated desk anchor (<= 65px) + compatible face (sim >= 0.58)
+                elif seat_dist <= 65.0 and sim >= 0.58:
+                    is_merge = True
+                    score = 5.0 + sim + (1.0 - seat_dist / 65.0)
+                # Merge Rule 3: High ArcFace similarity (sim >= 0.66)
+                elif sim >= 0.66:
+                    is_merge = True
+                    score = 3.0 + sim
+
+                if is_merge and score > best_group_score:
+                    best_group_score = score
+                    best_group = grp
+
+            if best_group is not None:
+                best_group["tracks"].append(item)
+                # Update group centroid
+                all_embs = [t["centroid"] for t in best_group["tracks"] if t["centroid"] is not None]
+                if all_embs:
+                    raw_c = np.mean(all_embs, axis=0)
+                    norm = float(np.linalg.norm(raw_c))
+                    best_group["centroid"] = (raw_c / norm if norm > 1e-6 else all_embs[0]).astype(np.float32)
+                # Update seat center
+                total_hits = sum(t["hits"] for t in best_group["tracks"])
+                if total_hits > 0 and tr_seat != (0.0, 0.0):
+                    best_group["seat_center"] = (
+                        sum(t["seat_center"][0] * t["hits"] for t in best_group["tracks"]) / total_hits,
+                        sum(t["seat_center"][1] * t["hits"] for t in best_group["tracks"]) / total_hits,
+                    )
+                if not best_group["usn"] and tr_usn:
+                    best_group["usn"] = tr_usn
+                    best_group["best_match"] = item["best_match"]
+            else:
+                groups.append({
+                    "tracks": [item],
+                    "centroid": tr_emb,
+                    "seat_center": tr_seat,
+                    "usn": tr_usn,
+                    "best_match": item["best_match"],
+                })
+
+        # 4. Sort groups by evidence and bound to physical classroom capacity
+        def _group_priority(g):
+            has_match = 1 if g.get("usn") else 0
+            sample_cnt = sum(len(t["samples"]) for t in g["tracks"])
+            total_hits = sum(t["hits"] for t in g["tracks"])
+            max_q = max((t["best_quality"] for t in g["tracks"]), default=70.0)
+            return (has_match, sample_cnt + (total_hits // 10), max_q)
+
+        groups.sort(key=_group_priority, reverse=True)
+
+        MAX_CLASSROOM_CAPACITY = getattr(settings, "max_classroom_capacity", 64)
+        groups = groups[:MAX_CLASSROOM_CAPACITY]
+
+        # 5. Format into cluster dictionary objects
+        live_clusters = []
+        for cluster_idx, grp in enumerate(groups, start=1):
             cid = f"cluster_{cluster_idx:03d}"
+            member_tracks = grp["tracks"]
+            all_samples = []
+            for tr in member_tracks:
+                all_samples.extend(tr["samples"])
+
+            seen_ids = set()
+            unique_samples = []
+            for s in all_samples:
+                sid = s.get("sample_id")
+                if sid not in seen_ids:
+                    seen_ids.add(sid)
+                    unique_samples.append(s)
+
+            unique_samples.sort(key=lambda s: float(s.get("quality_score", 0.0)), reverse=True)
+            if not unique_samples:
+                continue
+
+            best_s = unique_samples[0]
+            best_s_id = best_s.get("sample_id", "sample")
+            best_tr_id = best_s.get("track_id", member_tracks[0]["track_id"])
+            best_img_rel = f"storage/enrollment/{self.session_id}/tracks/{best_tr_id}/{best_s_id}.jpg"
+
+            gallery = []
+            for s in unique_samples[:6]:
+                s_tr = s.get("track_id", best_tr_id)
+                s_id = s.get("sample_id", "sample")
+                gallery.append(f"/storage/enrollment/{self.session_id}/tracks/{s_tr}/{s_id}.jpg")
+            best_url = gallery[0] if gallery else None
+
+            qualities = [float(s.get("quality_score", 80.0)) for s in unique_samples]
+            quality_avg = round(float(np.mean(qualities)), 1)
+            quality_max = round(float(np.max(qualities)), 1)
+
+            cand_match = grp.get("best_match")
+            if cand_match:
+                id_status = "CONFIRMED" if cand_match.get("similarity", 0.0) >= 0.75 else "CANDIDATE"
+                status = "ASSIGNED" if id_status == "CONFIRMED" else "UNASSIGNED"
+            else:
+                id_status = "UNKNOWN"
+                status = "UNASSIGNED"
+
+            track_ids = [t["track_id"] for t in member_tracks]
+            sample_count = len(unique_samples)
+
             c_dict = {
                 "id": cid,
                 "cluster_id": cid,
@@ -925,15 +1090,15 @@ class ClassroomPipeline:
                 "clusterNumber": cluster_idx,
                 "sample_count": sample_count,
                 "sampleCount": sample_count,
-                "track_count": 1,
-                "trackCount": 1,
-                "track_ids": [tr_id],
-                "tracks": [tr_id],
+                "track_count": len(track_ids),
+                "trackCount": len(track_ids),
+                "track_ids": track_ids,
+                "tracks": track_ids,
                 "quality_mean": quality_avg,
-                "quality_max": quality_avg,
+                "quality_max": quality_max,
                 "qualityAvg": quality_avg,
-                "bestQualityScore": quality_avg,
-                "confidence": 0.85,
+                "bestQualityScore": quality_max,
+                "confidence": 0.88,
                 "best_image_path": best_img_rel,
                 "bestImagePath": best_img_rel,
                 "best_image_url": best_url,
@@ -954,7 +1119,6 @@ class ClassroomPipeline:
                 "lastSeenTime": "00:00",
             }
             live_clusters.append(c_dict)
-            cluster_idx += 1
 
         return live_clusters
 
@@ -1268,15 +1432,11 @@ class ClassroomPipeline:
                     c_sim = float(np.dot(cg_a["centroid"], cg_b["centroid"]))
                     r_sim = float(np.dot(cg_a["rep_emb"], cg_b["rep_emb"]))
 
-                    # Fast pre-filter: if centroid < 0.80, skip immediately (no accidental merges)
-                    if c_sim < 0.80:
-                        continue
-
-                    merge_attempts_count += 1
-
-                    # Collect chosen embeddings
-                    embs_a = [e["embedding"] for tr in cg_a["member_tracks"] for e in tr.get("chosen_embs", [])]
-                    embs_b = [e["embedding"] for tr in cg_b["member_tracks"] for e in tr.get("chosen_embs", [])]
+                    # Seat locations
+                    seat_a = getattr(cg_a["member_tracks"][0]["track_obj"], "stable_seat_center", (0.0, 0.0))
+                    seat_b = getattr(cg_b["member_tracks"][0]["track_obj"], "stable_seat_center", (0.0, 0.0))
+                    seat_dist = float(np.sqrt((seat_a[0] - seat_b[0])**2 + (seat_a[1] - seat_b[1])**2)) if (seat_a != (0.0, 0.0) and seat_b != (0.0, 0.0)) else 999.0
+                    same_seat = (seat_dist <= 65.0 and c_sim >= 0.58)
 
                     # 1. Contradictory Enrolled Identity Guard (Hard Blocker)
                     faiss_a = faiss_service.search_face(cg_a["centroid"], threshold=0.60)
@@ -1294,6 +1454,18 @@ class ClassroomPipeline:
                         })
                         continue
 
+                    same_enrolled = bool(faiss_a and faiss_b and faiss_a[0] == faiss_b[0])
+
+                    # Fast pre-filter
+                    if not same_enrolled and not same_seat and c_sim < 0.65:
+                        continue
+
+                    merge_attempts_count += 1
+
+                    # Collect chosen embeddings
+                    embs_a = [e["embedding"] for tr in cg_a["member_tracks"] for e in tr.get("chosen_embs", [])]
+                    embs_b = [e["embedding"] for tr in cg_b["member_tracks"] for e in tr.get("chosen_embs", [])]
+
                     # 2. Pairwise Track Centroid Transitive Consistency Check (Guard against chain merging)
                     track_sims = [
                         float(np.dot(tr_a["centroid"], tr_b["centroid"]))
@@ -1302,7 +1474,7 @@ class ClassroomPipeline:
                     ]
                     min_track_sim = min(track_sims) if track_sims else c_sim
 
-                    if min_track_sim < 0.74:
+                    if not same_enrolled and not same_seat and min_track_sim < 0.58:
                         merge_rejected_internal_inconsistency += 1
                         incompatible_pairs.add(pair_key)
                         merge_decisions_log.append({
@@ -1329,30 +1501,29 @@ class ClassroomPipeline:
                     k_top = min(4, len(cross_sims_sorted))
                     top_k_mean = float(np.mean(cross_sims_sorted[:k_top])) if cross_sims_sorted else c_sim
                     supporting_pairs_80 = sum(1 for s in cross_sims if s >= 0.80)
-                    min_cross = min(cross_sims) if cross_sims else c_sim
-                    median_cross = float(np.median(cross_sims)) if cross_sims else c_sim
 
-                    # Rule 1: Normal Strict Multi-Evidence Merge Rule
-                    is_normal_merge = (
-                        c_sim >= 0.82 and
-                        r_sim >= 0.78 and
-                        (supporting_pairs_80 >= 3 or (len(cross_sims) <= 2 and all(s >= 0.82 for s in cross_sims))) and
-                        top_k_mean >= 0.82 and
-                        min_cross >= 0.52 and
-                        median_cross >= 0.68 and
-                        min_track_sim >= 0.75
+                    # Multi-Evidence Merge Rules:
+                    # Rule 1: Same enrolled student identity (both match same USN >= 0.60)
+                    is_enrolled_merge = same_enrolled
+
+                    # Rule 2: Same physical desk anchor (<= 65px) with compatible face (sim >= 0.58)
+                    is_seat_merge = same_seat
+
+                    # Rule 3: Direct Appearance Cosine Merge
+                    is_appearance_merge = (
+                        c_sim >= 0.68 and
+                        r_sim >= 0.64 and
+                        min_track_sim >= 0.58
                     )
 
-                    # Rule 2: High-Confidence Multi-Sample Rule (4+ strong pairs)
-                    is_high_conf_merge = (
-                        c_sim >= 0.80 and
-                        r_sim >= 0.76 and
-                        supporting_pairs_80 >= 4 and
-                        top_k_mean >= 0.82 and
-                        min_track_sim >= 0.74
+                    # Rule 4: High-confidence multi-sample match
+                    is_multi_sample_merge = (
+                        c_sim >= 0.72 and
+                        supporting_pairs_80 >= 2 and
+                        min_track_sim >= 0.58
                     )
 
-                    if not (is_normal_merge or is_high_conf_merge):
+                    if not (is_enrolled_merge or is_seat_merge or is_appearance_merge or is_multi_sample_merge):
                         merge_rejected_low_evidence += 1
                         incompatible_pairs.add(pair_key)
                         merge_decisions_log.append({
@@ -1433,7 +1604,7 @@ class ClassroomPipeline:
                     else:
                         sim_mat[i, j] = float(np.dot(m_tracks[i]["centroid"], m_tracks[j]["centroid"]))
 
-            # Connected Components at strict identity threshold 0.76
+            # Connected Components at standard ArcFace identity threshold 0.58
             visited = [False] * n_m
             components = []
             for i in range(n_m):
@@ -1446,7 +1617,7 @@ class ClassroomPipeline:
                     curr = queue.pop(0)
                     comp.append(curr)
                     for nxt in range(n_m):
-                        if not visited[nxt] and sim_mat[curr, nxt] >= 0.76:
+                        if not visited[nxt] and sim_mat[curr, nxt] >= 0.58:
                             visited[nxt] = True
                             queue.append(nxt)
                 components.append(comp)
@@ -1477,6 +1648,43 @@ class ClassroomPipeline:
                 purified_candidate_groups.append(cg)
 
         candidate_groups = purified_candidate_groups
+
+        # ── Step 4.6: Merge Candidate Groups Matching the Same Enrolled Student ──
+        usn_map = {}
+        merged_groups = []
+        for cg in candidate_groups:
+            f_match = faiss_service.search_face(cg["centroid"], threshold=0.58)
+            usn = f_match[0] if f_match else None
+            if usn and usn in usn_map:
+                existing_cg = usn_map[usn]
+                existing_cg["member_tracks"].extend(cg["member_tracks"])
+                all_c = [tr["centroid"] for tr in existing_cg["member_tracks"]]
+                new_mean = np.mean(all_c, axis=0)
+                norm_c = float(np.linalg.norm(new_mean))
+                existing_cg["centroid"] = (new_mean / norm_c if norm_c > 0.1 else all_c[0]).astype(np.float32)
+                existing_cg["quality_max"] = max(existing_cg["quality_max"], cg["quality_max"])
+            else:
+                if usn:
+                    usn_map[usn] = cg
+                merged_groups.append(cg)
+
+        candidate_groups = merged_groups
+
+        # ── Step 4.7: Bound Candidate Groups Strictly to Classroom Seating Capacity ──
+        MAX_CLASSROOM_CAPACITY = getattr(settings, "max_classroom_capacity", 64)
+        if len(candidate_groups) > MAX_CLASSROOM_CAPACITY:
+            logger.info(
+                f"[ROSTER BOUND] Candidates ({len(candidate_groups)}) exceeded classroom capacity ({MAX_CLASSROOM_CAPACITY}). "
+                f"Pruning lowest-evidence transient singleton noise to strictly bound to room size."
+            )
+            def _cg_sort_key(cg):
+                f_match = faiss_service.search_face(cg["centroid"], threshold=0.58)
+                has_match = 1 if f_match else 0
+                sample_cnt = sum(t.get("sample_count", 1) for t in cg["member_tracks"])
+                return (has_match, sample_cnt, cg.get("quality_max", 70.0))
+
+            candidate_groups.sort(key=_cg_sort_key, reverse=True)
+            candidate_groups = candidate_groups[:MAX_CLASSROOM_CAPACITY]
 
         # ── Step 5: Final Cluster Profile Generation & FAISS Multi-Sample Matching ─
         recog_thresh = float(getattr(settings, "recognition_confidence_threshold", 0.58))

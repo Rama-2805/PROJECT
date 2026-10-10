@@ -1,5 +1,6 @@
 export interface AnalyticsOverview {
   totalStudents: number;
+  totalTeachers: number;
   averageAttendance: number;
   aiRecognitionAccuracy: number;
   activeDevicesPercent: number;
@@ -75,40 +76,30 @@ const now = Date.now();
 
 export function getAnalyticsOverview(): Promise<AnalyticsOverview> {
   return Promise.resolve({
-    totalStudents: 12540,
-    averageAttendance: 95.6,
+    totalStudents: 130,
+    totalTeachers: 5,
+    averageAttendance: 93.8,
     aiRecognitionAccuracy: 99.2,
-    activeDevicesPercent: 98,
-    presentToday: 11820,
-    averageEngagement: 82.4,
-    totalAlerts: 47,
-    studentsAtRisk: 128,
+    activeDevicesPercent: 100,
+    presentToday: 122,
+    averageEngagement: 88.5,
+    totalAlerts: 0,
+    studentsAtRisk: 2,
   });
 }
 
 export function getDepartmentRankings(): Promise<DepartmentRanking[]> {
   return Promise.resolve([
-    { name: "Computer Science", attendance: 97.8, engagement: 88.5, performanceScore: 93.2, totalStudents: 2840, alerts: 8, trend: "up" },
-    { name: "Biotechnology", attendance: 96.4, engagement: 85.2, performanceScore: 90.8, totalStudents: 960, alerts: 5, trend: "up" },
-    { name: "Electronics & Comm.", attendance: 95.1, engagement: 82.7, performanceScore: 88.9, totalStudents: 2150, alerts: 12, trend: "stable" },
-    { name: "Electrical Engineering", attendance: 94.6, engagement: 80.1, performanceScore: 87.3, totalStudents: 1780, alerts: 10, trend: "stable" },
-    { name: "Mechanical Engineering", attendance: 93.2, engagement: 78.4, performanceScore: 85.8, totalStudents: 1620, alerts: 15, trend: "down" },
-    { name: "Civil Engineering", attendance: 92.8, engagement: 76.9, performanceScore: 84.8, totalStudents: 1240, alerts: 9, trend: "down" },
-    { name: "Mathematics", attendance: 91.5, engagement: 79.3, performanceScore: 85.4, totalStudents: 750, alerts: 6, trend: "stable" },
-    { name: "Physics", attendance: 90.2, engagement: 77.1, performanceScore: 83.6, totalStudents: 680, alerts: 7, trend: "down" },
+    { name: "Computer Science & Engineering", attendance: 93.8, engagement: 88.5, performanceScore: 93.8, totalStudents: 130, alerts: 0, trend: "up" },
   ]);
 }
 
 export function getClassroomIntelligence(): Promise<ClassroomIntelligence[]> {
   return Promise.resolve([
-    { name: "CSE Lab 301", deviceStatus: "OPTIMAL", engagement: 92, alerts: 2, attendance: 98 },
-    { name: "AI Research Lab", deviceStatus: "OPTIMAL", engagement: 95, alerts: 1, attendance: 99 },
-    { name: "ECE Lab 202", deviceStatus: "GOOD", engagement: 85, alerts: 5, attendance: 94 },
-    { name: "Physics Lab", deviceStatus: "GOOD", engagement: 78, alerts: 8, attendance: 91 },
-    { name: "ME Workshop", deviceStatus: "DEGRADED", engagement: 72, alerts: 15, attendance: 88 },
-    { name: "Chemistry Lab", deviceStatus: "GOOD", engagement: 81, alerts: 6, attendance: 93 },
-    { name: "Library Study Hall", deviceStatus: "OPTIMAL", engagement: 88, alerts: 3, attendance: 96 },
-    { name: "Auditorium", deviceStatus: "DEGRADED", engagement: 65, alerts: 12, attendance: 85 },
+    { name: "CSE Room 023", deviceStatus: "OPTIMAL", engagement: 92, alerts: 0, attendance: 94 },
+    { name: "CSE Room 402", deviceStatus: "OPTIMAL", engagement: 90, alerts: 0, attendance: 93 },
+    { name: "CSE IoT Lab 3", deviceStatus: "OPTIMAL", engagement: 88, alerts: 0, attendance: 95 },
+    { name: "CSE Seminar Hall 1", deviceStatus: "OPTIMAL", engagement: 85, alerts: 0, attendance: 92 },
   ]);
 }
 
@@ -162,8 +153,8 @@ export function getAIModelPerformance(): Promise<AIModelPerformance> {
     accuracy: 99.1,
     falsePositives: 0.08,
     falseNegatives: 0.82,
-    latencyMs: 120,
-    studentsEnrolled: 12450,
+    latencyMs: 14,
+    studentsEnrolled: 130,
     lastUpdated: new Date(now - 604800000).toISOString(),
   });
 }
@@ -171,16 +162,16 @@ export function getAIModelPerformance(): Promise<AIModelPerformance> {
 export function getDailyTrends(): Promise<DailyTrend[]> {
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   return Promise.resolve(Array.from({ length: 7 }, (_, i) => {
-    const total = 12540;
-    const rate = i === 5 ? 89.2 : i === 6 ? 85.6 : 93 + Math.random() * 6;
+    const total = 130;
+    const rate = i === 5 ? 91.2 : i === 6 ? 89.6 : 93.1 + (i * 0.3);
     const present = Math.round(total * rate / 100);
     return {
       date: days[i],
       attendance: Math.round(rate * 10) / 10,
       present,
       total,
-      engagement: Math.round(72 + Math.random() * 22),
-      devices: Math.round(22 + Math.random() * 4),
+      engagement: 88,
+      devices: 6,
     };
   }));
 }

@@ -142,10 +142,10 @@ function generateMockStudents(count: number): Student[] {
 const mockStudents = generateMockStudents(250);
 
 export const studentStats: StudentStats = {
-  totalStudents: 12540,
-  faceEnrolled: 11980,
-  pendingEnrollment: 560,
-  averageAttendance: 95.4,
+  totalStudents: 130,
+  faceEnrolled: 128,
+  pendingEnrollment: 2,
+  averageAttendance: 93.8,
   averageEngagement: 89,
 };
 

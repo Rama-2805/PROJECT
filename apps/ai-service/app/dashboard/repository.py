@@ -250,16 +250,16 @@ class DashboardRepository:
 
         # Return static mock if DB is not used or unpopulated
         return {
-            "totalStudents": 10542,
-            "attendanceToday": 96.8,
+            "totalStudents": 130,
+            "attendanceToday": 93.1,
             "aiRecognitionAccuracy": 99.2,
-            "activeClassrooms": 120,
-            "connectedDevices": {"online": 84, "total": 86},
+            "activeClassrooms": 4,
+            "connectedDevices": {"online": 6, "total": 6},
             "monthlyAttendanceGrowth": 4.8,
             "averageEngagement": 89.0,
-            "pendingAlerts": 3,
-            "greeting": "Welcome back, Professor Alex",
-            "aiSummary": "Your SmartCampus AI system is operating normally."
+            "pendingAlerts": 0,
+            "greeting": "Welcome back, System Admin",
+            "aiSummary": "Vemana IT SmartCampus operating normally. All 6 edge nodes streaming live."
         }
 
     def get_recent_events(self) -> List[Dict[str, Any]]:

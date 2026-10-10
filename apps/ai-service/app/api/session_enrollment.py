@@ -8,8 +8,9 @@ import os
 import json
 import logging
 import asyncio
+import numpy as np
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from ..config.settings import settings
@@ -139,6 +140,147 @@ def _get_session_dir(session_id: str) -> Path:
     return candidates[0]
 
 
+def consolidate_cluster_dicts(clusters: List[dict], max_capacity: int = 64) -> List[dict]:
+    """Consolidate fragmented clusters into unified student identities bounded by classroom capacity."""
+    if not clusters:
+        return []
+
+    usn_map: Dict[str, List[dict]] = {}
+    unassigned: List[dict] = []
+
+    for c in clusters:
+        usn = c.get("assignedUsn") or c.get("usn")
+        status = c.get("identity_status") or c.get("status")
+        if usn and status in ("CONFIRMED", "CANDIDATE", "ASSIGNED"):
+            usn_map.setdefault(usn, []).append(c)
+        else:
+            unassigned.append(c)
+
+    consolidated = []
+
+    # 1. Consolidate clusters sharing the same enrolled student USN
+    for usn, group in usn_map.items():
+        base = dict(group[0])
+        all_tracks = []
+        all_gallery = []
+        all_images = []
+        total_samples = 0
+        all_centroids = []
+
+        for item in group:
+            for t in (item.get("track_ids") or item.get("tracks") or []):
+                if t not in all_tracks:
+                    all_tracks.append(t)
+            for g in (item.get("gallery") or []):
+                if g not in all_gallery:
+                    all_gallery.append(g)
+            for img in (item.get("images") or []):
+                if not any(x.get("imageUrl") == img.get("imageUrl") for x in all_images):
+                    all_images.append(img)
+            total_samples += int(item.get("sample_count") or item.get("sampleCount") or 1)
+            cent = item.get("centroid") or item.get("centroid_embedding")
+            if cent and len(cent) == 512:
+                all_centroids.append(np.array(cent, dtype=np.float32))
+
+        all_images.sort(key=lambda x: float(x.get("qualityScore", 0.0)), reverse=True)
+        base["track_ids"] = all_tracks
+        base["tracks"] = all_tracks
+        base["track_count"] = len(all_tracks)
+        base["trackCount"] = len(all_tracks)
+        base["sample_count"] = total_samples
+        base["sampleCount"] = total_samples
+        base["gallery"] = all_gallery[:6]
+        base["images"] = all_images[:6]
+        base["assignedUsn"] = usn
+        base["usn"] = usn
+        if base.get("assignedStudent") and isinstance(base["assignedStudent"], dict):
+            base["assignedStudentName"] = base["assignedStudent"].get("name")
+        if all_centroids:
+            m = np.mean(all_centroids, axis=0)
+            norm = float(np.linalg.norm(m))
+            base["centroid"] = (m / norm).tolist() if norm > 1e-6 else all_centroids[0].tolist()
+        consolidated.append(base)
+
+    # 2. Consolidate unassigned clusters by ArcFace cosine similarity (>= 0.65)
+    unassigned_groups: List[Dict[str, Any]] = []
+    for c in unassigned:
+        cent = c.get("centroid") or c.get("centroid_embedding")
+        emb = np.array(cent, dtype=np.float32) if (cent and len(cent) == 512) else None
+        merged = False
+        if emb is not None:
+            for grp in unassigned_groups:
+                g_emb = grp["centroid"]
+                sim = float(np.dot(emb, g_emb))
+                if sim >= 0.65:
+                    grp["items"].append(c)
+                    all_embs = [np.array(x.get("centroid") or x.get("centroid_embedding"), dtype=np.float32) for x in grp["items"] if (x.get("centroid") or x.get("centroid_embedding"))]
+                    m = np.mean(all_embs, axis=0)
+                    grp["centroid"] = (m / np.linalg.norm(m)).astype(np.float32)
+                    merged = True
+                    break
+        if not merged:
+            unassigned_groups.append({
+                "centroid": emb if emb is not None else np.zeros(512, dtype=np.float32),
+                "items": [c]
+            })
+
+    for grp in unassigned_groups:
+        items = grp["items"]
+        base = dict(items[0])
+        all_tracks = []
+        all_gallery = []
+        all_images = []
+        total_samples = 0
+        for item in items:
+            for t in (item.get("track_ids") or item.get("tracks") or []):
+                if t not in all_tracks:
+                    all_tracks.append(t)
+            for g in (item.get("gallery") or []):
+                if g not in all_gallery:
+                    all_gallery.append(g)
+            for img in (item.get("images") or []):
+                if not any(x.get("imageUrl") == img.get("imageUrl") for x in all_images):
+                    all_images.append(img)
+            total_samples += int(item.get("sample_count") or item.get("sampleCount") or 1)
+
+        all_images.sort(key=lambda x: float(x.get("qualityScore", 0.0)), reverse=True)
+        base["track_ids"] = all_tracks
+        base["tracks"] = all_tracks
+        base["track_count"] = len(all_tracks)
+        base["trackCount"] = len(all_tracks)
+        base["sample_count"] = total_samples
+        base["sampleCount"] = total_samples
+        base["gallery"] = all_gallery[:6]
+        base["images"] = all_images[:6]
+
+        # Prune 1-sample fleeting noise if candidate pool is large
+        if total_samples <= 1 and float(base.get("qualityAvg", 80.0)) < 75.0 and len(unassigned_groups) > 35:
+            continue
+        consolidated.append(base)
+
+    # 3. Bound to physical classroom capacity (Section A <= 64 seats)
+    def _sort_key(c):
+        has_usn = 1 if (c.get("assignedUsn") or c.get("usn")) else 0
+        sc = c.get("sampleCount") or c.get("sample_count") or 1
+        tc = c.get("trackCount") or c.get("track_count") or 1
+        q = float(c.get("qualityAvg") or c.get("quality_mean") or 70.0)
+        return (has_usn, sc + tc * 2, q)
+
+    consolidated.sort(key=_sort_key, reverse=True)
+    consolidated = consolidated[:max_capacity]
+
+    # 4. Renumber clusters cleanly
+    for idx, c in enumerate(consolidated, start=1):
+        cid = f"cluster_{idx:03d}"
+        c["id"] = cid
+        c["cluster_id"] = cid
+        c["clusterId"] = cid
+        c["cluster_number"] = idx
+        c["clusterNumber"] = idx
+
+    return consolidated
+
+
 def _load_session_disk_fallback(session_id: str):
     """Fallback helper: load clusters and diagnostics from session disk storage if memory state is empty."""
     session_dir = _get_session_dir(session_id)
@@ -155,6 +297,16 @@ def _load_session_disk_fallback(session_id: str):
                     clusters = clusters_raw
                 else:
                     clusters = []
+
+                # Automatically consolidate if clusters exceed capacity or have fragmented duplicates
+                if len(clusters) > 64 or sum(1 for c in clusters if c.get("assignedUsn")) > 10:
+                    clusters = consolidate_cluster_dicts(clusters, max_capacity=64)
+                    try:
+                        with open(session_dir / "clusters.json", "w") as f:
+                            json.dump(clusters, f, indent=2)
+                    except Exception:
+                        pass
+
                 diag = {}
                 if (session_dir / "diagnostics.json").exists():
                     with open(session_dir / "diagnostics.json") as f:
@@ -168,7 +320,7 @@ def _load_session_disk_fallback(session_id: str):
                     "processedFrames": diag.get("evaluated_frames", len(clusters) * 10),
                     "detectedFaces": diag.get("face_detections", len(clusters) * 5),
                 }
-                logger.info(f"Loaded disk fallback session '{session_id}' from {session_dir} with {len(clusters)} clusters")
+                logger.info(f"Loaded disk fallback session '{session_id}' from {session_dir} with {len(clusters)} consolidated clusters")
                 return state.sessions[session_id]
             except Exception as err:
                 logger.warning(f"Failed loading disk fallback for session {session_id}: {err}")
@@ -255,6 +407,10 @@ async def get_session_clusters(session_id: str):
         _load_session_disk_fallback(session_id)
 
     clusters = state.sessions.get(session_id, {}).get("clusters", [])
+    if len(clusters) > 64:
+        clusters = consolidate_cluster_dicts(clusters, max_capacity=64)
+        if session_id in state.sessions:
+            state.sessions[session_id]["clusters"] = clusters
     counts = {
         "all": len(clusters),
         "pending": sum(1 for c in clusters if c.get("identity_status") in ("UNKNOWN", "CANDIDATE") or c.get("status") == "UNASSIGNED"),
@@ -446,18 +602,23 @@ async def assign_cluster_identity(session_id: str, cluster_id: str, req: AssignS
     if not matched:
         raise HTTPException(status_code=404, detail=f"Cluster '{cluster_id}' not found in session")
 
-    # Prevent duplicate student assignment in the same session
-    if not req.force:
-        existing_assign = next(
-            (c for c in clusters if (c.get("usn") == req.usn or (req.studentId and c.get("student_id") == req.studentId)) and (c.get("clusterId") != cluster_id and c.get("cluster_id") != cluster_id)),
-            None
-        )
-        if existing_assign:
-            existing_cid = existing_assign.get("clusterId") or existing_assign.get("cluster_id")
-            raise HTTPException(
-                status_code=409,
-                detail=f"Student '{req.usn}' is already assigned to {existing_cid} in this session."
-            )
+    # When assigning/re-enrolling same student, unassign any previous cluster in this session
+    for c in clusters:
+        cid = c.get("clusterId") or c.get("cluster_id")
+        if cid != cluster_id and (
+            (c.get("usn") and str(c.get("usn")).strip().upper() == req.usn.strip().upper())
+            or (req.studentId and c.get("student_id") == req.studentId)
+        ):
+            logger.info(f"Unassigning previous cluster {cid} for student {req.usn} in session {session_id}")
+            c["identity_status"] = "UNASSIGNED"
+            c["status"] = "UNASSIGNED"
+            c["assignment_source"] = None
+            c["usn"] = None
+            c["name"] = None
+            c["student_id"] = None
+            c["assignedStudent"] = None
+            c["isEnrolled"] = False
+            c["enrolled"] = False
 
     matched["identity_status"] = "CONFIRMED"
     matched["status"] = "ASSIGNED"
@@ -679,6 +840,11 @@ async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
             status_code=400,
             detail=f"Cannot enroll cluster '{cluster_id}' into FAISS: No valid 512D ArcFace embeddings found. Mock vectors are strictly prohibited."
         )
+
+    # Purge old vectors for this student from FAISS before saving new cluster vectors
+    purged = faiss_service.remove_student_vectors(usn)
+    if purged > 0:
+        logger.info(f"Purged {purged} old FAISS vectors for student {usn} prior to saving new cluster.")
 
     added_count = 0
     for vec in vectors_to_add:
