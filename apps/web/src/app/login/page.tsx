@@ -358,27 +358,6 @@ function LoginContent() {
                   </div>
                   Sign in with Microsoft
                 </button>
-
-                {mounted && (
-                  <div className="mt-5 p-3.5 rounded-xl bg-white/[0.02] border border-white/5 text-[11px] text-gray-400 space-y-1 text-left">
-                    <div className="font-semibold text-gray-300 uppercase tracking-wider text-[9px]">
-                      {isDemoMode() ? "Demo Student Credentials" : "Live Database Student Credentials"}
-                    </div>
-                    <div className="text-[10px] text-gray-400">
-                      <p className="mb-1">Use the following credentials for testing:</p>
-                      <div className="space-y-1 font-mono text-xs font-semibold">
-                        <div>
-                          <span className="text-blue-400">Email:</span>{" "}
-                          {isDemoMode() ? "student@collegename.edu.in" : "student@smartcampus.edu"}
-                        </div>
-                        <div>
-                          <span className="text-blue-400">Password:</span>{" "}
-                          {isDemoMode() ? "admin123" : "student123"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </motion.div>
             ) : (
               <motion.div

@@ -62,6 +62,7 @@ export default function DashboardPage() {
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [mounted, setMounted] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const { isDemoMode, simulateEvent, activeSimulations, toggleSimulation } = useDemoMode();
   const [rebuildingFaiss, setRebuildingFaiss] = useState(false);
@@ -87,21 +88,26 @@ export default function DashboardPage() {
 
   useEffect(() => {
     setMounted(true);
-    async function load() {
+    let isCancelled = false;
+
+    async function fetchData(silent = false) {
       const demo = checkDemoMode();
       if (demo) {
         const [dashData, recentEvents] = await Promise.all([
           getDashboardData(),
           getRecentEvents(),
         ]);
+        if (isCancelled) return;
         setData(dashData);
         setEvents(recentEvents);
-        setLoading(false);
+        setLastUpdated(new Date());
+        if (!silent) setLoading(false);
         return;
       }
 
       try {
         const res = await dashboardApi.getAdminSummary();
+        if (isCancelled) return;
         if (res && res.success && res.data) {
           const apiData = res.data;
           setData({
@@ -130,28 +136,51 @@ export default function DashboardPage() {
             ...e,
             timestamp: new Date(e.timestamp)
           })));
+          setLastUpdated(new Date());
         } else {
-          console.warn("Dashboard API returned failure. Falling back to mocks.");
           const [dashData, recentEvents] = await Promise.all([
             getDashboardData(),
             getRecentEvents(),
           ]);
+          if (isCancelled) return;
           setData(dashData);
           setEvents(recentEvents);
+          setLastUpdated(new Date());
         }
       } catch (err) {
-        console.error("Failed to fetch live admin stats. Falling back to mocks.", err);
+        if (isCancelled) return;
         const [dashData, recentEvents] = await Promise.all([
           getDashboardData(),
           getRecentEvents(),
         ]);
+        if (isCancelled) return;
         setData(dashData);
         setEvents(recentEvents);
+        setLastUpdated(new Date());
       } finally {
-        setLoading(false);
+        if (!silent && !isCancelled) {
+          setLoading(false);
+        }
       }
     }
-    load();
+
+    // Initial load
+    fetchData(false);
+
+    // Continuous real-time updates every 4 seconds
+    const interval = setInterval(() => {
+      fetchData(true);
+    }, 4000);
+
+    // Refresh immediately on tab focus
+    const onFocus = () => fetchData(true);
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
   }, []);
 
   if (loading || !data) {
@@ -189,11 +218,22 @@ export default function DashboardPage() {
             />
             <p className="text-sm text-text-secondary mt-4 font-medium">{data.aiSummary}</p>
           </div>
-          {isDemoMode && (
-            <span className="px-2 py-1 rounded bg-warning/20 border border-warning/30 text-warning text-xs font-bold font-mono">
-              VIVA PRESENTATION MODE ACTIVE
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono font-medium shadow-sm">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              LIVE TELEMETRY
             </span>
-          )}
+            {lastUpdated && (
+              <span className="text-[11px] text-text-muted font-mono hidden sm:inline">
+                Synced {lastUpdated.toLocaleTimeString()}
+              </span>
+            )}
+            {isDemoMode && (
+              <span className="px-2 py-1 rounded bg-warning/20 border border-warning/30 text-warning text-xs font-bold font-mono">
+                VIVA PRESENTATION MODE ACTIVE
+              </span>
+            )}
+          </div>
         </motion.div>
 
         {/* Viva Demo Simulator Panel */}

@@ -1,20 +1,22 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { CheckSquare, AlertTriangle, CheckCircle, XCircle, Clock } from "lucide-react";
+import { apiRequest } from "@/lib/api/client";
 
 export default function StudentAttendancePage() {
-  const courses = [
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [courses, setCourses] = useState([
     { code: "CS-301", name: "Advanced Data Structures", present: 18, absent: 1, total: 19, rate: 94.7 },
     { code: "CS-402", name: "Artificial Intelligence & ML", present: 15, absent: 2, total: 17, rate: 88.2 },
     { code: "CS-101", name: "Introduction to Programming", present: 22, absent: 0, total: 22, rate: 100.0 },
     { code: "CS-305", name: "Operating Systems", present: 14, absent: 3, total: 17, rate: 82.3 },
     { code: "CS-308", name: "Software Engineering", present: 16, absent: 1, total: 17, rate: 94.1 },
     { code: "CS-310", name: "Computer Networks", present: 12, absent: 4, total: 16, rate: 75.0 }
-  ];
+  ]);
 
-  const fullLogs = [
+  const [fullLogs, setFullLogs] = useState([
     { date: "June 19, 2026", time: "10:02 AM", code: "CS-301", name: "Advanced Data Structures", status: "Present", method: "AI Face Recognition" },
     { date: "June 18, 2026", time: "02:05 PM", code: "CS-402", name: "Artificial Intelligence & ML", status: "Present", method: "AI Face Recognition" },
     { date: "June 17, 2026", time: "10:03 AM", code: "CS-301", name: "Advanced Data Structures", status: "Present", method: "AI Face Recognition" },
@@ -22,13 +24,66 @@ export default function StudentAttendancePage() {
     { date: "June 16, 2026", time: "09:05 AM", code: "CS-101", name: "Introduction to Programming", status: "Present", method: "AI Face Recognition" },
     { date: "June 16, 2026", time: "11:30 AM", code: "CS-310", name: "Computer Networks", status: "Absent", method: "Missed Check-in" },
     { date: "June 15, 2026", time: "10:01 AM", code: "CS-301", name: "Advanced Data Structures", status: "Present", method: "AI Face Recognition" }
-  ];
+  ]);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function fetchAttendance() {
+      const usn = typeof window !== "undefined" ? localStorage.getItem("currentUserUSN") : null;
+      if (!usn || usn === "—") return;
+
+      try {
+        const res = await apiRequest<any>(`/attendance/student/${encodeURIComponent(usn)}`);
+        if (res && res.success && res.data && !isCancelled) {
+          const records = res.data.recentRecords;
+          if (records && records.length > 0) {
+            setFullLogs(records.map((r: any) => ({
+              date: new Date(r.markedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+              time: new Date(r.markedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
+              code: r.session?.subject?.code || "CS-301",
+              name: r.session?.subjectName || "Computer Science",
+              status: r.status === "PRESENT" ? "Present" : "Absent",
+              method: r.source === "BIOMETRIC_CAMERA" ? "AI Face Recognition" : "Facial Biometrics",
+            })));
+          }
+          setLastUpdated(new Date());
+        }
+      } catch (err) {}
+    }
+
+    fetchAttendance();
+
+    // Auto-refresh every 4 seconds in real time
+    const interval = setInterval(fetchAttendance, 4000);
+    const onFocus = () => fetchAttendance();
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      isCancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
-      <div>
-        <h2 className="text-xl font-bold text-text-primary">Attendance Telemetry</h2>
-        <p className="text-xs text-text-muted">Track your academic presence, verify biometric login rates, and review course warning status.</p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-bold text-text-primary">Attendance Telemetry</h2>
+          <p className="text-xs text-text-muted">Track your academic presence, verify biometric login rates, and review course warning status.</p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-mono font-medium shadow-sm">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            LIVE TELEMETRY
+          </span>
+          {lastUpdated && (
+            <span className="text-[11px] text-text-muted font-mono hidden sm:inline">
+              Synced {lastUpdated.toLocaleTimeString()}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Warning Box if any course is below 75% or 80% */}

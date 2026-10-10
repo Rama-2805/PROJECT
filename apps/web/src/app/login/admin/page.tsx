@@ -253,44 +253,6 @@ function LoginContent() {
             </div>
             Sign in with Microsoft
           </button>
-
-          {mounted && (
-            <div className="mt-5 p-3.5 rounded-xl bg-white/[0.02] border border-white/5 text-[11px] text-gray-400 space-y-1 text-left">
-              <div className="font-semibold text-gray-300 uppercase tracking-wider text-[9px]">
-                {isDemoMode() ? "Demo Admin / HOD Credentials" : "Live Database Admin / HOD Credentials"}
-              </div>
-              <div className="text-[10px] text-gray-400 space-y-2">
-                <p className="mb-1">Use the following credentials for testing:</p>
-                {isDemoMode() ? (
-                  <>
-                    <div className="space-y-1 font-mono text-xs font-semibold">
-                      <div><span className="text-red-400">College Admin:</span></div>
-                      <div><span className="text-blue-400">Email:</span> admin@collegename.edu.in</div>
-                      <div><span className="text-blue-400">Password:</span> admin123</div>
-                    </div>
-                    <div className="space-y-1 font-mono text-xs border-t border-white/5 pt-2 font-semibold">
-                      <div><span className="text-amber-400">HOD (CSE):</span></div>
-                      <div><span className="text-blue-400">Email:</span> hod@vemana.edu.in</div>
-                      <div><span className="text-blue-400">Password:</span> hod123</div>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="space-y-1 font-mono text-xs font-semibold">
-                      <div><span className="text-red-400">System Admin:</span></div>
-                      <div><span className="text-blue-400">Email:</span> admin@smartcampus.edu</div>
-                      <div><span className="text-blue-400">Password:</span> admin123</div>
-                    </div>
-                    <div className="space-y-1 font-mono text-xs border-t border-white/5 pt-2 font-semibold">
-                      <div><span className="text-amber-400">HOD (CSE):</span></div>
-                      <div><span className="text-blue-400">Email:</span> hod@smartcampus.edu</div>
-                      <div><span className="text-blue-400">Password:</span> hod123</div>
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          )}
         </div>
 
         <p className="text-center text-gray-500 text-xs sm:text-sm mt-5 flex flex-col gap-2">
