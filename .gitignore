@@ -49,7 +49,10 @@ dataset/
 *.onnx
 *.faiss
 
-# AI service storage (debug frames, enrollment data, vectors)
+# Storage directories (debug frames, enrollment data, clusters)
+storage/enrollment/
+storage/clusters/
+apps/ai-service/storage/clusters/
 apps/ai-service/storage/debug_*
 apps/ai-service/storage/enrollment/
 apps/ai-service/vectors/

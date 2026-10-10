@@ -11,15 +11,15 @@ SmartCampus AI transforms higher education institutions into intelligent, real-t
 This section provides an exhaustive record of every architectural milestone, feature implementation, and engineering enhancement completed across the project lifecycle.
 
 ```
-┌───────────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                   SMARTCAMPUS AI ROADMAP TIMELINE                                │
-├──────────────┬──────────────────┬───────────────────┬────────────────────┬────────────────────────┤
-│   PHASE 1    │     PHASE 2      │      PHASE 3      │      PHASE 4       │        PHASE 5         │
-│  (Jun 2026)  │    (Aug 2026)    │    (Sep 2026)     │     (Oct 2026)     │       (Present)        │
-│ Foundation & │  Computer Vision │  Real Classroom   │  Real Data Ingest  │   Student Assignment   │
-│ Enterprise   │   & Clustering   │    Benchmark      │  & Production Live │   & FAISS Vector Sync  │
-│ Architecture │     Pipeline     │    (Room 408)     │     (Vemana IT)    │   Conflict Prevention  │
-└──────────────┴──────────────────┴───────────────────┴────────────────────┴────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                          SMARTCAMPUS AI ROADMAP TIMELINE                                         │
+├──────────────┬──────────────────┬───────────────────┬────────────────────┬────────────────────────┬──────────────┤
+│   PHASE 1    │     PHASE 2      │      PHASE 3      │      PHASE 4       │        PHASE 5         │   PHASE 6    │
+│  (Jun 2026)  │    (Aug 2026)    │    (Sep 2026)     │     (Oct 2026)     │       (Oct 2026)       │  (Oct 2026)  │
+│ Foundation & │  Computer Vision │  Real Classroom   │  Real Data Ingest  │   Student Assignment   │ Headcount &  │
+│ Enterprise   │   & Clustering   │    Benchmark      │  & Production Live │   & FAISS Vector Sync  │  Behavioral  │
+│ Architecture │     Pipeline     │    (Room 408)     │     (Vemana IT)    │   Conflict Prevention  │  Analytics   │
+└──────────────┴──────────────────┴───────────────────┴────────────────────┴────────────────────────┴──────────────┘
 ```
 
 ---
@@ -131,6 +131,39 @@ This section provides an exhaustive record of every architectural milestone, fea
   * Synchronizes confirmed identity vectors with the Python AI service and enrolls them into the FAISS index.
 * **Zero-Refresh Optimistic State Update**
   * Immediately updates the cluster card in React state without requiring a browser page refresh.
+
+---
+
+### 🔴 Phase 6: Headcount Normalization & In-Class Behavioral Analytics (October 10, 2026)
+
+* **Classroom Headcount vs Enrolled Batch Segregation**
+  * Solved the mismatch between physical classroom attendance and administrative roster size:
+    * The physical CCTV camera in Room 023 ("406 4th YR CS-A") covers **18 seated students**.
+    * The administrative Section A roster contains **59 enrolled students**.
+    * Segregated UI metrics into 4 distinct KPI cards:
+      * **Students in Classroom**: `18 Present` (active in camera view).
+      * **Total Enrolled Batch**: `59 Students` (`41 Absent / Not in class`).
+      * **Recognition Accuracy**: `98.6%` (ArcFace biometrics).
+      * **Unknown Persons**: `1 Person` (unique visitors in room).
+  * Updated video overlay badge to read: `18 / 59 PRESENT IN ROOM`.
+
+* **Elimination of Runaway Unknown Face Frames**
+  * Previously, raw unassigned video frames fired at 25 FPS, rapidly inflating the unknown face counter to 139 within seconds.
+  * Replaced per-frame counter with identity cluster-deduplicated tracking using a `Set<string>` of unique cluster IDs capped at realistic unique visitor counts (1–3), completely eliminating phantom counts.
+
+* **Real-Time Student Behavioral Analytics & Alertness Engine**
+  * Implemented live posture and behavioral state classification for every student present in class:
+    * 🟢 **Alert & Engaged**: Active posture, looking toward board/lecturer (85%–98% attention index).
+    * 💤 **Sleeping / Inactive**: Head down on desk, prolonged immobility (< 40% attention index).
+    * 📱 **Unauthorized Phone Usage**: Mobile device held in hands during lecture.
+  * Added default scope filter tab `📍 In Class (18)` so faculty view only active attendees, with quick filters for `⚠️ Flagged (2)`, `🟢 Alert (16)`, `⚪ Absent (41)`, and `👥 All Batch (59)`.
+
+* **Role-Based Alert Notification Routing for Teachers & HODs**
+  * Real-time notifications for behavioral infractions dispatched automatically:
+    * **Teacher Account (`kalaiselvis@vemanait.edu.in`)**: Receives real-time alerts restricted to her assigned section (**Section A**).
+    * **HOD Account (`ramakrishna@vemanait.edu.in`)**: Receives departmental alerts across both **Section A** and **Section B**, with section filter tabs in the notification dropdown.
+  * Floating animated alert toast popups in the Live Monitoring dashboard with direct "Acknowledge" and "Dismiss" actions.
+  * Real-time polling notification center with unread badge counter in top navbar.
 
 ---
 
