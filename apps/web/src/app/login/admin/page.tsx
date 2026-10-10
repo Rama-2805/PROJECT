@@ -118,7 +118,8 @@ function LoginContent() {
 
       // 2. Fallback to local user store only if API is offline
       const users = getUsers();
-      const user = users[email];
+      const normalizedEmail = email.trim().toLowerCase();
+      const user = users[normalizedEmail] || users[email];
       if (user) {
         const inputHash = await hashPassword(password);
         if (inputHash === user.passwordHash) {

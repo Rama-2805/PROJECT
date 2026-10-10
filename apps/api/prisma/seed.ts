@@ -365,13 +365,136 @@ async function main() {
   });
   console.log(`✅ Class schedule seeded: ${classSchedule.name} (Mon 09:00-10:00)`);
 
+  // ─── 13. Vemana Institutional Accounts ─────────────────────────
+  const vemanaAdminPw = await argon2.hash("admin@123");
+  const vemanaAdminUser = await prisma.user.upsert({
+    where: { email: "admin@vemanait.edu.in" },
+    update: { passwordHash: vemanaAdminPw },
+    create: {
+      institutionId: institution.id,
+      fullName: "System Admin",
+      email: "admin@vemanait.edu.in",
+      passwordHash: vemanaAdminPw,
+      emailVerified: true,
+    },
+  });
+  for (const roleName of ["SUPER_ADMIN", "INSTITUTION_ADMIN"]) {
+    await prisma.userRole.upsert({
+      where: {
+        userId_roleId: {
+          userId: vemanaAdminUser.id,
+          roleId: roles[roleName].id,
+        },
+      },
+      update: {},
+      create: {
+        userId: vemanaAdminUser.id,
+        roleId: roles[roleName].id,
+      },
+    });
+  }
+
+  // HOD: ramakrishna@vemanait.edu.in
+  const vemanaHodPw = await argon2.hash("csehod@vemana");
+  const vemanaHodUser = await prisma.user.upsert({
+    where: { email: "ramakrishna@vemanait.edu.in" },
+    update: { passwordHash: vemanaHodPw },
+    create: {
+      institutionId: institution.id,
+      fullName: "Dr. Ramakrishna (HOD CSE)",
+      email: "ramakrishna@vemanait.edu.in",
+      passwordHash: vemanaHodPw,
+      emailVerified: true,
+    },
+  });
+  await prisma.userRole.upsert({
+    where: {
+      userId_roleId: {
+        userId: vemanaHodUser.id,
+        roleId: roles["HOD"].id,
+      },
+    },
+    update: {},
+    create: {
+      userId: vemanaHodUser.id,
+      roleId: roles["HOD"].id,
+    },
+  });
+
+  // TEACHER: kalaiselvis@vemanait.edu.in
+  const vemanaTeacherPw = await argon2.hash("teacher@vemana");
+  const vemanaTeacherUser = await prisma.user.upsert({
+    where: { email: "kalaiselvis@vemanait.edu.in" },
+    update: { passwordHash: vemanaTeacherPw },
+    create: {
+      institutionId: institution.id,
+      fullName: "Prof. Kalaiselvi S",
+      email: "kalaiselvis@vemanait.edu.in",
+      passwordHash: vemanaTeacherPw,
+      emailVerified: true,
+    },
+  });
+  await prisma.userRole.upsert({
+    where: {
+      userId_roleId: {
+        userId: vemanaTeacherUser.id,
+        roleId: roles["TEACHER"].id,
+      },
+    },
+    update: {},
+    create: {
+      userId: vemanaTeacherUser.id,
+      roleId: roles["TEACHER"].id,
+    },
+  });
+
+  // STUDENT: manjunathar.cs2023@vemanait.edu.in
+  const vemanaStudentPw = await argon2.hash("1VI23CS058@VEMANA");
+  const vemanaStudentUser = await prisma.user.upsert({
+    where: { email: "manjunathar.cs2023@vemanait.edu.in" },
+    update: { passwordHash: vemanaStudentPw },
+    create: {
+      institutionId: institution.id,
+      fullName: "Manjunatha R",
+      email: "manjunathar.cs2023@vemanait.edu.in",
+      passwordHash: vemanaStudentPw,
+      emailVerified: true,
+    },
+  });
+  await prisma.student.upsert({
+    where: {
+      institutionId_studentId: {
+        institutionId: institution.id,
+        studentId: "1VI23CS058",
+      },
+    },
+    update: {
+      userId: vemanaStudentUser.id,
+      email: "manjunathar.cs2023@vemanait.edu.in",
+      fullName: "Manjunatha R",
+    },
+    create: {
+      institutionId: institution.id,
+      departmentId: department.id,
+      courseId: course.id,
+      userId: vemanaStudentUser.id,
+      studentId: "1VI23CS058",
+      rollNumber: "1VI23CS058",
+      fullName: "Manjunatha R",
+      email: "manjunathar.cs2023@vemanait.edu.in",
+      section: "A",
+      semester: 4,
+    },
+  });
+  console.log(`✅ Vemana institutional accounts seeded successfully`);
+
   console.log("\n🌱 Seed complete! All test data ready.\n");
-  console.log("   Login credentials:");
+  console.log("   Vemana Login credentials:");
   console.log("   ─────────────────────────────────────");
-  console.log("   Admin:   admin@smartcampus.edu / admin123");
-  console.log("   HOD:     hod@smartcampus.edu / hod123");
-  console.log("   Teacher: teacher@smartcampus.edu / teacher123");
-  console.log("   Student: student@smartcampus.edu / student123");
+  console.log("   Admin:   admin@vemanait.edu.in / admin@123");
+  console.log("   HOD:     ramakrishna@vemanait.edu.in / csehod@vemana");
+  console.log("   Teacher: kalaiselvis@vemanait.edu.in / teacher@vemana");
+  console.log("   Student: manjunathar.cs2023@vemanait.edu.in / 1VI23CS058@VEMANA");
   console.log("   ─────────────────────────────────────\n");
 }
 

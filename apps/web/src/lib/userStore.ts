@@ -28,146 +28,135 @@ const USER_STORE_KEY = "smartcampus-user-store";
 export async function initializeUserStore() {
   if (typeof window === "undefined") return;
 
+  const adminHash = await hashPassword("admin123");
+  const teacherHash = await hashPassword("admin123");
+  const studentHash = await hashPassword("admin123");
+  const hodHash = await hashPassword("hod123");
+
+  // Institutional Vemana Credentials
+  const vemanaAdminHash = await hashPassword("admin@123");
+  const vemanaHodHash = await hashPassword("csehod@vemana");
+  const vemanaTeacherHash = await hashPassword("teacher@vemana");
+  const vemanaStudentHash = await hashPassword("1VI23CS058@VEMANA");
+
+  const institutionalUsers: Record<string, AppUser> = {
+    "admin@vemanait.edu.in": {
+      email: "admin@vemanait.edu.in",
+      fullName: "System Admin",
+      role: "admin",
+      passwordHash: vemanaAdminHash,
+      passwordNeedsChange: false,
+      createdAt: new Date().toISOString(),
+    },
+    "ramakrishna@vemanait.edu.in": {
+      email: "ramakrishna@vemanait.edu.in",
+      fullName: "Dr. Ramakrishna (HOD CSE)",
+      role: "hod",
+      passwordHash: vemanaHodHash,
+      passwordNeedsChange: false,
+      department: "CSE",
+      createdAt: new Date().toISOString(),
+    },
+    "kalaiselvis@vemanait.edu.in": {
+      email: "kalaiselvis@vemanait.edu.in",
+      fullName: "Prof. Kalaiselvi S",
+      role: "teacher",
+      passwordHash: vemanaTeacherHash,
+      passwordNeedsChange: false,
+      department: "CSE",
+      createdAt: new Date().toISOString(),
+    },
+    "manjunathar.cs2023@vemanait.edu.in": {
+      email: "manjunathar.cs2023@vemanait.edu.in",
+      fullName: "Manjunatha R",
+      role: "student",
+      passwordHash: vemanaStudentHash,
+      passwordNeedsChange: false,
+      department: "Computer Science & Engineering",
+      studentId: "1VI23CS058",
+      semester: 4,
+      createdAt: new Date().toISOString(),
+    },
+  };
+
   const existing = localStorage.getItem(USER_STORE_KEY);
-  if (!existing) {
-    const adminHash = await hashPassword("admin123");
-    const teacherHash = await hashPassword("admin123");
-    const studentHash = await hashPassword("admin123");
-    const hodHash = await hashPassword("hod123");
-
-    const defaultUsers: Record<string, AppUser> = {
-      "admin@smartcampus.edu": {
-        email: "admin@smartcampus.edu",
-        fullName: "System Admin",
-        role: "admin",
-        passwordHash: adminHash,
-        passwordNeedsChange: false,
-        createdAt: new Date().toISOString(),
-      },
-      "admin@collegename.edu.in": {
-        email: "admin@collegename.edu.in",
-        fullName: "System Admin",
-        role: "admin",
-        passwordHash: adminHash,
-        passwordNeedsChange: false,
-        createdAt: new Date().toISOString(),
-      },
-      "college@smartcampus.edu": {
-        email: "college@smartcampus.edu",
-        fullName: "College Admin",
-        role: "admin",
-        passwordHash: adminHash,
-        passwordNeedsChange: false,
-        createdAt: new Date().toISOString(),
-      },
-      "hod.cse@smartcampus.edu": {
-        email: "hod.cse@smartcampus.edu",
-        fullName: "Dr. Manjunatha Prasad",
-        role: "hod",
-        passwordHash: hodHash,
-        passwordNeedsChange: false,
-        department: "CSE",
-        createdAt: new Date().toISOString(),
-      },
-      "hod@vemana.edu.in": {
-        email: "hod@vemana.edu.in",
-        fullName: "Dr. Manjunatha Prasad",
-        role: "hod",
-        passwordHash: hodHash,
-        passwordNeedsChange: false,
-        department: "CSE",
-        createdAt: new Date().toISOString(),
-      },
-      "teacher@smartcampus.edu": {
-        email: "teacher@smartcampus.edu",
-        fullName: "Dr. Sarah Jenkins",
-        role: "teacher",
-        passwordHash: teacherHash,
-        passwordNeedsChange: false,
-        department: "Computer Science",
-        createdAt: new Date().toISOString(),
-      },
-      "teacher@collegename.edu.in": {
-        email: "teacher@collegename.edu.in",
-        fullName: "Dr. Sarah Jenkins",
-        role: "teacher",
-        passwordHash: teacherHash,
-        passwordNeedsChange: false,
-        department: "Computer Science",
-        createdAt: new Date().toISOString(),
-      },
-      "student@smartcampus.edu": {
-        email: "student@smartcampus.edu",
-        fullName: "John Doe",
-        role: "student",
-        passwordHash: studentHash,
-        passwordNeedsChange: false,
-        department: "Computer Science",
-        createdAt: new Date().toISOString(),
-      },
-      "student@collegename.edu.in": {
-        email: "student@collegename.edu.in",
-        fullName: "John Doe",
-        role: "student",
-        passwordHash: studentHash,
-        passwordNeedsChange: false,
-        department: "Computer Science",
-        createdAt: new Date().toISOString(),
-      }
-    };
-
-    localStorage.setItem(USER_STORE_KEY, JSON.stringify(defaultUsers));
-  } else {
-    // Ensure admin@smartcampus.edu exists in current local storage
+  let users: Record<string, AppUser> = {};
+  if (existing) {
     try {
-      const users = JSON.parse(existing);
-      if (!users["admin@smartcampus.edu"]) {
-        const adminHash = await hashPassword("admin123");
-        const teacherHash = await hashPassword("admin123");
-        const studentHash = await hashPassword("admin123");
-        const hodHash = await hashPassword("hod123");
-
-        users["admin@smartcampus.edu"] = {
-          email: "admin@smartcampus.edu",
-          fullName: "System Admin",
-          role: "admin",
-          passwordHash: adminHash,
-          passwordNeedsChange: false,
-          createdAt: new Date().toISOString(),
-        };
-        users["teacher@smartcampus.edu"] = {
-          email: "teacher@smartcampus.edu",
-          fullName: "Dr. Sarah Jenkins",
-          role: "teacher",
-          passwordHash: teacherHash,
-          passwordNeedsChange: false,
-          department: "Computer Science",
-          createdAt: new Date().toISOString(),
-        };
-        users["student@smartcampus.edu"] = {
-          email: "student@smartcampus.edu",
-          fullName: "John Doe",
-          role: "student",
-          passwordHash: studentHash,
-          passwordNeedsChange: false,
-          department: "Computer Science",
-          createdAt: new Date().toISOString(),
-        };
-        users["hod.cse@smartcampus.edu"] = {
-          email: "hod.cse@smartcampus.edu",
-          fullName: "Dr. Manjunatha Prasad",
-          role: "hod",
-          passwordHash: hodHash,
-          passwordNeedsChange: false,
-          department: "CSE",
-          createdAt: new Date().toISOString(),
-        };
-        localStorage.setItem(USER_STORE_KEY, JSON.stringify(users));
-      }
-    } catch (e) {
-      // invalid json, skip
+      users = JSON.parse(existing);
+    } catch {
+      users = {};
     }
   }
+
+  // Populate base default accounts if missing
+  const baseDefaults: Record<string, AppUser> = {
+    "admin@smartcampus.edu": {
+      email: "admin@smartcampus.edu",
+      fullName: "System Admin",
+      role: "admin",
+      passwordHash: adminHash,
+      passwordNeedsChange: false,
+      createdAt: new Date().toISOString(),
+    },
+    "college@smartcampus.edu": {
+      email: "college@smartcampus.edu",
+      fullName: "College Admin",
+      role: "admin",
+      passwordHash: adminHash,
+      passwordNeedsChange: false,
+      createdAt: new Date().toISOString(),
+    },
+    "hod.cse@smartcampus.edu": {
+      email: "hod.cse@smartcampus.edu",
+      fullName: "Dr. Manjunatha Prasad",
+      role: "hod",
+      passwordHash: hodHash,
+      passwordNeedsChange: false,
+      department: "CSE",
+      createdAt: new Date().toISOString(),
+    },
+    "hod@vemana.edu.in": {
+      email: "hod@vemana.edu.in",
+      fullName: "Dr. Manjunatha Prasad",
+      role: "hod",
+      passwordHash: hodHash,
+      passwordNeedsChange: false,
+      department: "CSE",
+      createdAt: new Date().toISOString(),
+    },
+    "teacher@smartcampus.edu": {
+      email: "teacher@smartcampus.edu",
+      fullName: "Dr. Sarah Jenkins",
+      role: "teacher",
+      passwordHash: teacherHash,
+      passwordNeedsChange: false,
+      department: "Computer Science",
+      createdAt: new Date().toISOString(),
+    },
+    "student@smartcampus.edu": {
+      email: "student@smartcampus.edu",
+      fullName: "John Doe",
+      role: "student",
+      passwordHash: studentHash,
+      passwordNeedsChange: false,
+      department: "Computer Science",
+      createdAt: new Date().toISOString(),
+    },
+  };
+
+  for (const [emailKey, userObj] of Object.entries(baseDefaults)) {
+    if (!users[emailKey]) {
+      users[emailKey] = userObj;
+    }
+  }
+
+  // ALWAYS ensure the official Vemana institutional accounts are active with their current password hashes
+  for (const [emailKey, userObj] of Object.entries(institutionalUsers)) {
+    users[emailKey] = userObj;
+  }
+
+  localStorage.setItem(USER_STORE_KEY, JSON.stringify(users));
 }
 
 export function getUsers(): Record<string, AppUser> {

@@ -92,7 +92,8 @@ function LoginContent() {
     try {
       // 1. Try local user store (works seamlessly for seeded accounts)
       const users = getUsers();
-      const user = users[email];
+      const normalizedEmail = email.trim().toLowerCase();
+      const user = users[normalizedEmail] || users[email];
 
       if (user) {
         const inputHash = await hashPassword(password);

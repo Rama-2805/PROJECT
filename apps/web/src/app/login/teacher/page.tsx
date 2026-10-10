@@ -91,7 +91,8 @@ function LoginContent() {
 
     try {
       const users = getUsers();
-      const user = users[email];
+      const normalizedEmail = email.trim().toLowerCase();
+      const user = users[normalizedEmail] || users[email];
 
       if (user) {
         const inputHash = await hashPassword(password);
