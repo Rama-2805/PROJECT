@@ -104,6 +104,10 @@ function LiveCameraFeed({
     };
   }, [sessionActive, useFallback, cameraId, aiUrl]);
 
+  useEffect(() => {
+    setUseFallback(false);
+  }, [streamKey, sessionActive]);
+
   if (!sessionActive) {
     return (
       <div className="absolute inset-0 flex items-center justify-center">
@@ -196,8 +200,15 @@ export default function LiveMonitoringPage() {
     async function loadStudents() {
       try {
         const res: any = await api.get("/students?limit=130");
-        if (res && res.data && Array.isArray(res.data)) {
-          setEnrolledStudents(res.data);
+        const list = Array.isArray(res?.data)
+          ? res.data
+          : Array.isArray(res?.data?.data)
+          ? res.data.data
+          : Array.isArray(res)
+          ? res
+          : [];
+        if (list.length > 0) {
+          setEnrolledStudents(list);
         }
       } catch (e) {
         console.warn("Failed to load students:", e);
@@ -210,15 +221,22 @@ export default function LiveMonitoringPage() {
   useEffect(() => {
     async function syncAlerts() {
       try {
-        const res = await api.get<any[]>("/behavior/alerts");
-        if (Array.isArray(res)) {
+        const res: any = await api.get("/behavior/alerts");
+        const alertsList = Array.isArray(res?.data)
+          ? res.data
+          : Array.isArray(res?.data?.data)
+          ? res.data.data
+          : Array.isArray(res)
+          ? res
+          : [];
+        if (alertsList.length > 0) {
           setStudentBehaviors((prev) => {
             const next = { ...prev };
-            res.forEach((alert) => {
+            alertsList.forEach((alert: any) => {
               const usn = alert.studentUsn || alert.studentId;
               if (usn && next[usn]) {
-                const isPhone = alert.title.includes("Phone") || alert.description?.includes("phone");
-                const isSleep = alert.title.includes("Sleeping") || alert.title.includes("Inactive") || alert.description?.includes("sleeping");
+                const isPhone = alert.title?.includes("Phone") || alert.description?.includes("phone");
+                const isSleep = alert.title?.includes("Sleeping") || alert.title?.includes("Inactive") || alert.description?.includes("sleeping");
                 if (isPhone) {
                   next[usn] = {
                     ...next[usn],

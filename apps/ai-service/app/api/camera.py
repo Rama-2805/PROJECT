@@ -182,6 +182,10 @@ def get_camera_stream(camera_id: str = "webcam"):
 @router.get("/frame")
 def get_single_frame(camera_id: str = "webcam"):
     """Single JPEG snapshot endpoint for polling fallback."""
+    state = camera_service.get_camera_state(camera_id)
+    if state == CameraState.OFFLINE:
+        camera_service.start_camera(camera_id, "footage")
+
     from ..services.attendance_engine import attendance_engine
     frame = None
     with attendance_engine._lock:

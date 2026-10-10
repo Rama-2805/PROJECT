@@ -1048,7 +1048,7 @@ export class EnrollmentService {
         body: JSON.stringify({ videoPaths, detector }),
       });
     } catch (fetchErr: any) {
-      await this.prisma.enrollmentSession.update({
+      await this.prisma.enrollmentSession.updateMany({
         where: { id: sessionId },
         data: { status: "FAILED", errorMessage: "AI service on port 8000 is unreachable" },
       });
@@ -1059,7 +1059,7 @@ export class EnrollmentService {
 
     if (!res.ok) {
       const errText = await res.text();
-      await this.prisma.enrollmentSession.update({
+      await this.prisma.enrollmentSession.updateMany({
         where: { id: sessionId },
         data: { status: "FAILED", errorMessage: errText },
       });
