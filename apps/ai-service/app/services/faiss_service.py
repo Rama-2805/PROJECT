@@ -27,7 +27,8 @@ class FaissService:
 
     def __init__(self):
         self.dimension = 512
-        project_root = Path(__file__).resolve().parent.parent.parent.parent
+        # Resolve project root (5 levels up from faiss_service.py)
+        project_root = Path(__file__).resolve().parents[4]
         if (project_root / "vectors").exists():
             self.index_path = (project_root / "vectors" / "face_index.faiss").resolve()
             self.metadata_path = (project_root / "vectors" / "metadata.json").resolve()

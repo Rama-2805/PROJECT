@@ -283,16 +283,19 @@ class TestIdentityClusteringFullSuite(unittest.TestCase):
         self.assertEqual(c["assignment_source"], "MANUAL")
 
     def test_14_duplicate_student_assignment_prevented(self):
-        """Test 14: Assigning same student to multiple clusters in same session raises 409 Conflict."""
+        """Test 14: Assigning same student to another cluster removes the old assignment and keeps only new."""
         state.sessions[self.session_id]["clusters"] = [
             {"clusterId": "cluster_001", "usn": "1VI23CS111", "identity_status": "CONFIRMED"},
             {"clusterId": "cluster_002", "identity_status": "UNKNOWN"}
         ]
 
         req = AssignStudentRequest(usn="1VI23CS111", name="Duplicate Student")
-        with self.assertRaises(HTTPException) as ctx:
-            asyncio.run(assign_cluster_identity(self.session_id, "cluster_002", req))
-        self.assertEqual(ctx.exception.status_code, 409)
+        res = asyncio.run(assign_cluster_identity(self.session_id, "cluster_002", req))
+        self.assertEqual(res["cluster"]["usn"], "1VI23CS111")
+        # Ensure old cluster was cleared
+        c1 = next(c for c in state.sessions[self.session_id]["clusters"] if c["clusterId"] == "cluster_001")
+        self.assertIsNone(c1.get("usn"))
+        self.assertIn(c1.get("identity_status"), ["UNASSIGNED", "UNKNOWN"])
 
     def test_15_confirmed_cluster_enrolls_real_vectors(self):
         """Test 15: Confirmed cluster enrolls only real 512D vectors into FAISS."""

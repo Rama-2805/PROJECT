@@ -497,6 +497,7 @@ export class EnrollmentService {
     // so we can store department names, semester labels, etc. directly.
     const session = await this.prisma.enrollmentSession.create({
       data: {
+        id: dto.id || undefined,
         name: dto.name || `Enrollment — ${new Date().toLocaleDateString()}`,
         institutionId,
         // Store plain string values (department name, semester label, etc.)

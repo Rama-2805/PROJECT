@@ -55,6 +55,7 @@ export class BulkImportBiometricsDto {
 }
 
 export class CreateAutomaticSessionDto {
+  @IsOptional() @IsString() id?: string;
   @IsString() name: string;
   @IsOptional() @IsString() institutionId?: string;
   @IsOptional() @IsString() departmentId?: string;
@@ -84,6 +85,7 @@ export class AssignClusterStudentDto {
   @IsOptional() @IsString() sessionId?: string;
   @IsOptional() @IsBoolean() force?: boolean;
   @IsOptional() @IsString() existingStudentId?: string;
+  @IsOptional() @IsString() studentId?: string;
   @IsOptional() @IsString() fullName?: string;
   @IsOptional() @IsString() usn?: string;
   @IsOptional() @IsString() departmentId?: string;
