@@ -124,7 +124,9 @@ def get_camera_status(camera_id: str = "webcam"):
     }
 
 
-def generate_mjpeg_stream(camera_id: str):
+import asyncio
+
+async def generate_mjpeg_stream(camera_id: str):
     """Generator for live MJPEG stream with detection/tracking overlays."""
     logger.info(f"Started MJPEG stream generator for camera {camera_id}")
     while True:
@@ -158,10 +160,10 @@ def generate_mjpeg_stream(camera_id: str):
                     b'\r\n'
                 )
         
-        time.sleep(0.04)  # ~25 FPS update rate
+        await asyncio.sleep(0.04)  # ~25 FPS update rate
 
 @router.get("/stream")
-def get_camera_stream(camera_id: str = "webcam"):
+async def get_camera_stream(camera_id: str = "webcam"):
     """MJPEG stream endpoint for live monitoring."""
     state = camera_service.get_camera_state(camera_id)
     if state == CameraState.OFFLINE:
