@@ -59,7 +59,7 @@ interface Session {
   generatedClusters: number; createdAt: string;
   departmentId?: string; programId?: string; semesterId?: string;
   sectionId?: string; subjectId?: string; teacherId?: string;
-  institutionId?: string;
+  institutionId?: string; errorMessage?: string;
 }
 
 interface ClusterImage {
@@ -805,17 +805,22 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
       // 1. Call NestJS backend endpoint: POST /api/enrollment/clusters/assign-student
       const assignPayload: any = {
         clusterId: cluster.id,
+        sessionId: cluster.sessionId,
         usn: pendingStudent.usn,
         fullName: pendingStudent.name,
+        force: true,
       };
       if (pendingStudent.existingId) {
         assignPayload.existingStudentId = pendingStudent.existingId;
+        assignPayload.section = "A";
+        assignPayload.sectionId = "A";
       } else if (pendingStudent.form) {
         assignPayload.email = pendingStudent.form.email;
         assignPayload.phone = pendingStudent.form.phone;
         assignPayload.departmentId = pendingStudent.form.dept;
         assignPayload.semester = `${pendingStudent.form.sem}th Semester`;
-        assignPayload.section = pendingStudent.form.section;
+        assignPayload.section = pendingStudent.form.section || "A";
+        assignPayload.sectionId = pendingStudent.form.section || "A";
       }
 
       const res = await authFetch(`${API_BASE}/enrollment/clusters/assign-student`, {
@@ -834,6 +839,7 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
             usn: pendingStudent.usn,
             name: pendingStudent.name,
             studentId: pendingStudent.existingId,
+            force: true,
           }),
         });
       } catch {
@@ -919,6 +925,13 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
                     </div>
                     <CheckCircle2 className="w-6 h-6 text-emerald-400" />
                   </div>
+                </div>
+
+                <div className="py-2.5 px-3.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-left text-[11px] text-blue-300 flex items-start gap-2">
+                  <Sparkles className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                  <p>
+                    <span className="font-semibold text-blue-200">Class Scoping & Clean Overwrite:</span> Assigned strictly to <strong className="text-white">Section A</strong>. Old clusters, face images, and FAISS vectors for this student will be purged so only this new cluster is saved.
+                  </p>
                 </div>
               </div>
 
@@ -1006,6 +1019,19 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
                             </div>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
+                            {(() => {
+                              const isSecA = s.section === "A" || /^1VI23CS0(0[1-9]|[1-5][0-9]|6[0-4])$/i.test(usnVal);
+                              return (
+                                <span className={cn(
+                                  "text-[9px] font-bold px-1.5 py-0.5 rounded-md border",
+                                  isSecA
+                                    ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
+                                    : "bg-amber-500/15 text-amber-400 border-amber-500/30"
+                                )}>
+                                  {isSecA ? "Sec A" : "Sec B"}
+                                </span>
+                              );
+                            })()}
                             {s.faceEnrolled && (
                               <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                                 Enrolled

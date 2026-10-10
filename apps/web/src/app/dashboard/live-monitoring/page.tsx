@@ -121,11 +121,11 @@ export default function LiveMonitoringPage() {
       sessionId: "SESS_LIVE_CCTV",
       classroomId: "room-023",
       classroomName: "Classroom 023 (CCTV)",
-      subjectName: "CSE-2027 Live Classroom Monitoring",
+      subjectName: "CSE-2027 Section A Live Monitoring (1VI23CS001 - 064)",
       teacherName: "Prof. Faculty",
       status: "INACTIVE" as any,
       totalPresent: 0,
-      totalStudents: 162,
+      totalStudents: 64,
       startedAt: new Date().toISOString(),
       recognitionAccuracy: 98.6,
       unknownFaces: 0,
@@ -221,6 +221,16 @@ export default function LiveMonitoringPage() {
               const sTime = eventData.time || new Date().toLocaleTimeString();
 
               if (sUsn) {
+                // Class Scope Guard: Only allow Section A students (1VI23CS001 to 1VI23CS064)
+                const rollStr = sUsn.replace("1VI23CS", "").trim();
+                const rollNum = parseInt(rollStr, 10);
+                if (!sUsn.startsWith("1VI23CS") || isNaN(rollNum) || rollNum < 1 || rollNum > 64) {
+                  return;
+                }
+                if (sConf < 0.45) {
+                  return;
+                }
+
                 const newEvent: LiveAttendanceEvent = {
                   type: "ATTENDANCE_DETECTED",
                   studentId: sUsn,
@@ -367,11 +377,12 @@ export default function LiveMonitoringPage() {
             institutionId: user?.institutionId || "cmqnr5ypa0005p16e5ri9s2hh",
             classroomId: "room-023",
             teacherId: user?.id || "teacher-1",
-            subjectName: "CSE-2027 Live Classroom Monitoring",
-            totalStudents: 162,
+            subjectName: "CSE-2027 Section A Live Monitoring (1VI23CS001 - 064)",
+            totalStudents: 64,
           });
-          if (res && (res.data?.sessionId || res.sessionId)) {
-            const sid = res.data?.sessionId || res.sessionId;
+          const rawRes: any = res;
+          if (rawRes && (rawRes.data?.sessionId || rawRes.sessionId)) {
+            const sid = rawRes.data?.sessionId || rawRes.sessionId;
             setActiveSessionId(sid);
           } else {
             setActiveSessionId(newSessId);
@@ -392,7 +403,7 @@ export default function LiveMonitoringPage() {
             ...prev.session,
             sessionId: newSessId,
             status: "ACTIVE" as any,
-            totalStudents: 162,
+            totalStudents: 64,
             startedAt: new Date().toISOString(),
           },
         }));
@@ -444,29 +455,39 @@ export default function LiveMonitoringPage() {
     }
   };
 
+  const activeCount = data.presentStudents.length;
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      {/* ── Header ──────────────────────────────────────────── */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold text-text-primary">Live Classroom Monitoring</h1>
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-glass-heavy border border-glass-border text-xs">
+            <h1 className="text-2xl font-bold tracking-tight text-white">
+              Live Classroom AI Monitoring
+            </h1>
+            <span className="rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-xs font-semibold text-emerald-400 border border-emerald-500/30">
+              Section A (1VI23CS001 - 064)
+            </span>
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
+                sessionActive
+                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                  : "bg-slate-500/10 text-slate-400 border border-slate-500/20"
+              )}
+            >
               <span
                 className={cn(
-                  "h-2 w-2 rounded-full",
-                  sessionActive
-                    ? "bg-success animate-glow-pulse"
-                    : "bg-text-dim",
+                  "h-1.5 w-1.5 rounded-full",
+                  sessionActive ? "bg-emerald-400 animate-pulse" : "bg-slate-400"
                 )}
               />
-              <span className="text-text-muted font-medium">
-                {sessionActive ? "ONLINE" : "OFFLINE"}
-              </span>
-            </div>
+              {sessionActive ? "ONLINE" : "OFFLINE"}
+            </span>
           </div>
-          <p className="text-xs text-text-muted mt-1">
-            {data.session.classroomName} • {data.session.subjectName}
+          <p className="text-sm text-text-muted mt-1">
+            Real-time Edge Vision & ArcFace Biometric Recognition · Room 023 · Section A
           </p>
         </div>
 
@@ -475,7 +496,7 @@ export default function LiveMonitoringPage() {
             <span className="font-mono">{sessionActive ? "25" : "0"}</span> FPS
           </div>
           <Button
-            variant={sessionActive ? "danger" : "primary"}
+            variant={sessionActive ? "destructive" : "primary"}
             size="sm"
             onClick={handleToggleSession}
             disabled={loading}

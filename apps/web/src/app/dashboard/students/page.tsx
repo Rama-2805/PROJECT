@@ -519,6 +519,7 @@ export default function StudentsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [deptFilter,  setDeptFilter]  = useState("ALL");
   const [semFilter,   setSemFilter]   = useState("ALL");
+  const [sectionFilter, setSectionFilter] = useState("ALL");
   const [genderFilter,setGenderFilter]= useState("ALL");
   const [faceFilter,  setFaceFilter]  = useState<"ALL" | "ENROLLED" | "PENDING">("ALL");
 
@@ -610,6 +611,18 @@ export default function StudentsPage() {
   // Client-side filtering & sorting
   const displayStudents = useMemo(() => {
     let list = students;
+    if (sectionFilter !== "ALL") {
+      list = list.filter(s => {
+        const sec = (s.section || "").toUpperCase();
+        const usn = (s.studentId || s.rollNumber || "").toUpperCase();
+        if (sectionFilter === "A") {
+          return sec === "A" || /^1VI23CS0(0[1-9]|[1-5][0-9]|6[0-4])$/.test(usn);
+        } else if (sectionFilter === "B") {
+          return sec === "B" || /^1VI23CS0(6[5-9]|[7-9][0-9])$/.test(usn) || /^1VI23CS1/.test(usn) || /^1VI24CS4/.test(usn);
+        }
+        return sec === sectionFilter;
+      });
+    }
     if (genderFilter !== "ALL") {
       list = list.filter(s =>
         s.gender?.toLowerCase().startsWith(genderFilter[0].toLowerCase())
@@ -625,7 +638,7 @@ export default function StudentsPage() {
       const usnB = b.studentId || b.rollNumber || "";
       return usnA.localeCompare(usnB, undefined, { numeric: true, sensitivity: "base" });
     });
-  }, [students, genderFilter, faceFilter]);
+  }, [students, sectionFilter, genderFilter, faceFilter]);
 
   const handleConfirmResetPassword = async () => {
     if (!resetModalStudent) return;
@@ -825,6 +838,17 @@ export default function StudentsPage() {
             <option value="PENDING" className="bg-bg-secondary">Pending Face Data</option>
           </select>
 
+          {/* Class / Section Filter */}
+          <select
+            value={sectionFilter}
+            onChange={e => setSectionFilter(e.target.value)}
+            className="bg-bg-primary/20 border border-glass-border rounded-lg px-3 py-2 text-xs font-semibold text-text-secondary focus:outline-none focus:ring-2 focus:ring-blue-500/50 cursor-pointer"
+          >
+            <option value="ALL" className="bg-bg-secondary">All Classes (Sec A & B)</option>
+            <option value="A" className="bg-bg-secondary">Section A (1VI23CS001–064)</option>
+            <option value="B" className="bg-bg-secondary">Section B (1VI23CS065+)</option>
+          </select>
+
           {/* Semester Filter */}
           <select
             value={semFilter}
@@ -890,7 +914,7 @@ export default function StudentsPage() {
           <div className="col-span-2">Biometric Status</div>
           <div className="col-span-2">College Email</div>
           <div className="col-span-2">Mobile</div>
-          <div className="col-span-1">Dept / Sem</div>
+          <div className="col-span-1">Dept / Class</div>
           <div className="col-span-1 text-center">Actions</div>
         </div>
 
@@ -1028,11 +1052,21 @@ export default function StudentsPage() {
                   )}
                 </div>
 
-                {/* Department & Sem */}
+                {/* Department, Sem & Section */}
                 <div className="col-span-1">
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/20">
-                    {student.department?.code || "—"}
-                  </span>
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/20">
+                      {student.department?.code || "CSE"}
+                    </span>
+                    <span className={cn(
+                      "inline-flex items-center px-1.5 py-0.5 rounded-md text-[9px] font-bold border",
+                      (student.section === "A" || /^1VI23CS0(0[1-9]|[1-5][0-9]|6[0-4])$/i.test(usn))
+                        ? "text-emerald-400 bg-emerald-500/15 border-emerald-500/30"
+                        : "text-amber-400 bg-amber-500/15 border-amber-500/30"
+                    )}>
+                      Sec {student.section || (/^1VI23CS0(0[1-9]|[1-5][0-9]|6[0-4])$/i.test(usn) ? "A" : "B")}
+                    </span>
+                  </div>
                   <p className="text-[10px] text-text-muted mt-0.5 font-mono">
                     S{student.semester}
                   </p>
