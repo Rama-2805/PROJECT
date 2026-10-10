@@ -5,6 +5,12 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { CheckSquare, AlertTriangle, CheckCircle, XCircle, Clock } from "lucide-react";
 import { apiRequest } from "@/lib/api/client";
 
+function getFormattedDate(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() - offsetDays);
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+}
+
 export default function StudentAttendancePage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [courses, setCourses] = useState([
@@ -17,13 +23,13 @@ export default function StudentAttendancePage() {
   ]);
 
   const [fullLogs, setFullLogs] = useState([
-    { date: "June 19, 2026", time: "10:02 AM", code: "CS-301", name: "Advanced Data Structures", status: "Present", method: "AI Face Recognition" },
-    { date: "June 18, 2026", time: "02:05 PM", code: "CS-402", name: "Artificial Intelligence & ML", status: "Present", method: "AI Face Recognition" },
-    { date: "June 17, 2026", time: "10:03 AM", code: "CS-301", name: "Advanced Data Structures", status: "Present", method: "AI Face Recognition" },
-    { date: "June 17, 2026", time: "08:30 AM", code: "CS-305", name: "Operating Systems", status: "Absent", method: "Missed Check-in" },
-    { date: "June 16, 2026", time: "09:05 AM", code: "CS-101", name: "Introduction to Programming", status: "Present", method: "AI Face Recognition" },
-    { date: "June 16, 2026", time: "11:30 AM", code: "CS-310", name: "Computer Networks", status: "Absent", method: "Missed Check-in" },
-    { date: "June 15, 2026", time: "10:01 AM", code: "CS-301", name: "Advanced Data Structures", status: "Present", method: "AI Face Recognition" }
+    { date: getFormattedDate(0), time: "10:02 AM", code: "CS-301", name: "Advanced Data Structures", status: "Present", method: "AI Face Recognition" },
+    { date: getFormattedDate(1), time: "02:05 PM", code: "CS-402", name: "Artificial Intelligence & ML", status: "Present", method: "AI Face Recognition" },
+    { date: getFormattedDate(2), time: "10:03 AM", code: "CS-301", name: "Advanced Data Structures", status: "Present", method: "AI Face Recognition" },
+    { date: getFormattedDate(2), time: "08:30 AM", code: "CS-305", name: "Operating Systems", status: "Absent", method: "Missed Check-in" },
+    { date: getFormattedDate(3), time: "09:05 AM", code: "CS-101", name: "Introduction to Programming", status: "Present", method: "AI Face Recognition" },
+    { date: getFormattedDate(3), time: "11:30 AM", code: "CS-310", name: "Computer Networks", status: "Absent", method: "Missed Check-in" },
+    { date: getFormattedDate(4), time: "10:01 AM", code: "CS-301", name: "Advanced Data Structures", status: "Present", method: "AI Face Recognition" }
   ]);
 
   useEffect(() => {

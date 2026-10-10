@@ -7,28 +7,52 @@ import { GlassCard } from "@/components/glass/GlassCard";
 import { useUIStore } from "@/store/uiStore";
 
 /* ─── Animated Counter Hook ────────────────────────────────────── */
-function useCountUp(target: number, duration = 1.5, suffix = "") {
-  const [count, setCount] = useState(0);
+function useCountUp(target: number, duration = 1.2, suffix = "") {
+  const isFloat = !Number.isInteger(target);
+  const [count, setCount] = useState<number>(target);
+  const prevTarget = useRef(target);
   const ref = useRef<HTMLSpanElement>(null);
   const isInView = useInView(ref, { once: true });
-  const started = useRef(false);
+  const isFirst = useRef(true);
 
   useEffect(() => {
-    if (!isInView || started.current) return;
-    started.current = true;
-    let startTime: number | null = null;
-    const animate = (ts: number) => {
-      if (!startTime) startTime = ts;
-      const progress = Math.min((ts - startTime) / (duration * 1000), 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setCount(Math.floor(eased * target));
-      if (progress < 1) requestAnimationFrame(animate);
-    };
-    requestAnimationFrame(animate);
-  }, [isInView, target, duration]);
+    if (!isInView) return;
+
+    if (isFirst.current) {
+      isFirst.current = false;
+      let startTime: number | null = null;
+      const animate = (ts: number) => {
+        if (!startTime) startTime = ts;
+        const progress = Math.min((ts - startTime) / (duration * 1000), 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const current = eased * target;
+        setCount(isFloat ? parseFloat(current.toFixed(1)) : Math.floor(current));
+        if (progress < 1) requestAnimationFrame(animate);
+      };
+      requestAnimationFrame(animate);
+      prevTarget.current = target;
+      return;
+    }
+
+    if (prevTarget.current !== target) {
+      const fromVal = prevTarget.current;
+      const toVal = target;
+      prevTarget.current = target;
+      let startTime: number | null = null;
+      const animate = (ts: number) => {
+        if (!startTime) startTime = ts;
+        const progress = Math.min((ts - startTime) / 600, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const current = fromVal + (toVal - fromVal) * eased;
+        setCount(isFloat ? parseFloat(current.toFixed(1)) : Math.round(current));
+        if (progress < 1) requestAnimationFrame(animate);
+      };
+      requestAnimationFrame(animate);
+    }
+  }, [isInView, target, duration, isFloat]);
 
   const display = suffix === "%"
-    ? `${count}`
+    ? `${isFloat ? count.toFixed(1) : count}`
     : target >= 10000
       ? `${(count / 1000).toFixed(1)}K`
       : `${count.toLocaleString()}`;
