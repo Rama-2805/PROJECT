@@ -654,18 +654,21 @@ export class EnrollmentService {
 
     // Lookup assigned students if assignedStudentId is present
     const assignedIds = clusters.map(c => c.assignedStudentId).filter(Boolean) as string[];
-    let studentMap: Record<string, string> = {};
+    let studentMap: Record<string, { fullName: string; usn: string }> = {};
     if (assignedIds.length > 0) {
       const students = await this.prisma.student.findMany({
         where: { id: { in: assignedIds } },
-        select: { id: true, fullName: true, rollNumber: true },
+        select: { id: true, fullName: true, rollNumber: true, studentId: true },
       });
       for (const s of students) {
-        studentMap[s.id] = s.fullName;
+        studentMap[s.id] = {
+          fullName: s.fullName,
+          usn: s.rollNumber || s.studentId || "",
+        };
       }
     }
 
-    // Enrich each cluster with public image URLs and assigned student details
+    // Enrich each cluster with public image URLs, tracks count, and assigned student details
     return clusters.map((c) => {
       const bestImage = c.images.find((img: any) => img.isBest) || c.images[0] || null;
       const bestImageUrl = toImageUrl(c.bestImagePath) || toImageUrl(bestImage?.imagePath || null);
@@ -681,14 +684,28 @@ export class EnrollmentService {
         createdAt: img.createdAt,
       }));
 
-      const assignedStudentName = c.assignedStudentId ? (studentMap[c.assignedStudentId] || c.assignedStudentId) : undefined;
+      const assigned = c.assignedStudentId ? studentMap[c.assignedStudentId] : undefined;
+      const assignedStudentName = assigned?.fullName || (c.assignedStudentId ? c.assignedStudentId : undefined);
+      const assignedStudentUsn = assigned?.usn;
+
+      // Extract unique tracks
+      const tracksSet = new Set<string>();
+      for (const img of c.images) {
+        if (img.imagePath) {
+          const match = img.imagePath.match(/track_(\d+)/i);
+          if (match) tracksSet.add(match[1]);
+        }
+      }
+      const trackCount = tracksSet.size > 0 ? tracksSet.size : Math.max(1, Math.min(c.sampleCount, Math.ceil(c.sampleCount / 2)));
 
       return {
         ...c,
         bestImageUrl,
         gallery,
         imageCount: c.images.length,
+        trackCount,
         assignedStudentName,
+        assignedStudentUsn,
       };
     });
   }
@@ -894,6 +911,9 @@ export class EnrollmentService {
       },
     });
 
+    let assignedStudentName = dto.fullName;
+    let assignedStudentUsn = dto.usn;
+
     if (studentId) {
       const existingAssign = await this.prisma.clusterAssignment.findFirst({
         where: { studentClusterId: cluster.id, studentId },
@@ -910,6 +930,8 @@ export class EnrollmentService {
       // Sync cluster embedding and enroll in FAISS vector index in AI Service
       const studentObj = await this.prisma.student.findUnique({ where: { id: studentId } });
       const usn = studentObj?.rollNumber || studentObj?.studentId || studentObj?.usn || dto.usn;
+      assignedStudentName = studentObj?.fullName || dto.fullName;
+      assignedStudentUsn = usn;
       const sId = cluster.session?.id || dto.sessionId;
 
       if (usn && sId) {
@@ -935,7 +957,13 @@ export class EnrollmentService {
       }
     }
 
-    return { success: true, clusterId: cluster.id, studentId };
+    return {
+      success: true,
+      clusterId: cluster.id,
+      studentId,
+      studentName: assignedStudentName,
+      studentUsn: assignedStudentUsn,
+    };
   }
 
   async finalizeEnrollmentSession(sessionId: string) {

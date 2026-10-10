@@ -1,307 +1,249 @@
-# SmartCampus AI
+# SmartCampus AI — Comprehensive Project Documentation & Journey
 
-**Enterprise-Grade AI-Powered Smart Campus Management Platform**
+**Enterprise-Grade AI-Powered Smart Campus Management & Biometric Identity Platform**
 
-SmartCampus AI transforms university classrooms into intelligent, data-driven learning environments. Using AI face recognition, behavioral analytics, IoT edge computing, and real-time monitoring, it provides institutions with actionable insights into attendance, engagement, and campus operations.
+SmartCampus AI transforms higher education institutions into intelligent, real-time, data-driven learning environments. Combining computer vision, deep metric learning, unsupervised face clustering, IoT edge telemetry, and full-stack enterprise portals, it automates attendance, student identity lifecycle management, behavioral engagement analytics, and campus security.
 
 ---
 
-## 🏛️ System Architecture
+## 📅 Chronological Development History (Day 1 to Now)
+
+This section provides an exhaustive record of every architectural milestone, feature implementation, and engineering enhancement completed across the project lifecycle.
 
 ```
-                    ┌──────────────┐
-                    │   Next.js    │
-                    │   Frontend   │
-                    └──────┬───────┘
-                           │
-                    ┌──────▼───────┐
-                    │  NestJS API  │
-                    │  (Gateway)   │
-                    └──────┬───────┘
-                           │
-            ┌───────────────┼───────────────┐
-            │               │               │
-     ┌──────▼──────┐ ┌──────▼──────┐ ┌──────▼──────┐
-     │ PostgreSQL  │ │    Redis    │ │   MQTT      │
-     │ (Primary)   │ │   (Cache)   │ │  (Messaging)│
-     └─────────────┘ └─────────────┘ └──────┬──────┘
-                                            │
-                                     ┌──────▼──────┐
-                                     │   Python    │
-                                     │  AI Engine  │
-                                     └─────────────┘
+┌───────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   SMARTCAMPUS AI ROADMAP TIMELINE                                │
+├──────────────┬──────────────────┬───────────────────┬────────────────────┬────────────────────────┤
+│   PHASE 1    │     PHASE 2      │      PHASE 3      │      PHASE 4       │        PHASE 5         │
+│  (Jun 2026)  │    (Aug 2026)    │    (Sep 2026)     │     (Oct 2026)     │       (Present)        │
+│ Foundation & │  Computer Vision │  Real Classroom   │  Real Data Ingest  │   Student Assignment   │
+│ Enterprise   │   & Clustering   │    Benchmark      │  & Production Live │   & FAISS Vector Sync  │
+│ Architecture │     Pipeline     │    (Room 408)     │     (Vemana IT)    │   Conflict Prevention  │
+└──────────────┴──────────────────┴───────────────────┴────────────────────┴────────────────────────┘
 ```
 
-SmartCampus AI uses a modular, multi-tenant architecture designed for massive scalability, local development ease, and production stability.
+---
 
-### Subsystem Tech Stack & Port Mappings
+### 🟢 Phase 1: Foundation, Monorepo & Enterprise Architecture (June 15 – June 22, 2026)
 
-| Service | Tech Stack | Local Port | Role & Responsibility |
+* **Repository Genesis & Monorepo Structure**
+  * Initialized a modular monorepo utilizing npm workspaces and Turborepo structure:
+    * `apps/web`: Next.js 16 (App Router) modern client portal.
+    * `apps/api`: NestJS 11 enterprise REST & WebSocket gateway.
+    * `apps/ai-service`: Python FastAPI streaming computer vision engine.
+    * `packages/database`: Centralized Prisma client and multi-tenant schema.
+* **Containerized Infrastructure (`docker-compose.dev.yml`)**
+  * Automated orchestration for local multi-service development:
+    * **PostgreSQL 16**: Primary relational storage for multi-tenancy, academic hierarchy, and audit trails.
+    * **Redis 7**: High-throughput session caching and background worker queue.
+    * **Mosquitto MQTT (`1883`)**: Low-latency message broker for IoT edge devices and CCTV heartbeat telemetry.
+    * **MinIO (`9000`)**: S3-compatible object storage for video archives and high-resolution face crops.
+* **Hierarchical Role-Based Access Control (RBAC)**
+  * Engineered strict isolation and downward-flowing permissions across 5 distinct institutional tiers:
+    * `SUPER_ADMIN`: Global platform oversight, institution provisioning, demo request auditing.
+    * `COLLEGE_ADMIN`: Institutional configuration, HOD management, CCTV device registration, macro reports.
+    * `DEPT_HOD`: Departmental curriculum mapping, teacher account provisioning, course-wide analytics.
+    * `TEACHER`: Lecture session control, automated biometric attendance verification, candidate review.
+    * `STUDENT` & `PARENT`: Attendance check-ins, subject-wise analytics, AI engagement insights.
+* **Modern UI & Aesthetic Design System**
+  * Crafted a slate-black minimalist glassmorphism interface using TailwindCSS, Framer Motion, and Lucide icons.
+  * Added progressive flux loading animations, dynamic micro-interactions, dark-mode testimonials, and responsive dashboards.
+  * Implemented dual authentication paths: standard institutional email/password + Microsoft Office 365 OAuth SSO.
+
+---
+
+### 🟡 Phase 2: AI Computer Vision Engine & Deep Metric Learning (August 4 – August 18, 2026)
+
+* **Python FastAPI Biometric Pipeline (`apps/ai-service`)**
+  * Multi-stage facial pipeline operating on real-time RTSP/CCTV streams and recorded lecture videos:
+    1. **Face Detection**: RetinaFace / MTCNN with small-face recovery and CLAHE contrast enhancement for dimly lit classrooms.
+    2. **Landmark Alignment & Pose Quality Filtering**: 5-point facial landmark normalization; strict rejection of blurry frames (Laplacian variance thresholding) and extreme pose angles (pitch/yaw/roll filters).
+    3. **Embedding Extraction**: ArcFace deep convolutional network generating 512-dimensional L2-normalized feature vectors.
+    4. **Vector Search Engine**: Sub-millisecond similarity queries powered by Facebook AI Similarity Search (**FAISS**).
+* **Unsupervised Identity Clustering Pipeline**
+  * Implemented density-based clustering (**HDBSCAN** and **DBSCAN**) on face vectors:
+    * Automatically tracks facial instances across frames.
+    * Groups recurring appearances into distinct identity candidates without prior ground-truth labels.
+    * Selects the highest-fidelity representative crop for each cluster based on sharpness and frontal alignment.
+* **Zero-Crash Developer Mock System**
+  * Designed `MockVideoCapture` fallback inside `camera_service.py` to prevent camera resource deadlocks and allow full headless and macOS development without physical webcam hardware.
+
+---
+
+### 🟠 Phase 3: Real Classroom Benchmark & Session Generation (September 2026)
+
+* **Classroom 408 Video Ingestion**
+  * Processed high-resolution multi-camera classroom lecture footage from Room 408 (`cmtpqbq7b016g8o6e1myew566`).
+  * Extracted thousands of face detections across lecture tracks (`track_001` through `track_067`).
+  * Generated **29 distinct identity candidate clusters** in PostgreSQL (`StudentCluster`), each containing:
+    * Cluster ID and cluster number (`1` to `29`).
+    * Usable sample counts (up to 210 face samples per cluster).
+    * Associated camera track mappings.
+    * Confidence and image quality averages (85%–95%).
+    * High-resolution representative crops saved in persistent local storage.
+
+---
+
+### 🔵 Phase 4: Production Transition, Real Data & Live Telemetry (October 2026)
+
+* **100% Elimination of Mock Data**
+  * Deprecated all hardcoded client mock generators across Admin, Student, Teacher, and Analytics views.
+  * Connected all charts, counters, tables, and risk gauges directly to live PostgreSQL queries.
+* **Institutional Real Database Ingestion (Vemana Institute of Technology)**
+  * Loaded **130 real student profiles** into PostgreSQL:
+    * Official USNs (`1VI23CS001` through `1VI23CS120`, `1VI24CS401` through `1VI24CS412`).
+    * Student names, institutional email addresses, semester allocations, and Section mappings (Section A & Section B).
+* **Official Institutional Login Credentials**
+  * Provisioned real production accounts for all user roles:
+    * **Admin**: `admin@vemanait.edu.in` / `admin@123`
+    * **HOD**: `ramakrishna@vemanait.edu.in` / `csehod@vemana`
+    * **Teacher**: `kalaiselvis@vemanait.edu.in` / `teacher@vemana`
+    * **Student**: `manjunathar.cs2023@vemanait.edu.in` / `1VI23CS058@VEMANA`
+* **Vercel & Next.js 16 Production Build Stabilization**
+  * Configured build optimization flags, legacy peer dependency resolution for React 19, and full Turbopack compliance.
+
+---
+
+### 🟣 Phase 5: Student Assignment & Identity Confirmation Pipeline (October 10, 2026)
+
+* **Teacher Candidate Review Hub (`/teacher/candidates`)**
+  * Built a comprehensive identity verification interface allowing teachers to review AI clustering pipeline candidates.
+  * Each cluster card dynamically renders:
+    * **Cluster ID** (e.g. `Cluster #28`, database UUID).
+    * **Associated track count** (e.g., extracted from camera tracking logs).
+    * **Usable face samples count** (total validated crops).
+    * **Representative face image** (high-res crop served from AI storage).
+    * **Similarity & recognition confidence** (percentage score).
+    * **Assignment status badge** (`UNASSIGNED` vs `ASSIGNED`).
+    * **Assigned student details** (Full Name & USN when assigned).
+* **Interactive Student-Selection Dialog**
+  1. Opens an accessible modal upon clicking **"Assign Student"** or **"Reassign"**.
+  2. Fetches the complete student list from PostgreSQL (`GET /api/students?limit=250`).
+  3. Real-time instant search by Student Name or USN.
+  4. Teacher selects the verified student.
+* **Conflict Prevention Engine**
+  * **Core Principle**: A cluster ID is an AI-generated hypothesis, not a student ID. A student is associated only upon explicit verification.
+  * Prevents the same student from being assigned to multiple conflicting clusters simultaneously.
+  * If a selected student is already tied to another cluster, the UI warns the teacher and automatically unassigns the old conflicting cluster both in PostgreSQL and locally.
+* **Bidirectional Database & FAISS Synchronization**
+  * Persists the assignment in PostgreSQL (`StudentCluster.assignedStudentId`, `ClusterAssignment`).
+  * Updates `Student` table (`faceEnrolled: true`, `faceSamples`, `primaryFaceImagePath`).
+  * Synchronizes confirmed identity vectors with the Python AI service and enrolls them into the FAISS index.
+* **Zero-Refresh Optimistic State Update**
+  * Immediately updates the cluster card in React state without requiring a browser page refresh.
+
+---
+
+## 🏛️ System Architecture & Subsystems
+
+```
+                                  ┌────────────────────────┐
+                                  │      Next.js 16        │
+                                  │   Web App (Port 3000)  │
+                                  └───────────┬────────────┘
+                                              │ REST / WebSocket
+                                  ┌───────────▼────────────┐
+                                  │       NestJS 11        │
+                                  │   API Gateway (:4000)  │
+                                  └─────┬────────────┬─────┘
+                                        │            │
+                         ┌──────────────▼───┐    ┌───▼──────────────┐
+                         │   PostgreSQL 16  │    │      Redis 7     │
+                         │   Primary DB     │    │   Cache & Queue  │
+                         └──────────────────┘    └──────────────────┘
+                                        │
+                                  ┌─────▼──────────────────┐
+                                  │    Python AI Service   │
+                                  │  FastAPI & FAISS (:8000│
+                                  └────────────────────────┘
+```
+
+### Port Mappings & Services
+
+| Service | Port | Technology | Purpose |
 |:---|:---|:---|:---|
-| **web** | Next.js 16 (App Router), TypeScript, TailwindCSS, Framer Motion | `3000` | Premium glassmorphism administration console and user dashboards |
-| **api** | NestJS 11, TypeScript, Prisma, Passport JWT | `4000` | Unified RESTful Gateway & WebSocket notification hub |
-| **ai-service** | Python 3.12, FastAPI, OpenCV, FAISS, PyTorch | `8000` | Real-time face detection, embedding generation, unknown clustering, and behavior classification |
-| **postgres** | PostgreSQL 16 | `5432` | Multi-tenant persistent relational database |
-| **redis** | Redis 7 | `6379` | Key-value caching, session state management, and async task queueing |
-| **mqtt** | Mosquitto MQTT | `1883` | Real-time IoT telemetric broker for edge devices and IP cameras |
-| **minio** | MinIO S3-Compatible Storage | `9000` | Secured object storage for face samples, snapshots, and reports |
+| **Web Console** | `3000` | Next.js 16, TypeScript, TailwindCSS | Glassmorphism dashboard for Admin, HOD, Teacher & Student |
+| **API Gateway** | `4000` | NestJS 11, Prisma, Passport JWT | Central REST API, RBAC guards, business logic & session sync |
+| **AI Service** | `8000` | FastAPI, PyTorch, FAISS, OpenCV | Face detection, ArcFace embedding, clustering & vector search |
+| **PostgreSQL** | `5432` | PostgreSQL 16 | Relational multi-tenant database & biometric audit logs |
+| **Redis** | `6379` | Redis 7 | State cache and task queue |
+| **MQTT Broker** | `1883` | Eclipse Mosquitto | Real-time IoT telemetric broker for classroom devices |
+| **MinIO Storage** | `9000` | MinIO S3 | Persistent object store for video frames and exports |
 
 ---
 
-## 👥 Institutional Role Hierarchy & Scope
+## 🔑 Official Institutional Login Accounts
 
-SmartCampus AI implements a strict hierarchical role structure. Permissions flow downward; each role is isolated to their specific organizational scope:
+Access the application at **`http://localhost:3000/login`**:
 
-```
-                  SUPER ADMIN (SmartCampus AI)
-                               ↓
-                         COLLEGE ADMIN
-                               ↓
-                        DEPT HOD (Head)
-                               ↓
-                            TEACHER
-                               ↓
-                            STUDENT
-```
-
-### 🔑 Portal Capabilities & Permissions
-
-1. **SUPER ADMIN (SmartCampus AI Global)**
-   - Creation and onboarding of new Colleges / Institutions.
-   - Subscription tier management (Free, Professional, Enterprise).
-   - Global platform usage analytics and service health telemetry.
-   - Reviewing and actioning incoming college demo requests.
-
-2. **COLLEGE ADMIN**
-   - Complete configuration of their respective college campus settings.
-   - Creating and managing Head of Department (HOD) accounts.
-   - Creating/deleting Departments, Classrooms, and physical CCTV Cameras.
-   - Generation of college-wide reports and audit log exports.
-
-3. **HEAD OF DEPARTMENT (HOD)**
-   - Management of department-specific Teacher accounts.
-   - Creation and mapping of Course curricula, Subjects, and class timetables.
-   - Tracking department-level student risk and performance statistics.
-   - Approval of course-wide attendance overrides.
-
-4. **TEACHER**
-   - Taking real-time manual or automated (AI camera-based) classroom attendance.
-   - Initiating dynamic QR-code-based self-attendance sessions for students.
-   - Viewing personal teaching schedules, course subjects, and class list registries.
-   - Receiving real-time student behavior alerts (e.g. mobile phone usage in class).
-
-5. **STUDENT & PARENT**
-   - Scan-to-check-in dynamic QR attendance validation.
-   - Viewing personal daily timetable, subject-wise attendance logs, and notifications.
-   - Access to AI-generated learning insights and student risk alert indicators.
-
----
-
-## 🏢 Organizational Structure & Isolation
-
-The database supports dynamic multi-tenancy. Under an **Institution**, multiple **Departments** are maintained. The platform supports:
-- **CSE** (Computer Science & Engineering)
-- **ISE** (Information Science & Engineering)
-- **ECE** (Electronics & Communication Engineering)
-- **EEE** (Electrical & Electronics Engineering)
-- **AIML** (Artificial Intelligence & Machine Learning)
-- **CSE(AI)** (Computer Science & AI)
-- **MECH** (Mechanical Engineering)
-- **CIVIL** (Civil Engineering)
-
-### Data Isolation Rules
-Each department isolates the following entities under separate Prisma contexts to maintain operational privacy:
-- **Students & Teachers**: Registered and queried based on department-level relations.
-- **Subjects & Schedules**: Timetables are associated with specific department classroom units.
-- **Analytics & Reports**: Academic performance, attendance records, and risk assessments are computed and segmented at the department level.
-
----
-
-## 🤖 AI Engine & Computer Vision Pipeline
-
-The Python AI Engine is the core computational service for biometric matching and classroom behavioral diagnostics.
-
-### 🎥 CCTV Video Ingestion & Stream Management
-- Edge CCTV cameras send video feeds via RTSP or local streaming simulation.
-- Single frames are evaluated using MTCNN/RetinaFace for face detection.
-- Biometric embeddings (128-dimensional vectors) are generated via FaceNet / ArcFace models.
-
-### 🛡️ Local Webcam Simulation (Shielding Bypass)
-To prevent lockups and security alerts on developer systems lacking active webcam configurations, a robust **webcam simulator bypass** is integrated in `camera_service.py` and `camera_manager.py`:
-- If webcam index `"0"` is opened, instead of pulling a hardware video stream, the system initiates a **MockVideoCapture** simulation.
-- The simulator generates a real-time, animated dark blue virtual grid overlay containing dynamic telemetry lines, a rotating loading indicator, and simulated classroom biometric markers.
-- This feeds fake video frames into the face detection pipeline, keeping local developer systems fully functional without launching hardware cameras.
-
-### 🧠 Continuous Learning & FAISS Index Rebuilding
-- **Unknown Face Clustering**: Faces detected in the camera stream that do not exceed the high-confidence matching threshold are saved as `UnknownFace` records.
-- **Biometric Clusters**: A background process groups recurrence patterns of unidentified faces into clusters (e.g. `CLUST-01`).
-- **Profile Enlistment**: HODs or admins can assign an unknown cluster to a registered student's profile.
-- **Vector Reindexing**: Every night, or on-demand, the Python AI Engine rebuilds the local FAISS index file with the latest face embedding vectors to guarantee 99%+ recognition speeds.
-
-### 📈 Student Risk & Behavior Engine
-- Class cameras monitor posture and engagement (e.g., drowsiness, excessive phone usage, looking away).
-- Behavior logs are pushed to the backend via MQTT using the pattern `/behavior/alerts`.
-- **StudentRiskProfile**: A daily task analyzes attendance drops and engagement alerts, labeling students as `CRITICAL`, `HIGH`, `MEDIUM`, or `LOW` risk.
-
----
-
-## 💾 Core Database Models
-
-The relational PostgreSQL schema relies on the following central Prisma models:
-
-```prisma
-// Multi-tenant college representation
-model Institution {
-  id          String   @id @default(cuid())
-  name        String
-  slug        String   @unique
-  planEnum    InstitutionPlan
-  maxStudents Int
-  maxTeachers Int
-  maxDevices  Int
-  // ... relations to Departments, Classrooms, Devices
-}
-
-// User accounts with security metadata
-model User {
-  id            String   @id @default(cuid())
-  email         String   @unique
-  passwordHash  String
-  isActive      Boolean  @default(true)
-  emailVerified Boolean  @default(false)
-  userRoles     UserRole[]
-}
-
-// Hierarchical roles
-model Role {
-  id   String @id @default(cuid())
-  name String @unique // SUPER_ADMIN, INSTITUTION_ADMIN, HOD, TEACHER, STUDENT
-}
-
-// Student biometrics and attendance summaries
-model Student {
-  id                   String   @id @default(cuid())
-  studentId            String   @unique // USN/Roll number
-  fullName             String
-  faceEnrolled         Boolean  @default(false)
-  attendancePercentage Float
-  engagementScore      Float
-}
-
-// Attendance sessions (automated or QR-based)
-model AttendanceSession {
-  id          String   @id @default(cuid())
-  classroomId String
-  subjectId   String
-  startTime   DateTime
-  endTime     DateTime?
-  status      SessionStatus // ACTIVE, COMPLETED
-}
-```
-
----
-
-
-## 🚀 Quick Start Guide & Terminal Commands
-
-### 1️⃣ Run the Complete Application Stack
-
-To launch the full platform (NestJS API Gateway + Next.js Web App):
-
-```bash
-# Clone & enter repository
-git clone <repo-url>
-cd PROJECT
-
-# Run the complete stack concurrently
-npm start
-```
-
----
-
-### 2️⃣ Run Services Individually (Recommended for Development)
-
-#### **Terminal 1 — NestJS API Backend (`apps/api`)**
-```bash
-# 1. Install NestJS API dependencies
-npm install --prefix apps/api
-
-# 2. Generate Prisma Database Client
-npx prisma generate --schema=apps/api/prisma/schema.prisma
-
-# 3. Start NestJS API Gateway server (Runs at http://localhost:3001)
-npm run dev:api
-```
-
-#### **Terminal 2 — Next.js Frontend App (`apps/web`)**
-```bash
-# 1. Install Next.js Web dependencies
-npm install --prefix apps/web --legacy-peer-deps
-
-# 2. Start Next.js App Router dev server (Runs at http://localhost:3000)
-npm run dev
-```
-
-#### **Terminal 3 — Streaming AI Pipeline Engine (`apps/ai-service`)**
-```bash
-# 1. Activate Python Virtual Environment
-source .venv/bin/activate
-
-# 2. Execute 100% In-Memory Streaming AI Pipeline on footage/
-python main.py
-```
-
----
-
-### 3️⃣ Run Unit & Integration Test Suites
-
-```bash
-# Run Pytest suite for face detection, quality filter, FAISS & deduplication
-PYTHONPATH=. .venv/bin/pytest tests/ -v
-```
-
----
-
-### 👤 Verified Local Testing Login Credentials
-
-Access the login portal at **`http://localhost:3000/login`**:
-
-| Role | Email | Password | Redirect Target |
+| Role | Official Email | Password | Landing Page |
 |:---|:---|:---|:---|
-| **Super Admin** | `admin@smartcampus.edu` | `admin123` | **`/dashboard`** |
-| **College Admin** | `college@smartcampus.edu` | `admin123` | **`/dashboard`** |
-| **Department HOD** | `hod.cse@smartcampus.edu` | `hod123` | **`/dashboard`** |
-| **Teacher / Faculty** | `teacher@smartcampus.edu` | `admin123` | **`/teacher/dashboard`** |
-| **Student** | `student@smartcampus.edu` | `admin123` | **`/student/dashboard`** |
-
-*(Alternative domain credentials `admin@collegename.edu.in`, `teacher@collegename.edu.in`, and `student@collegename.edu.in` with password `admin123` are also active).*
+| **College Admin** | `admin@vemanait.edu.in` | `admin@123` | `/dashboard` |
+| **HOD (CSE)** | `ramakrishna@vemanait.edu.in` | `csehod@vemana` | `/dashboard` |
+| **Faculty / Teacher** | `kalaiselvis@vemanait.edu.in` | `teacher@vemana` | `/teacher/dashboard` |
+| **Student** | `manjunathar.cs2023@vemanait.edu.in` | `1VI23CS058@VEMANA` | `/student/dashboard` |
 
 ---
 
-## 🔧 Phase 1 Stabilization & Bug Fixes
+## 🚀 Getting Started & Local Execution
 
-The following high-priority bugs have been permanently patched to stabilize the application context:
+### 1. Prerequisites
+- **Node.js**: v18+ (v20+ recommended)
+- **Python**: 3.10+ (tested up to 3.14)
+- **Docker & Docker Compose**: Installed and running
 
-1. **Webcam Locking Prevention**
-   - Terminated zombie camera locks. Added `MockVideoCapture` fallback mechanism to simulate CCTV frames without engaging physical webcams.
-2. **Hydration Mismatch Mitigation**
-   - Wrapped Next.js login screens in standard client-side mounted state check guards (`mounted && ...`) to eliminate SSR/CSR HTML structure mismatches.
-3. **Session Cookie Path Alignment**
-   - Corrected the server-side refresh token cookie path from `/auth/refresh` to `/api/auth/refresh`, allowing the browser to correctly match cookies during JWT token rotation.
-4. **Analytics Loading Fallback**
-   - Patched `/dashboard/analytics` state-fetching logic. If NestJS analytics endpoints return unauthorized (401) or database records are unpopulated, the page automatically falls back to beautiful local mock telemetry instead of locking up the interface.
+### 2. Launch Supporting Containers
+```bash
+docker compose -f docker-compose.dev.yml up -d
+```
+
+### 3. Run All Services Concurrently
+From the project root:
+```bash
+npm run dev:all
+```
+This concurrently boots:
+- `apps/api` on `http://localhost:4000`
+- `apps/web` on `http://localhost:3000`
+- `apps/ai-service` on `http://localhost:8000`
+
+### 4. Running Individual Services (Optional)
+* **NestJS Backend**:
+  ```bash
+  npm run dev:api
+  ```
+* **Next.js Frontend**:
+  ```bash
+  npm run dev
+  ```
+* **Python AI Engine**:
+  ```bash
+  source apps/ai-service/.venv/bin/activate
+  bash apps/ai-service/start.sh
+  ```
 
 ---
 
-## 🔒 Security & Operations
+## 🧪 Testing & Verification
 
-- **Token Strategy**: API routes require authorization headers in bearer format (`Authorization: Bearer <token>`). Short-lived access tokens expire in 15 minutes.
-- **CSRF Isolation**: Cookies are structured as `HttpOnly`, `SameSite: Lax`, and `Secure` (in production contexts) to safeguard session tokens.
-- **Audit Logging**: Global `AuditLog` records track exact parameters of registration, authentication, database adjustments, and IoT triggers.
-- **Backups**: Database logs are backed up via pg_dump schedules with a Recovery Point Objective (RPO) of 1 hour.
+* **Frontend Typechecking**:
+  ```bash
+  ./apps/web/node_modules/.bin/tsc --project apps/web/tsconfig.json --noEmit
+  ```
+* **API Compilation**:
+  ```bash
+  npm run build --prefix apps/api
+  ```
+* **AI Service Health**:
+  ```bash
+  curl http://localhost:8000/health
+  ```
+* **Cluster Verification Endpoint**:
+  ```bash
+  curl http://localhost:4000/api/enrollment/sessions/cmtpqbq7b016g8o6e1myew566/clusters
+  ```
 
 ---
 
 ## 📄 License
-
-Proprietary — SmartCampus AI. All rights reserved. Confidential and Private repository.
+Proprietary & Confidential — SmartCampus AI. All rights reserved.

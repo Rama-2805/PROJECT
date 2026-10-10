@@ -81,6 +81,8 @@ export class UploadSessionVideosDto {
 
 export class AssignClusterStudentDto {
   @IsString() clusterId: string;
+  @IsOptional() @IsString() sessionId?: string;
+  @IsOptional() @IsBoolean() force?: boolean;
   @IsOptional() @IsString() existingStudentId?: string;
   @IsOptional() @IsString() fullName?: string;
   @IsOptional() @IsString() usn?: string;
