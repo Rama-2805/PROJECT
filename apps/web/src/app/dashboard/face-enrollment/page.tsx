@@ -19,19 +19,20 @@ import { apiRequest, getAccessToken } from "@/lib/api/client";
    CONSTANTS
 ═══════════════════════════════════════════════════════════════════ */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
-const AI_BASE  = process.env.NEXT_PUBLIC_AI_URL   || "http://localhost:8000";
+// All /storage/* paths are proxied through Next.js rewrites — use relative URLs
+const AI_BASE  = "";
 
 function resolveCropUrl(item: any): string | null {
   if (!item) return null;
   const raw = typeof item === "string" ? item : (item.imageUrl || item.imagePath || item.url || item.path || "");
   if (!raw || typeof raw !== "string") return null;
   if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("data:")) return raw;
-  if (raw.startsWith("/")) return `${AI_BASE}${raw}`;
+  if (raw.startsWith("/")) return raw;
   if (raw.includes("storage/")) {
     const sub = raw.split("storage/")[1];
-    return `${AI_BASE}/storage/${sub}`;
+    return `/storage/${sub}`;
   }
-  return `${AI_BASE}/storage/${raw}`;
+  return `/storage/${raw}`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -197,7 +198,7 @@ function LiveTrackingImage({ sessionId }: { sessionId: string }) {
       {!hasFrame && (
         <div className="absolute inset-0 flex flex-col items-center justify-center text-text-muted text-xs gap-2.5 p-4 text-center">
           <Loader2 className="w-6 h-6 animate-spin text-blue-400" />
-          <span className="font-semibold text-text-secondary">SCRFD 10G Live Face Tracker Active</span>
+          <span className="font-semibold text-text-secondary">Live Camera Face Tracking Active</span>
           <span className="text-[11px] text-text-muted max-w-xs leading-relaxed">
             Streaming live detection bounding boxes as classroom frames are evaluated...
           </span>
@@ -236,7 +237,7 @@ function mapSession(s: any): Session {
     framesWithFaces: ai.frames_with_faces ?? diag.frames_with_faces ?? s.framesWithFaces ?? 0,
     detectedFacesCount: ai.detectedFacesCount ?? ai.face_detections ?? s.detectedFacesCount ?? 0,
     currentFrameFaces: ai.current_frame_faces ?? s.currentFrameFaces ?? 0,
-    activeDetector: ai.activeDetector ?? diag.active_detector ?? s.activeDetector ?? "SCRFD 10G",
+    activeDetector: ai.activeDetector ?? diag.active_detector ?? s.activeDetector ?? "YOLO26-S-Face",
     activeTracks: ai.activeTracks ?? diag.active_tracks ?? s.activeTracks ?? 0,
     totalTracks: ai.totalTracks ?? diag.total_tracks ?? s.totalTracks ?? 0,
     qualitySamples: ai.qualitySamples ?? diag.quality_samples ?? s.qualitySamples ?? 0,
@@ -562,7 +563,7 @@ function CreateSessionModal({ onClose, onCreated }: { onClose: () => void; onCre
   const labelCls = "block text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
       <motion.div className="absolute inset-0 bg-bg-primary/80 backdrop-blur-xl" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
       <motion.div
         initial={{ opacity: 0, y: 24, scale: 0.97 }}
@@ -606,7 +607,7 @@ function CreateSessionModal({ onClose, onCreated }: { onClose: () => void; onCre
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>Department</label>
               <input value={dept} onChange={e => setDept(e.target.value)} className={inputCls} />
@@ -617,7 +618,7 @@ function CreateSessionModal({ onClose, onCreated }: { onClose: () => void; onCre
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>Semester</label>
               <input value={sem} onChange={e => setSem(e.target.value)} className={inputCls} />
@@ -628,7 +629,7 @@ function CreateSessionModal({ onClose, onCreated }: { onClose: () => void; onCre
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className={labelCls}>Subject</label>
               <input value={sub} onChange={e => setSub(e.target.value)} className={inputCls} />
@@ -827,7 +828,14 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(assignPayload),
+        signal: AbortSignal.timeout(10000),
       });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        const errMsg = Array.isArray(errJson.message) ? errJson.message.join(", ") : (errJson.message || `Server returned ${res.status}`);
+        throw new Error(errMsg);
+      }
 
       // 2. Call FastAPI AI Service endpoint: POST /api/v1/sessions/{sessionId}/clusters/{clusterId}/assign
       try {
@@ -841,6 +849,7 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
             studentId: pendingStudent.existingId,
             force: true,
           }),
+          signal: AbortSignal.timeout(5000),
         });
       } catch {
         /* best-effort AI sync */
@@ -862,7 +871,7 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
   const labelCls = "block text-[10px] font-semibold text-text-muted uppercase tracking-wider mb-1.5";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
       <motion.div className="absolute inset-0 bg-bg-primary/80 backdrop-blur-xl" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
       <motion.div
         initial={{ opacity: 0, y: 24, scale: 0.97 }}
@@ -930,7 +939,7 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
                 <div className="py-2.5 px-3.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-left text-[11px] text-blue-300 flex items-start gap-2">
                   <Sparkles className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
                   <p>
-                    <span className="font-semibold text-blue-200">Class Scoping & Clean Overwrite:</span> Assigned strictly to <strong className="text-white">Section A</strong>. Old clusters, face images, and FAISS vectors for this student will be purged so only this new cluster is saved.
+                    <span className="font-semibold text-blue-200">Class Scoping & Clean Overwrite:</span> Assigned strictly to <strong className="text-white">Section A</strong>. Previous face profile templates and image samples for this student will be updated so only this new profile is saved.
                   </p>
                 </div>
               </div>
@@ -962,7 +971,7 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
               <div className="flex rounded-xl bg-glass-light border border-glass-border p-1">
                 <button
                   type="button"
-                  onClick={() => setTab("existing")}
+                  onClick={() => { setTab("existing"); setError(null); }}
                   className={cn(
                     "flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all",
                     tab === "existing" ? "bg-emerald-500/20 text-emerald-400 shadow-sm" : "text-text-muted hover:text-text-primary"
@@ -972,7 +981,7 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
                 </button>
                 <button
                   type="button"
-                  onClick={() => setTab("new")}
+                  onClick={() => { setTab("new"); setError(null); }}
                   className={cn(
                     "flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all",
                     tab === "new" ? "bg-emerald-500/20 text-emerald-400 shadow-sm" : "text-text-muted hover:text-text-primary"
@@ -1059,7 +1068,7 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
                 </div>
               ) : (
                 <form onSubmit={handlePrepareNew} className="space-y-3">
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className={labelCls}>Full Name *</label>
                       <input
@@ -1082,7 +1091,7 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div>
                       <label className={labelCls}>Department</label>
                       <select
@@ -1121,7 +1130,7 @@ function AssignModal({ cluster, onClose, onDone }: { cluster: Cluster; onClose: 
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className={labelCls}>Email (Optional)</label>
                       <input
@@ -1194,7 +1203,7 @@ function EnrollModal({ cluster, activeSessionId, onClose, onEnrolled }: { cluste
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || data.message || "Enrollment in FAISS failed");
+      if (!res.ok) throw new Error(data.detail || data.message || "Biometric registration failed");
 
       const count = data.addedVectors || cluster.sampleCount || 1;
       const photoPath = cluster.bestImagePath || cluster.bestImageUrl || (cluster.gallery && cluster.gallery[0]) || null;
@@ -1228,14 +1237,14 @@ function EnrollModal({ cluster, activeSessionId, onClose, onEnrolled }: { cluste
       setEnrolledSuccess(true);
       onEnrolled(cluster.id);
     } catch (err: any) {
-      setError(err.message || "Failed to enroll cluster vectors into FAISS database");
+      setError(err.message || "Failed to register biometric template in directory");
     } finally {
       setEnrolling(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
       <motion.div className="absolute inset-0 bg-bg-primary/80 backdrop-blur-xl" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
       <motion.div
         initial={{ opacity: 0, y: 24, scale: 0.97 }}
@@ -1252,7 +1261,7 @@ function EnrollModal({ cluster, activeSessionId, onClose, onEnrolled }: { cluste
               <Fingerprint className="w-4 h-4 text-purple-400" />
             </div>
             <div>
-              <h2 className="text-sm font-bold text-text-primary">FAISS Vector Index Registration</h2>
+              <h2 className="text-sm font-bold text-text-primary">Biometric Directory Registration</h2>
               <p className="text-[10px] text-text-muted">{cluster.clusterId || `Cluster #${cluster.clusterNumber}`}</p>
             </div>
           </div>
@@ -1273,9 +1282,9 @@ function EnrollModal({ cluster, activeSessionId, onClose, onEnrolled }: { cluste
               <CheckCircle2 className="w-8 h-8" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-emerald-400">Successfully Enrolled in FAISS!</h3>
+              <h3 className="text-base font-bold text-emerald-400">Biometric Profile Enrolled Successfully</h3>
               <p className="text-xs text-text-muted mt-1">
-                {addedCount} ArcFace 512D facial embedding vectors registered into FAISS database for <strong>{studentName}</strong> (<code>{studentUsn}</code>).
+                {addedCount} biometric facial sample templates registered in the campus directory for <strong>{studentName}</strong> (<code>{studentUsn}</code>).
               </p>
             </div>
             <button
@@ -1300,13 +1309,13 @@ function EnrollModal({ cluster, activeSessionId, onClose, onEnrolled }: { cluste
               <p className="text-sm font-bold text-text-primary">{studentName}</p>
               <p className="text-xs font-mono text-purple-300">USN: {studentUsn}</p>
               <div className="border-t border-purple-500/20 pt-2 text-[11px] text-text-muted flex justify-between">
-                <span>High-Quality 512D ArcFace Vectors:</span>
-                <span className="font-mono text-purple-300 font-bold">{cluster.sampleCount} vectors</span>
+                <span>Verified Facial Samples:</span>
+                <span className="font-mono text-purple-300 font-bold">{cluster.sampleCount} samples</span>
               </div>
             </div>
 
             <p className="text-xs text-text-muted leading-relaxed text-left">
-              This will register the verified ArcFace 512D facial embedding vectors into the production FAISS database for automatic classroom attendance recognition.
+              This will register the verified facial biometric profile into the campus directory for automated classroom roll call.
             </p>
 
             <div className="flex gap-3 pt-2">
@@ -1358,14 +1367,14 @@ function ClusterDetailsModal({ cluster, onClose, onDelete }: { cluster: Cluster;
   const studentUsn = cluster.assignedUsn || cluster.assignedStudent?.usn;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
       <motion.div className="absolute inset-0 bg-bg-primary/90 backdrop-blur-2xl" onClick={onClose} initial={{ opacity: 0 }} animate={{ opacity: 1 }} />
       <motion.div
         initial={{ opacity: 0, scale: 0.96 }}
         animate={{ opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.96 }}
         transition={{ type: "spring", stiffness: 300, damping: 28 }}
-        className="relative w-full max-w-5xl h-[82vh] bg-bg-secondary border border-glass-border rounded-2xl shadow-2xl overflow-hidden flex flex-col"
+        className="relative w-full max-w-5xl max-h-[88vh] h-[82vh] bg-bg-secondary border border-glass-border rounded-2xl shadow-2xl overflow-hidden flex flex-col"
       >
         <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-blue-500/60 to-transparent" />
 
@@ -1755,7 +1764,7 @@ function ClusterCard({
               {(c.isEnrolled || c.enrolled) ? (
                 <div className="w-full flex items-center justify-center gap-2 py-2 bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 text-xs font-semibold rounded-xl shadow-[0_0_15px_rgba(16,185,129,0.25)]">
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                  <span>Enrolled in FAISS ({c.sampleCount} vectors)</span>
+                  <span>Enrolled ({c.sampleCount} samples)</span>
                 </div>
               ) : (
                 <button
@@ -1894,7 +1903,7 @@ export default function FaceEnrollmentPage() {
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loadingClusters, setLoadingClusters] = useState(false);
   const [processingSessionId, setProcessingSessionId] = useState<string | null>(null);
-  const [selectedDetector, setSelectedDetector] = useState<string>("scrfd");
+  const [selectedDetector, setSelectedDetector] = useState<string>("yolo26");
   const wsRef = useRef<WebSocket | null>(null);
 
   const pushToast = (msg: string) => {
@@ -2163,7 +2172,7 @@ export default function FaceEnrollmentPage() {
 
   const handleStopProcessing = useCallback(async (sessionId: string) => {
     try {
-      pushToast("⏳ Finalizing detections & extracting ArcFace identity clusters...");
+      pushToast("⏳ Finalizing session detections and processing student identities...");
       const res = await authFetch(`${API_BASE}/enrollment/sessions/${sessionId}/stop`, { method: "POST" });
       if (res.ok) {
         await loadClusters(sessionId);
@@ -2180,7 +2189,7 @@ export default function FaceEnrollmentPage() {
 
   const handleReclusterSession = useCallback(async (sessionId: string) => {
     try {
-      pushToast("🔄 Extracting ArcFace features & clustering tracks...");
+      pushToast("🔄 Analyzing facial features and grouping student tracks...");
       await fetch(`${AI_BASE}/api/v1/sessions/${sessionId}/cluster-tracks`, { method: "POST" });
       await authFetch(`${API_BASE}/enrollment/sessions/${sessionId}/sync-clusters`, { method: "POST" });
       await loadClusters(sessionId);
@@ -2260,7 +2269,7 @@ export default function FaceEnrollmentPage() {
       }
     } : c));
     setAssignTarget(null);
-    pushToast(`✅ "${name}" identity assigned to cluster! Click [ Enroll Face Data ] to register in FAISS.`);
+    pushToast(`✅ "${name}" identity assigned! Click [ Enroll Face Data ] to save biometric profile.`);
   }, []);
 
   const handleConfirmCandidate = useCallback(async (cluster: Cluster) => {
@@ -2313,7 +2322,7 @@ export default function FaceEnrollmentPage() {
       identity_status: "CONFIRMED",
       status: "ASSIGNED",
     } : c));
-    pushToast("🎉 Biometric face embeddings successfully registered into FAISS vector database!");
+    pushToast("🎉 Student biometric profile successfully registered in the campus directory!");
   }, []);
 
   const handleCreated = useCallback((s: Session) => {
@@ -2374,7 +2383,7 @@ export default function FaceEnrollmentPage() {
   }, [sessionClusters, filterTab, search]);
 
   return (
-    <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-bg-primary">
+    <div className="flex flex-col lg:flex-row h-auto lg:h-[calc(100vh-64px)] overflow-hidden bg-bg-primary">
 
       {/* ── Toast Notifications ── */}
       <AnimatePresence>
@@ -2390,7 +2399,7 @@ export default function FaceEnrollmentPage() {
       </AnimatePresence>
 
       {/* ═══ LEFT SIDEBAR ═══════════════════════════════════════════ */}
-      <aside className="w-72 shrink-0 flex flex-col border-r border-glass-border bg-glass-medium backdrop-blur-2xl">
+      <aside className="w-full lg:w-72 shrink-0 flex flex-col border-b lg:border-b-0 lg:border-r border-glass-border bg-glass-medium backdrop-blur-2xl">
         <div className="px-4 pt-5 pb-4 border-b border-glass-border">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2.5">
@@ -2430,7 +2439,7 @@ export default function FaceEnrollmentPage() {
         </div>
 
         {/* Sessions List */}
-        <div className="flex-1 overflow-y-auto p-3 space-y-2">
+        <div className="flex-1 max-h-56 lg:max-h-none overflow-y-auto p-3 space-y-2">
           {loadingSessions && (
             <div className="flex items-center justify-center py-8 text-text-muted text-xs gap-2">
               <Loader2 className="w-4 h-4 animate-spin" /> Loading sessions...
@@ -2469,8 +2478,8 @@ export default function FaceEnrollmentPage() {
         {active ? (
           <>
             {/* ── Active Session Top Summary ── */}
-            <div className="px-6 py-4 border-b border-glass-border bg-glass-light backdrop-blur-xl shrink-0">
-              <div className="flex items-start justify-between gap-4 mb-4">
+            <div className="px-4 sm:px-6 py-4 border-b border-glass-border bg-glass-light backdrop-blur-xl shrink-0">
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4 mb-4">
                 <div>
                   <div className="flex items-center gap-2.5 mb-1.5">
                     <h1 className="text-lg font-bold text-text-primary">{active.name}</h1>
@@ -2486,20 +2495,20 @@ export default function FaceEnrollmentPage() {
                     {` · ${active.lectureDate} ${active.lectureTime}`}
                   </p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2">
                   {(active.status === "PENDING" || active.status === "FAILED") && (
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                       <select
                         value={selectedDetector}
                         onChange={(e) => setSelectedDetector(e.target.value)}
-                        className="bg-black/60 text-xs font-mono text-blue-300 border border-blue-500/40 rounded-xl px-3 py-2 outline-none focus:border-blue-400"
+                        className="bg-black/60 text-xs font-mono text-blue-300 border border-blue-500/40 rounded-xl px-3 py-2 outline-none focus:border-blue-400 w-full sm:w-auto"
                       >
-                        <option value="scrfd">Detector: SCRFD 10G</option>
-                        <option value="yolo11">Detector: YOLO11</option>
-                        <option value="combined">Detector: Combined (SCRFD + YOLO11)</option>
+                        <option value="yolo26">Detection Mode: Standard (High Speed)</option>
+                        <option value="combined">Detection Mode: Combined (High Recall)</option>
+                        <option value="scrfd">Detection Mode: Wide-Angle (Legacy)</option>
                       </select>
                       <button onClick={handleStartProcessing} disabled={!!processingSessionId}
-                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)]">
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(59,130,246,0.3)] w-full sm:w-auto justify-center">
                         {processingSessionId ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                         {active.status === "FAILED" ? "Retry AI Processing" : "Start AI Processing"}
                       </button>
@@ -2513,7 +2522,7 @@ export default function FaceEnrollmentPage() {
                   )}
                   {active.status !== "PROCESSING" && active.status !== "PENDING" && active.status !== "FAILED" && (
                     <button onClick={() => handleReclusterSession(active.id)}
-                      title="Re-run ArcFace feature extraction & HDBSCAN clustering on session tracks"
+                      title="Re-process facial feature grouping on session tracks"
                       className="flex items-center gap-1.5 px-3 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-xl text-xs font-semibold transition-all">
                       <Sparkles className="w-3.5 h-3.5" /> Re-Cluster Tracks
                     </button>
@@ -2580,7 +2589,7 @@ export default function FaceEnrollmentPage() {
                         <span className="text-xs font-bold text-blue-400 uppercase tracking-wider">AI Live Face Tracking Feed</span>
                       </div>
                       <span className="text-[10px] font-mono text-text-muted">
-                        {active.activeDetector || (selectedDetector === "yolo11" ? "YOLO11" : selectedDetector === "combined" ? "SCRFD 10G + YOLO11" : "SCRFD 10G")} · ArcFace 512D
+                        Face Detection Active · Biometric Verification Engine
                       </span>
                     </div>
 
@@ -2593,7 +2602,7 @@ export default function FaceEnrollmentPage() {
                       <span>Active Tracks: {active.activeTracks ?? 0}</span>
                       <span>Total Tracks: {active.totalTracks ?? 0}</span>
                       <span>Quality Samples: {active.qualitySamples ?? 0}</span>
-                      <span>ArcFace 512D: {active.arcfaceEmbeddings ?? 0}</span>
+                      <span>Facial Samples: {active.arcfaceEmbeddings ?? 0}</span>
                       <span>Current Frame Faces: {active.currentFrameFaces ?? 0}</span>
                       <span>FPS: {active.processingFps ? active.processingFps.toFixed(1) : "0.0"}</span>
                       <span>Progress: {Math.round(active.progressPercentage)}%</span>
@@ -2615,20 +2624,20 @@ export default function FaceEnrollmentPage() {
             </div>
 
             {/* ═══ CLUSTER MANAGEMENT & STUDENT ASSIGNMENT AREA ═══════════════ */}
-            <div className="px-6 py-3 border-b border-glass-border shrink-0 flex items-center gap-3 bg-glass-light flex-wrap">
+            <div className="px-4 sm:px-6 py-3 border-b border-glass-border shrink-0 flex items-center gap-3 bg-glass-light flex-wrap">
               {/* Search Clusters Input */}
-              <div className="relative">
+              <div className="relative w-full sm:w-auto">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-muted" />
                 <input
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder="Search clusters, USN, student name..."
-                  className="bg-glass-light border border-glass-border rounded-xl pl-9 pr-4 py-2 text-xs text-text-primary focus:outline-none focus:border-blue-500/50 placeholder:text-text-muted w-60 transition-all"
+                  className="bg-glass-light border border-glass-border rounded-xl pl-9 pr-4 py-2 text-xs text-text-primary focus:outline-none focus:border-blue-500/50 placeholder:text-text-muted w-full sm:w-60 transition-all"
                 />
               </div>
 
               {/* Category Filter Tabs */}
-              <div className="flex items-center gap-1.5 flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap overflow-x-auto max-w-full pb-1 sm:pb-0 scrollbar-none">
                 {([
                   ["ALL",       `All (${counts.all})`],
                   ["PENDING",   `Pending (${counts.pending})`],
@@ -2666,7 +2675,7 @@ export default function FaceEnrollmentPage() {
                 )}
                 <div className="flex items-center gap-1.5">
                   <Zap className="w-3.5 h-3.5 text-blue-400" />
-                  <span>HDBSCAN 512D Identity Clusters · Real FAISS Multi-Sample Verification</span>
+                  <span>Student Session Groups · Biometric Verification Directory</span>
                 </div>
               </div>
             </div>

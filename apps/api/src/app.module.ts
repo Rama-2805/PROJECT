@@ -24,6 +24,9 @@ import { MobileModule } from "./mobile/mobile.module";
 import { CampusModule } from "./campus/campus.module";
 import { DashboardModule } from "./dashboard/dashboard.module";
 import { DemoRequestsModule } from "./demo-requests/demo-requests.module";
+import { StorageModule } from "./storage/storage.module";
+import { VideosModule } from "./videos/videos.module";
+import { CameraModule } from "./camera/camera.module";
 
 @Module({
   imports: [
@@ -31,6 +34,9 @@ import { DemoRequestsModule } from "./demo-requests/demo-requests.module";
       { name: "default", ttl: 60000, limit: 100 },
     ]),
     PrismaModule,
+    StorageModule,
+    VideosModule,
+    CameraModule,
     AuthModule,
     UsersModule,
     InstitutionsModule,
@@ -59,3 +65,4 @@ import { DemoRequestsModule } from "./demo-requests/demo-requests.module";
   ],
 })
 export class AppModule {}
+

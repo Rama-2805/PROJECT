@@ -7,6 +7,16 @@ import { EnrollmentController } from "./enrollment.controller";
 import { EnrollmentService } from "./enrollment.service";
 
 export function resolveStorageDir(sessionId: string): string {
+  if (process.env.STORAGE_DIR) {
+    const dir = path.join(process.env.STORAGE_DIR, "enrollment", sessionId, "videos");
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
+  if (fs.existsSync("/app/storage")) {
+    const dir = path.join("/app/storage", "enrollment", sessionId, "videos");
+    fs.mkdirSync(dir, { recursive: true });
+    return dir;
+  }
   let root = process.cwd();
   if (root.endsWith("apps/api") || root.endsWith("apps/api/")) {
     root = path.resolve(root, "..");
@@ -18,6 +28,7 @@ export function resolveStorageDir(sessionId: string): string {
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
+
 
 // Multer storage — saves to AI service storage dir so FastAPI can read files directly
 export const multerStorage = diskStorage({

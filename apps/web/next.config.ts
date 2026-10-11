@@ -6,6 +6,11 @@ const AI_SERVICE_URL =
   process.env.NEXT_PUBLIC_AI_SERVICE_URL ||
   "http://localhost:8000";
 
+const NESTJS_API_URL =
+  process.env.NESTJS_API_URL ||
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/?$/, "") ||
+  "http://localhost:4000";
+
 const nextConfig: NextConfig = {
 
   // Image optimization
@@ -16,13 +21,25 @@ const nextConfig: NextConfig = {
 
   compress: true,
 
-  // Rewrites to proxy AI service storage images & WebSocket/HTTP endpoints
+  // Rewrites to proxy AI service storage images & backend API camera/video endpoints
   async rewrites() {
     return [
+      // Camera stream & frame proxied through NestJS API backend
+      {
+        source: "/api/camera/:path*",
+        destination: `${NESTJS_API_URL}/api/camera/:path*`,
+      },
+      // Video streaming (HTTP 206 Range) proxied through NestJS API backend
+      {
+        source: "/api/videos/:path*",
+        destination: `${NESTJS_API_URL}/api/videos/:path*`,
+      },
+      // AI service storage (face crops, cluster previews, student photos)
       {
         source: "/storage/:path*",
         destination: `${AI_SERVICE_URL}/storage/:path*`,
       },
+      // AI service REST & WebSocket endpoints
       {
         source: "/api/v1/:path*",
         destination: `${AI_SERVICE_URL}/api/v1/:path*`,
@@ -47,3 +64,4 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+

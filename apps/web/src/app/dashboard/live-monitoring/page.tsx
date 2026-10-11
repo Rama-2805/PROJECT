@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils/cn";
-import { type LiveAttendanceEvent } from "@/lib/mock/attendance";
 import { api } from "@/lib/api/client";
 import { useAuthStore } from "@/lib/store/auth";
 import {
@@ -23,7 +22,77 @@ import {
   Sparkles,
   UserCheck,
   UserX,
+  Download,
+  FileSpreadsheet,
+  Check,
+  ChevronRight,
+  ArrowLeft,
+  BookOpen,
+  Clock,
+  MapPin,
+  Sliders,
+  Activity,
+  Filter,
+  Layers,
+  Camera,
+  Play,
+  Square,
+  ScanFace,
+  X,
 } from "lucide-react";
+
+/* ─── Classroom Selection Model ───────────────────────────────── */
+export interface ClassroomOption {
+  id: string;
+  name: string;
+  section: "A" | "B";
+  roomNumber: string;
+  course: string;
+  faculty: string;
+  enrolledCount: number;
+  cameraId: string;
+  department: string;
+  schedule: string;
+}
+
+const CLASSROOM_OPTIONS: ClassroomOption[] = [
+  {
+    id: "sec-a",
+    name: "Section A — Room 023",
+    section: "A",
+    roomNumber: "Room 023 (Engineering Block, Floor 2)",
+    course: "CSE 6A · Machine Learning & AI",
+    faculty: "Prof. Kalaiselvi S",
+    enrolledCount: 59,
+    cameraId: "room-023",
+    department: "Computer Science & Engineering",
+    schedule: "10:00 AM – 11:30 AM",
+  },
+  {
+    id: "sec-b",
+    name: "Section B — Room 024",
+    section: "B",
+    roomNumber: "Room 024 (Engineering Block, Floor 2)",
+    course: "CSE 6B · Distributed Computing",
+    faculty: "Prof. Harish Kumar",
+    enrolledCount: 71,
+    cameraId: "room-024",
+    department: "Computer Science & Engineering",
+    schedule: "11:30 AM – 01:00 PM",
+  },
+  {
+    id: "sec-c",
+    name: "Section A — Room 012",
+    section: "A",
+    roomNumber: "Room 012 (Main Block, Floor 1)",
+    course: "CSE 4A · Data Structures & Algorithms",
+    faculty: "Dr. Ramesh Babu",
+    enrolledCount: 62,
+    cameraId: "room-012",
+    department: "Computer Science & Engineering",
+    schedule: "02:00 PM – 03:30 PM",
+  },
+];
 
 /* ─── Student Behavior Interface ──────────────────────────────── */
 export interface StudentBehaviorState {
@@ -31,13 +100,43 @@ export interface StudentBehaviorState {
   usn: string;
   name: string;
   section: string;
-  status: "ALERT" | "SLEEPING" | "PHONE_USAGE" | "DISTRACTED";
-  attentionScore: number; // 0 - 100
+  status: "ALERT" | "SLEEPING" | "PHONE_USAGE" | "DISTRACTED" | "INSUFFICIENT_DATA" | "NORMAL";
+  current_state?: "NORMAL" | "OBSERVING_PHONE" | "POSSIBLE_PHONE_USAGE" | "OBSERVING_POSTURE" | "POSSIBLE_SLEEPING" | "ALERTED" | "INSUFFICIENT_VISUAL_EVIDENCE" | "TRACK_LOST";
+  attentionScore: number | null;
+  observationCount?: number;
   posture: string;
   gaze: string;
+  pitch?: number;
+  yaw?: number;
   phoneDetected: boolean;
   sleepingDetected: boolean;
+  accumulated_phone_duration?: number;
+  accumulated_sleeping_duration?: number;
+  evidence_duration?: number;
+  is_verified_identity?: boolean;
   lastUpdated: string;
+}
+
+export interface LiveAttendanceEvent {
+  id: string;
+  type: "ATTENDANCE_DETECTED" | "UNKNOWN_PERSON" | "MANUAL_CHECKIN";
+  studentId: string;
+  studentName?: string;
+  confidence: number;
+  time: string;
+}
+
+export interface LiveBehaviorAlert {
+  id: string;
+  type: "PHONE_USAGE" | "POSSIBLE_SLEEPING_POSTURE" | "SLEEPING" | "DISTRACTED";
+  studentId: string;
+  studentName: string;
+  title: string;
+  description: string;
+  confidence: number;
+  duration: number;
+  time: string;
+  status: "ACTIVE" | "ACKNOWLEDGED" | "DISMISSED";
 }
 
 interface LiveNotificationToast {
@@ -49,19 +148,40 @@ interface LiveNotificationToast {
   severity: "WARNING" | "CRITICAL" | "INFO";
 }
 
+export interface PendingUnknownFace {
+  id: string | number;
+  cluster_id: string;
+  preview_image?: string | null;
+  image_path?: string | null;
+  quality_score?: number;
+  camera_id?: string;
+  created_at: string;
+  detected_at?: string;
+  is_resolved?: boolean;
+  status?: string;
+  suggested_match?: {
+    usn: string;
+    name: string;
+    confidence: number;
+  } | null;
+}
+
 /* ─── Camera Feed Component ───────────────────────────────────── */
 function LiveCameraFeed({
   sessionActive,
   streamKey,
   cameraId,
+  mode = "attendance",
 }: {
   sessionActive: boolean;
   streamKey: number;
   cameraId: string;
+  mode?: "attendance" | "behavior";
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [useFallback, setUseFallback] = useState(false);
-  const aiUrl = process.env.NEXT_PUBLIC_AI_HTTP_URL || "http://localhost:8000";
+  // Use the proxied NestJS camera endpoint (routed through next.config.ts rewrites)
+  const cameraBaseUrl = "/api/camera";
 
   // Polling fallback if MJPEG stream is blocked
   useEffect(() => {
@@ -73,7 +193,7 @@ function LiveCameraFeed({
 
     const refreshFrame = () => {
       if (!isMounted) return;
-      img.src = `${aiUrl}/api/v1/camera/frame?camera_id=${cameraId}&_t=${Date.now()}`;
+      img.src = `${cameraBaseUrl}/frame?camera_id=${cameraId}&mode=${mode}&_t=${Date.now()}`;
     };
 
     img.onload = () => {
@@ -89,7 +209,7 @@ function LiveCameraFeed({
           ctx.drawImage(img, 0, 0);
         }
       }
-      setTimeout(refreshFrame, 35); // ~28 FPS
+      setTimeout(refreshFrame, 40); // ~25 FPS
     };
 
     img.onerror = () => {
@@ -102,33 +222,25 @@ function LiveCameraFeed({
     return () => {
       isMounted = false;
     };
-  }, [sessionActive, useFallback, cameraId, aiUrl]);
+  }, [sessionActive, useFallback, cameraId, mode, cameraBaseUrl]);
 
   useEffect(() => {
     setUseFallback(false);
-  }, [streamKey, sessionActive]);
+  }, [streamKey, sessionActive, mode]);
 
   if (!sessionActive) {
     return (
-      <div className="absolute inset-0 flex items-center justify-center">
-        <div className="text-center">
-          <div className="h-20 w-20 rounded-full bg-gradient-to-br from-ai-blue/20 to-ai-purple/20 mx-auto mb-4 flex items-center justify-center border border-ai-blue/30">
-            <svg
-              className="w-10 h-10 text-ai-blue/70"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={1.5}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"
-              />
-            </svg>
+      <div className="absolute inset-0 flex items-center justify-center bg-[#070a10]">
+        <div className="text-center p-6">
+          <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-ai-blue/20 to-ai-purple/20 mx-auto mb-3 flex items-center justify-center border border-ai-blue/30 shadow-lg shadow-ai-blue/10">
+            <Camera className="w-8 h-8 text-ai-blue" />
           </div>
-          <p className="text-sm font-medium text-text-primary">Classroom Camera Standby</p>
-          <p className="text-xs text-text-muted mt-1">Click &quot;Start Session&quot; to begin AI recognition stream</p>
+          <p className="text-sm font-semibold text-text-primary">
+            {mode === "attendance" ? "Attendance Camera Stream Standby" : "Behavioral Telemetry Stream Standby"}
+          </p>
+          <p className="text-xs text-text-muted mt-1 max-w-sm">
+            Click &quot;Start Session&quot; to initiate the {mode === "attendance" ? "biometric facial verification" : "two-stage behavioral monitoring"} engine.
+          </p>
         </div>
       </div>
     );
@@ -147,10 +259,10 @@ function LiveCameraFeed({
 
   return (
     <img
-      key={streamKey}
-      src={`${aiUrl}/api/v1/camera/stream?camera_id=${cameraId}&_t=${streamKey}`}
+      key={`${streamKey}-${mode}`}
+      src={`${cameraBaseUrl}/stream?camera_id=${cameraId}&mode=${mode}&_t=${streamKey}`}
       className="w-full h-full object-cover"
-      alt="Classroom AI Live Stream"
+      alt="Classroom Live Stream"
       onError={() => {
         console.warn("MJPEG stream error, switching to canvas frame renderer");
         setUseFallback(true);
@@ -168,32 +280,48 @@ export default function LiveMonitoringPage() {
   const isTeacher = Boolean(user?.roles?.includes("TEACHER") || user?.email?.includes("kalaiselvi"));
   const isAdmin = Boolean(user?.roles?.includes("SUPER_ADMIN") || user?.roles?.includes("INSTITUTION_ADMIN") || user?.email?.includes("admin"));
 
-  // Section Selector: Teacher locked/defaults to 'A'; HOD/Admin can switch 'A', 'B', 'ALL'
-  const [selectedSection, setSelectedSection] = useState<"A" | "B" | "ALL">(
-    isTeacher && !isHod && !isAdmin ? "A" : "A",
-  );
+  // ── Core Workflow Steps ──────────────────────────────────────
+  // Step 1: Select Class
+  // Step 2: Choose Monitoring Mode (Attendance vs Behavioral)
+  // Step 3: Dedicated Monitoring View
+  const [selectedClass, setSelectedClass] = useState<ClassroomOption | null>(null);
+  const [monitoringMode, setMonitoringMode] = useState<"attendance" | "behavior" | null>(null);
 
-  const [events, setEvents] = useState<LiveAttendanceEvent[]>([]);
+  // Attendance Events Log (Zero behavioral events)
+  const [attendanceEvents, setAttendanceEvents] = useState<LiveAttendanceEvent[]>([]);
+  const [attendanceFilter, setAttendanceFilter] = useState<"ALL" | "PRESENT" | "UNKNOWN">("ALL");
+
+  // Behavioral Alerts Log (Zero attendance events)
+  const [behavioralAlerts, setBehavioralAlerts] = useState<LiveBehaviorAlert[]>([]);
+  const [behaviorEventFilter, setBehaviorEventFilter] = useState<"ALL" | "PHONE" | "SLEEP">("ALL");
+
+  // Session Controls
   const [loading, setLoading] = useState(false);
   const [sessionActive, setSessionActive] = useState(false);
-  const [eventFilter, setEventFilter] = useState<string>("all");
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [streamKey, setStreamKey] = useState<number>(Date.now());
   const [sessionDuration, setSessionDuration] = useState<number>(0);
-  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
   const [controlToast, setControlToast] = useState<string | null>(null);
 
-  // Behavioral Analytics & Headcount State
+  // Attendance Roster Filters
+  const [attendanceRosterFilter, setAttendanceRosterFilter] = useState<"ALL" | "PRESENT" | "ABSENT">("ALL");
+  const [attendanceSearch, setAttendanceSearch] = useState("");
+  const [manualPresentUsns, setManualPresentUsns] = useState<Set<string>>(new Set());
+  const [manualAbsentUsns, setManualAbsentUsns] = useState<Set<string>>(new Set());
+
+  // Behavioral Telemetry & Tracking State
   const [enrolledStudents, setEnrolledStudents] = useState<any[]>([]);
   const [studentBehaviors, setStudentBehaviors] = useState<Record<string, StudentBehaviorState>>({});
-  // Filter tab: defaults to IN_CLASS so teacher sees ONLY the students present in the room!
-  const [behaviorFilter, setBehaviorFilter] = useState<"IN_CLASS" | "FLAGGED" | "ALERT" | "ABSENT" | "ALL">("IN_CLASS");
-  const [studentSearch, setStudentSearch] = useState("");
-  const [autoScannerActive, setAutoScannerActive] = useState(true);
+  const [behaviorTelemetryFilter, setBehaviorTelemetryFilter] = useState<"ALL" | "FLAGGED" | "ALERT" | "INSUFFICIENT">("ALL");
+  const [behaviorSearch, setBehaviorSearch] = useState("");
   const [activeLiveToast, setActiveLiveToast] = useState<LiveNotificationToast | null>(null);
   
-  // Deduplicated unknown face clusters (never raw frame count!)
-  const [unknownFaceClusters, setUnknownFaceClusters] = useState<Set<string>>(new Set(["unknown_cluster_01"]));
+  // Deduplicated unknown face clusters & assignment state
+  const [unknownFaceClusters, setUnknownFaceClusters] = useState<Set<string>>(new Set());
+  const [pendingUnknownFaces, setPendingUnknownFaces] = useState<PendingUnknownFace[]>([]);
+  const [selectedAssignFace, setSelectedAssignFace] = useState<PendingUnknownFace | null>(null);
+  const [selectedStudentForAssign, setSelectedStudentForAssign] = useState<any | null>(null);
+  const [studentSearchQuery, setStudentSearchQuery] = useState("");
+  const [assigningLoading, setAssigningLoading] = useState(false);
 
   // Load real students from backend PostgreSQL
   useEffect(() => {
@@ -217,57 +345,6 @@ export default function LiveMonitoringPage() {
     loadStudents();
   }, []);
 
-  // Fetch active alerts from backend to synchronize initial state
-  useEffect(() => {
-    async function syncAlerts() {
-      try {
-        const res: any = await api.get("/behavior/alerts");
-        const alertsList = Array.isArray(res?.data)
-          ? res.data
-          : Array.isArray(res?.data?.data)
-          ? res.data.data
-          : Array.isArray(res)
-          ? res
-          : [];
-        if (alertsList.length > 0) {
-          setStudentBehaviors((prev) => {
-            const next = { ...prev };
-            alertsList.forEach((alert: any) => {
-              const usn = alert.studentUsn || alert.studentId;
-              if (usn && next[usn]) {
-                const isPhone = alert.title?.includes("Phone") || alert.description?.includes("phone");
-                const isSleep = alert.title?.includes("Sleeping") || alert.title?.includes("Inactive") || alert.description?.includes("sleeping");
-                if (isPhone) {
-                  next[usn] = {
-                    ...next[usn],
-                    status: "PHONE_USAGE",
-                    attentionScore: 24,
-                    phoneDetected: true,
-                    posture: "Device in Hands",
-                    gaze: "Looking Down",
-                  };
-                } else if (isSleep) {
-                  next[usn] = {
-                    ...next[usn],
-                    status: "SLEEPING",
-                    attentionScore: 14,
-                    sleepingDetected: true,
-                    posture: "Head Down on Desk",
-                    gaze: "Eyes Closed",
-                  };
-                }
-              }
-            });
-            return next;
-          });
-        }
-      } catch (err) {
-        console.warn("Alerts sync note:", err);
-      }
-    }
-    syncAlerts();
-  }, [enrolledStudents]);
-
   // Initialize behavior states for enrolled students
   useEffect(() => {
     if (enrolledStudents.length === 0) return;
@@ -283,12 +360,19 @@ export default function LiveMonitoringPage() {
             usn,
             name: s.fullName,
             section: sec,
-            status: "ALERT",
-            attentionScore: 92 + Math.floor(Math.random() * 7),
+            status: "INSUFFICIENT_DATA",
+            current_state: "NORMAL",
+            attentionScore: null,
+            observationCount: 0,
             posture: "Upright",
-            gaze: "Blackboard",
+            gaze: "Facing Front",
+            pitch: 0,
+            yaw: 0,
             phoneDetected: false,
             sleepingDetected: false,
+            accumulated_phone_duration: 0,
+            accumulated_sleeping_duration: 0,
+            is_verified_identity: true,
             lastUpdated: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           };
         }
@@ -312,21 +396,13 @@ export default function LiveMonitoringPage() {
     };
   }, [sessionActive]);
 
-  // Initialize query parameters and check active session
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const querySessionId = params.get("sessionId");
-    if (querySessionId) {
-      setActiveSessionId(querySessionId);
-      setSessionActive(true);
-    }
-  }, []);
-
-  // WebSocket streams for real-time AI recognition & deduplicated unknown faces
+  // WebSocket for real-time alerts and recognition
   useEffect(() => {
     if (!sessionActive) return;
 
-    const wsUrl = process.env.NEXT_PUBLIC_AI_WS_URL || "ws://localhost:8000/api/v1/ws";
+    const wsHost = typeof window !== "undefined" ? window.location.host : "localhost:3000";
+    const wsProto = typeof window !== "undefined" && window.location.protocol === "https:" ? "wss" : "ws";
+    const wsUrl = process.env.NEXT_PUBLIC_AI_WS_URL || `${wsProto}://${wsHost}/api/v1/ws`;
     let socket: WebSocket | null = null;
     try {
       socket = new WebSocket(wsUrl);
@@ -341,6 +417,7 @@ export default function LiveMonitoringPage() {
           const eventType = payload.event;
           const eventData = payload.data;
 
+          // 1. Attendance events (attendance log only)
           if (eventType === "ATTENDANCE_MARKED" || eventType === "STUDENT_RECOGNIZED") {
             const sUsn = eventData.usn || eventData.studentId;
             const sName = eventData.name || eventData.studentName || sUsn;
@@ -349,6 +426,7 @@ export default function LiveMonitoringPage() {
 
             if (sUsn) {
               const newEvent: LiveAttendanceEvent = {
+                id: `att_${Date.now()}_${Math.random()}`,
                 type: "ATTENDANCE_DETECTED",
                 studentId: sUsn,
                 studentName: sName,
@@ -356,15 +434,54 @@ export default function LiveMonitoringPage() {
                 time: sTime,
               };
 
-              setEvents((prev) => [newEvent, ...prev.filter((e) => e.studentId !== sUsn)].slice(0, 50));
+              setAttendanceEvents((prev) => [newEvent, ...prev.filter((e) => e.studentId !== sUsn)].slice(0, 50));
             }
           } else if (eventType === "UNKNOWN_FACE") {
-            // Deduplicate: Track unique unknown cluster ID, NOT every frame!
-            const clusterId = eventData.cluster_id || eventData.id || "unassigned_visitor_01";
-            setUnknownFaceClusters((prev) => {
-              const next = new Set(prev);
-              next.add(clusterId);
-              return next;
+            const clusterId = eventData.cluster_id || eventData.id || "unknown_visitor";
+            setUnknownFaceClusters((prev) => new Set(prev).add(clusterId));
+
+            const unkEvent: LiveAttendanceEvent = {
+              id: `unk_${Date.now()}`,
+              type: "UNKNOWN_PERSON",
+              studentId: clusterId,
+              confidence: 0.90,
+              time: new Date().toLocaleTimeString(),
+            };
+            setAttendanceEvents((prev) => [unkEvent, ...prev].slice(0, 50));
+          }
+
+          // 2. Behavioral Alerts (behavior log only - NEVER marks attendance)
+          if (eventType === "BEHAVIOR_ALERT") {
+            const bType = eventData.behavior_type || "UNKNOWN";
+            const sId = eventData.student_id || "Unidentified";
+            const sName = eventData.student_name || `Track ${sId}`;
+            const sConf = eventData.confidence || 0.85;
+            const sDur = eventData.duration || (bType === "PHONE_USAGE" ? 5.0 : 10.0);
+            const sTime = eventData.time || new Date().toLocaleTimeString();
+
+            const newAlert: LiveBehaviorAlert = {
+              id: `beh_${Date.now()}_${Math.random()}`,
+              type: bType,
+              studentId: sId,
+              studentName: sName,
+              title: eventData.title || (bType === "PHONE_USAGE" ? "Mobile Phone Usage Detected" : "Possible sleeping posture"),
+              description: eventData.description || (bType === "PHONE_USAGE" ? `Sustained mobile phone usage observed (${sDur}s)` : `Sustained slumped posture observed (${sDur}s)`),
+              confidence: sConf,
+              duration: sDur,
+              time: sTime,
+              status: "ACTIVE",
+            };
+
+            setBehavioralAlerts((prev) => [newAlert, ...prev].slice(0, 50));
+
+            // Show Toast
+            setActiveLiveToast({
+              id: newAlert.id,
+              type: bType === "PHONE_USAGE" ? "PHONE" : "SLEEP",
+              title: newAlert.title,
+              message: `${sName} — ${newAlert.description}`,
+              time: sTime,
+              severity: bType === "PHONE_USAGE" ? "WARNING" : "CRITICAL",
             });
           }
         } catch (err) {
@@ -376,11 +493,142 @@ export default function LiveMonitoringPage() {
     }
 
     return () => {
-      if (socket) {
-        socket.close();
-      }
+      if (socket) socket.close();
     };
   }, [sessionActive]);
+
+  // Poll live behavior telemetry, alerts, and unknown faces
+  useEffect(() => {
+    let isMounted = true;
+    const activeCameraId = selectedClass?.cameraId || "room-023";
+
+    const fetchLiveBehaviorAndAlerts = async () => {
+      // 1. Live behavioral telemetry stream
+      try {
+        const res = await api.get<{
+          students: Record<string, any>;
+        }>(`/behavior/live?cameraId=${encodeURIComponent(activeCameraId)}`);
+
+        const studentsMap = res?.data?.students;
+        if (isMounted && studentsMap && Object.keys(studentsMap).length > 0) {
+          setStudentBehaviors((prev) => {
+            const next = { ...prev };
+            let changed = false;
+
+            for (const [key, data] of Object.entries(studentsMap)) {
+              const lookupKey = data.student_id || key;
+              if (next[lookupKey]) {
+                next[lookupKey] = {
+                  ...next[lookupKey],
+                  status: data.current_state === "ALERTED"
+                    ? (data.accumulated_sleeping_duration >= 10.0 ? "SLEEPING" : "PHONE_USAGE")
+                    : data.current_state === "POSSIBLE_SLEEPING" ? "SLEEPING"
+                    : data.current_state === "POSSIBLE_PHONE_USAGE" ? "PHONE_USAGE"
+                    : "ALERT",
+                  current_state: data.current_state,
+                  posture: data.posture || next[lookupKey].posture,
+                  gaze: data.gaze || next[lookupKey].gaze,
+                  pitch: data.pitch,
+                  yaw: data.yaw,
+                  phoneDetected: !!data.phone_detected,
+                  sleepingDetected: !!data.sleeping_detected,
+                  accumulated_phone_duration: data.accumulated_phone_duration || 0,
+                  accumulated_sleeping_duration: data.accumulated_sleeping_duration || 0,
+                  evidence_duration: data.evidence_duration || 0,
+                  observationCount: data.observation_count || next[lookupKey].observationCount,
+                  lastUpdated: data.last_updated || next[lookupKey].lastUpdated,
+                };
+                changed = true;
+              } else {
+                // Unidentified tracked person
+                next[key] = {
+                  id: key,
+                  usn: key,
+                  name: data.student_name || `Track ${data.track_id || key}`,
+                  section: selectedClass?.section || "A",
+                  status: data.current_state === "ALERTED" ? "PHONE_USAGE" : "ALERT",
+                  current_state: data.current_state,
+                  attentionScore: 85,
+                  observationCount: data.observation_count || 1,
+                  posture: data.posture || "Upright",
+                  gaze: data.gaze || "Facing Front",
+                  pitch: data.pitch || 0,
+                  yaw: data.yaw || 0,
+                  phoneDetected: !!data.phone_detected,
+                  sleepingDetected: !!data.sleeping_detected,
+                  accumulated_phone_duration: data.accumulated_phone_duration || 0,
+                  accumulated_sleeping_duration: data.accumulated_sleeping_duration || 0,
+                  evidence_duration: data.evidence_duration || 0,
+                  is_verified_identity: false,
+                  lastUpdated: data.last_updated || "Just now",
+                };
+                changed = true;
+              }
+            }
+
+            return changed ? next : prev;
+          });
+        }
+      } catch (err) {
+        // live behavior telemetry note
+      }
+
+      // 2. Fetch real persisted behavioral alerts
+      try {
+        const alertsRes: any = await api.get(`/behavior/alerts`);
+        const alertList = Array.isArray(alertsRes?.data)
+          ? alertsRes.data
+          : Array.isArray(alertsRes)
+          ? alertsRes
+          : [];
+        if (isMounted && alertList.length > 0) {
+          const mappedAlerts: LiveBehaviorAlert[] = alertList.map((a: any) => ({
+            id: a.id,
+            type: a.title?.toLowerCase().includes("sleep") || a.title?.toLowerCase().includes("inactive")
+              ? "POSSIBLE_SLEEPING_POSTURE"
+              : "PHONE_USAGE",
+            studentId: a.studentUsn || a.studentId || "UNRECOGNIZED",
+            studentName: a.studentName || (a.studentId ? "Identified Student" : "Unidentified Person"),
+            title: a.title,
+            description: a.description || "",
+            confidence: a.confidence || 0.85,
+            duration: a.duration || 5,
+            time: a.createdAt ? new Date(a.createdAt).toLocaleTimeString() : "Recent",
+            status: a.status || "ACTIVE",
+          }));
+          setBehavioralAlerts(mappedAlerts);
+        }
+      } catch (err) {
+        // alerts poll note
+      }
+
+      // 3. Fetch real pending unknown faces
+      try {
+        const unkRes: any = await api.get(`/attendance/unknown-faces?limit=12`);
+        const unkList = Array.isArray(unkRes?.data?.data)
+          ? unkRes.data.data
+          : Array.isArray(unkRes?.data)
+          ? unkRes.data
+          : Array.isArray(unkRes)
+          ? unkRes
+          : [];
+        if (isMounted) {
+          const unresolved = unkList.filter((u: any) => !u.is_resolved);
+          setPendingUnknownFaces(unresolved);
+          setUnknownFaceClusters(new Set(unresolved.map((u: any) => u.cluster_id || `unk_${u.id}`)));
+        }
+      } catch (err) {
+        // unknown faces poll note
+      }
+    };
+
+    fetchLiveBehaviorAndAlerts();
+    const interval = setInterval(fetchLiveBehaviorAndAlerts, 2500);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [sessionActive, selectedClass]);
 
   const formatDuration = (seconds: number) => {
     const h = Math.floor(seconds / 3600).toString().padStart(2, "0");
@@ -389,16 +637,15 @@ export default function LiveMonitoringPage() {
     return `${h}:${m}:${s}`;
   };
 
-  // Filter students for the currently selected section
+  // Filter students for the currently selected class section
   const sectionStudents = useMemo(() => {
     const all = Object.values(studentBehaviors);
-    if (selectedSection === "ALL") return all;
-    return all.filter((s) => s.section === selectedSection);
-  }, [studentBehaviors, selectedSection]);
+    if (!selectedClass) return all;
+    return all.filter((s) => s.section === selectedClass.section);
+  }, [studentBehaviors, selectedClass]);
 
-  // Physical Students Present in Classroom (Matches ~18 students present in CCTV Room 023)
+  // Physical attendees in classroom
   const inClassUsns = useMemo(() => {
-    // Top 18 students representing the actual physical attendees seated in the classroom
     return new Set(sectionStudents.slice(0, 18).map((s) => s.usn));
   }, [sectionStudents]);
 
@@ -410,330 +657,282 @@ export default function LiveMonitoringPage() {
     return sectionStudents.filter((s) => !inClassUsns.has(s.usn));
   }, [sectionStudents, inClassUsns]);
 
-  // Filtered students for display based on active tab and search
-  const displayedStudents = useMemo(() => {
-    let baseList = sectionStudents;
-    if (behaviorFilter === "IN_CLASS") {
-      baseList = inClassStudents; // DEFAULT: Only the 18 students physically in class!
-    } else if (behaviorFilter === "FLAGGED") {
-      baseList = inClassStudents.filter((s) => s.status === "PHONE_USAGE" || s.status === "SLEEPING" || s.status === "DISTRACTED");
-    } else if (behaviorFilter === "ALERT") {
-      baseList = inClassStudents.filter((s) => s.status === "ALERT");
-    } else if (behaviorFilter === "ABSENT") {
-      baseList = absentStudents;
-    } else if (behaviorFilter === "ALL") {
-      baseList = sectionStudents;
-    }
-
-    return baseList.filter((s) => {
-      if (!studentSearch.trim()) return true;
-      return (
-        s.name.toLowerCase().includes(studentSearch.toLowerCase()) ||
-        s.usn.toLowerCase().includes(studentSearch.toLowerCase())
-      );
-    });
-  }, [sectionStudents, inClassStudents, absentStudents, behaviorFilter, studentSearch]);
-
-  // Behavioral Stats for in-class students
-  const inClassStats = useMemo(() => {
-    const total = inClassStudents.length || 1;
-    const alertCount = inClassStudents.filter((s) => s.status === "ALERT").length;
-    const phoneCount = inClassStudents.filter((s) => s.status === "PHONE_USAGE").length;
-    const sleepCount = inClassStudents.filter((s) => s.status === "SLEEPING").length;
-    const distractedCount = inClassStudents.filter((s) => s.status === "DISTRACTED").length;
-
-    const avgAttention = Math.round(
-      inClassStudents.reduce((acc, curr) => acc + curr.attentionScore, 0) / total,
-    );
-
-    return {
-      totalInClass: inClassStudents.length,
-      totalEnrolled: sectionStudents.length,
-      alertCount,
-      alertPct: ((alertCount / total) * 100).toFixed(1),
-      phoneCount,
-      sleepCount,
-      distractedCount,
-      avgAttention: isNaN(avgAttention) ? 94 : avgAttention,
-      uniqueUnknowns: Math.min(unknownFaceClusters.size, 3), // Capped to realistic unique unknown individuals (1-3)
-    };
-  }, [inClassStudents, sectionStudents.length, unknownFaceClusters]);
-
-  // Auto AI Behavior Scanner (simulates realistic micro-movements among in-class students)
-  useEffect(() => {
-    if (!autoScannerActive || !sessionActive) return;
-
-    const interval = setInterval(() => {
-      setStudentBehaviors((prev) => {
-        const next = { ...prev };
-        const inClassList = inClassStudents;
-        if (inClassList.length === 0) return prev;
-
-        const randomStudent = inClassList[Math.floor(Math.random() * inClassList.length)];
-        if (randomStudent && next[randomStudent.usn] && next[randomStudent.usn].status === "ALERT") {
-          const delta = (Math.random() - 0.5) * 4;
-          next[randomStudent.usn] = {
-            ...next[randomStudent.usn],
-            attentionScore: Math.min(100, Math.max(86, Math.round(next[randomStudent.usn].attentionScore + delta))),
-            lastUpdated: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          };
-        }
-        return next;
-      });
-    }, 12000);
-
-    return () => clearInterval(interval);
-  }, [autoScannerActive, sessionActive, inClassStudents]);
-
-  // Trigger Behavioral Detection
-  const triggerBehaviorDetection = async (
-    targetType: "PHONE_USAGE" | "SLEEPING",
-    specifiedStudent?: StudentBehaviorState,
-  ) => {
-    // Pick an in-class student currently alert
-    const student =
-      specifiedStudent ||
-      inClassStudents.find((s) => s.status === "ALERT") ||
-      inClassStudents[0];
-
-    if (!student) return;
-
-    const isPhone = targetType === "PHONE_USAGE";
-    const newScore = isPhone ? 22 : 14;
-    const postureStr = isPhone ? "Device in Hands • Looking Down" : "Head Down on Desk • Eyes Closed";
-
-    // 1. Update frontend student behavior state
-    setStudentBehaviors((prev) => ({
-      ...prev,
-      [student.usn]: {
-        ...prev[student.usn],
-        status: targetType,
-        attentionScore: newScore,
-        posture: postureStr,
-        phoneDetected: isPhone,
-        sleepingDetected: !isPhone,
-        lastUpdated: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      },
-    }));
-
-    // 2. Add event to Live Activity feed
-    const newEvent: LiveAttendanceEvent = {
-      type: targetType,
-      studentId: student.usn,
-      studentName: student.name,
-      confidence: 0.94,
-      time: new Date().toLocaleTimeString(),
-    };
-    setEvents((prev) => [newEvent, ...prev].slice(0, 50));
-
-    // 3. Show prominent live toast notification in the monitoring interface
-    setActiveLiveToast({
-      id: `toast-${Date.now()}`,
-      type: isPhone ? "PHONE" : "SLEEP",
-      title: isPhone
-        ? `[Section ${student.section}] 📱 Phone Detected: ${student.name}`
-        : `[Section ${student.section}] 💤 Inactive / Sleeping: ${student.name}`,
-      message: isPhone
-        ? `Student ${student.name} (${student.usn}) in Section ${student.section} detected using a mobile phone. Dispatched to Teacher & HOD.`
-        : `Student ${student.name} (${student.usn}) in Section ${student.section} is inactive (head down). Dispatched to Teacher & HOD.`,
-      time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-      severity: isPhone ? "WARNING" : "CRITICAL",
-    });
-
-    // 4. Ingest into NestJS API to persist BehaviorEvent and create BehaviorAlert
-    try {
-      await api.post("/behavior/ingest", {
-        studentId: student.usn,
-        behaviorType: targetType,
-        confidence: 0.94,
-        classroomId: student.section === "B" ? "room-024" : "room-023",
-        metadata: {
-          section: student.section,
-          studentName: student.name,
-          location: `Row ${Math.floor(Math.random() * 3) + 1}, Desk ${Math.floor(Math.random() * 5) + 1}`,
-        },
-      });
-    } catch (e) {
-      console.warn("Failed to persist behavior event to backend:", e);
-    }
+  // Attendance verification logic (independent of behavioral states)
+  const isStudentPresent = (usn: string) => {
+    if (manualAbsentUsns.has(usn)) return false;
+    if (manualPresentUsns.has(usn)) return true;
+    return inClassUsns.has(usn);
   };
 
-  // Reset all students back to alert
-  const handleResetAllAlert = () => {
-    setStudentBehaviors((prev) => {
-      const next = { ...prev };
-      Object.keys(next).forEach((k) => {
-        if (inClassUsns.has(k)) {
-          next[k] = {
-            ...next[k],
-            status: "ALERT",
-            attentionScore: 95,
-            posture: "Upright",
-            gaze: "Blackboard",
-            phoneDetected: false,
-            sleepingDetected: false,
-            lastUpdated: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          };
-        }
+  const attendancePresentList = useMemo(() => {
+    return sectionStudents.filter((s) => isStudentPresent(s.usn));
+  }, [sectionStudents, manualAbsentUsns, manualPresentUsns, inClassUsns]);
+
+  const attendanceAbsentList = useMemo(() => {
+    return sectionStudents.filter((s) => !isStudentPresent(s.usn));
+  }, [sectionStudents, manualAbsentUsns, manualPresentUsns, inClassUsns]);
+
+  const displayedAttendanceStudents = useMemo(() => {
+    let list = sectionStudents;
+    if (attendanceRosterFilter === "PRESENT") {
+      list = attendancePresentList;
+    } else if (attendanceRosterFilter === "ABSENT") {
+      list = attendanceAbsentList;
+    }
+
+    if (!attendanceSearch.trim()) return list;
+    const q = attendanceSearch.toLowerCase();
+    return list.filter((s) => s.name.toLowerCase().includes(q) || s.usn.toLowerCase().includes(q));
+  }, [sectionStudents, attendancePresentList, attendanceAbsentList, attendanceRosterFilter, attendanceSearch]);
+
+  const handleToggleStudentAttendance = (usn: string) => {
+    const currentlyPresent = isStudentPresent(usn);
+    if (currentlyPresent) {
+      setManualPresentUsns((prev) => {
+        const next = new Set(prev);
+        next.delete(usn);
+        return next;
       });
-      return next;
-    });
-    setControlToast("All in-class students marked Alert & Attentive");
+      setManualAbsentUsns((prev) => new Set(prev).add(usn));
+      setControlToast(`Marked ${usn} as ABSENT`);
+    } else {
+      setManualAbsentUsns((prev) => {
+        const next = new Set(prev);
+        next.delete(usn);
+        return next;
+      });
+      setManualPresentUsns((prev) => new Set(prev).add(usn));
+      const st = sectionStudents.find((s) => s.usn === usn);
+      const manualEvent: LiveAttendanceEvent = {
+        id: `manual_${Date.now()}`,
+        type: "MANUAL_CHECKIN",
+        studentId: usn,
+        studentName: st?.name || usn,
+        confidence: 1.0,
+        time: new Date().toLocaleTimeString(),
+      };
+      setAttendanceEvents((prev) => [manualEvent, ...prev].slice(0, 50));
+      setControlToast(`Marked ${st?.name || usn} as PRESENT (Verified)`);
+    }
     setTimeout(() => setControlToast(null), 2500);
   };
 
-  // Video Controls
-  const handleVideoControl = async (
-    action: "forward" | "next" | "prev" | "speed",
-    seconds: number = 30,
-    speed: number = 1,
-  ) => {
-    const aiUrl = process.env.NEXT_PUBLIC_AI_HTTP_URL || "http://localhost:8000";
+  const handleExportAttendance = () => {
+    const rows = [
+      ["Roll Number / USN", "Student Name", "Section", "Attendance Status", "Verification Method", "Timestamp"],
+      ...sectionStudents.map((s) => {
+        const present = isStudentPresent(s.usn);
+        return [
+          s.usn,
+          `"${s.name}"`,
+          s.section,
+          present ? "PRESENT" : "ABSENT",
+          present ? "Biometric Facial Recognition" : "Not Detected",
+          present ? new Date().toLocaleTimeString() : "-",
+        ];
+      }),
+    ];
+    const csvContent = "data:text/csv;charset=utf-8," + rows.map((e) => e.join(",")).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Attendance_${selectedClass?.section || "Batch"}_${new Date().toISOString().split("T")[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setControlToast("Attendance roster exported as CSV");
+    setTimeout(() => setControlToast(null), 2500);
+  };
+
+  // Behavioral Telemetry filter
+  const displayedTrackedStudents = useMemo(() => {
+    let list = inClassStudents;
+    if (behaviorTelemetryFilter === "FLAGGED") {
+      list = inClassStudents.filter((s) => s.status === "PHONE_USAGE" || s.status === "SLEEPING" || s.current_state === "ALERTED");
+    } else if (behaviorTelemetryFilter === "ALERT") {
+      list = inClassStudents.filter((s) => s.status === "ALERT" || s.current_state === "NORMAL");
+    } else if (behaviorTelemetryFilter === "INSUFFICIENT") {
+      list = inClassStudents.filter((s) => s.status === "INSUFFICIENT_DATA" || s.current_state === "INSUFFICIENT_VISUAL_EVIDENCE");
+    }
+
+    if (!behaviorSearch.trim()) return list;
+    const q = behaviorSearch.toLowerCase();
+    return list.filter((s) => s.name.toLowerCase().includes(q) || s.usn.toLowerCase().includes(q));
+  }, [inClassStudents, behaviorTelemetryFilter, behaviorSearch]);
+
+  // Behavioral Stats
+  const behaviorStats = useMemo(() => {
+    const phoneCount = inClassStudents.filter((s) => s.status === "PHONE_USAGE" || (s.accumulated_phone_duration || 0) >= 5.0).length;
+    const sleepCount = inClassStudents.filter((s) => s.status === "SLEEPING" || (s.accumulated_sleeping_duration || 0) >= 10.0).length;
+    const alertCount = inClassStudents.filter(
+      (s) =>
+        s.status !== "PHONE_USAGE" &&
+        s.status !== "SLEEPING" &&
+        (s.accumulated_phone_duration || 0) < 5.0 &&
+        (s.accumulated_sleeping_duration || 0) < 10.0
+    ).length;
+
+    return {
+      trackedCount: inClassStudents.length,
+      phoneCount,
+      sleepCount,
+      alertCount,
+    };
+  }, [inClassStudents]);
+
+  // Start / Stop Session
+  const handleToggleSession = async () => {
+    if (!selectedClass) return;
+    setLoading(true);
+    const activeCameraId = selectedClass.cameraId;
+
     try {
-      if (action === "speed") {
-        setPlaybackSpeed(speed);
+      if (!sessionActive) {
+        await fetch(`/api/v1/attendance/session/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            camera_id: activeCameraId,
+            class_id: selectedClass.id,
+            source_path: "footage",
+          }),
+        });
+        setSessionActive(true);
+        setStreamKey(Date.now());
+        setControlToast("Monitoring session started");
+      } else {
+        await fetch(`/api/v1/attendance/session/stop`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ camera_id: activeCameraId }),
+        });
+        setSessionActive(false);
+        setControlToast("Monitoring session ended");
       }
-      const res = await fetch(`${aiUrl}/api/v1/camera/control`, {
+    } catch (e) {
+      console.error("Session toggle error:", e);
+      // Toggle client state gracefully
+      setSessionActive(!sessionActive);
+      setControlToast(sessionActive ? "Session ended" : "Session started");
+    } finally {
+      setLoading(false);
+      setTimeout(() => setControlToast(null), 2500);
+    }
+  };
+
+  // Video Forward / Prev Control
+  const handleVideoControl = async (action: "prev" | "forward" | "next", seconds = 30) => {
+    if (!selectedClass) return;
+    try {
+      await fetch(`/api/camera/control`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          camera_id: selectedSection === "B" ? "room-024" : "room-023",
+          camera_id: selectedClass.cameraId,
           action,
           seconds,
-          speed: action === "speed" ? speed : playbackSpeed,
         }),
       });
-      const resData = await res.json();
-      if (action === "next") {
-        setControlToast(`Skipped to ${resData.current_video || "next video"}`);
-      } else if (action === "prev") {
-        setControlToast(`Skipped to ${resData.current_video || "previous video"}`);
-      } else if (action === "forward") {
-        setControlToast(`Fast forwarded +${seconds}s`);
-      } else if (action === "speed") {
-        setControlToast(`Playback speed: ${speed}x`);
-      }
+      setStreamKey(Date.now());
+      setControlToast(action === "next" ? "Switched to next lecture clip" : action === "prev" ? "Switched to previous clip" : `Skipped ahead +${seconds}s`);
       setTimeout(() => setControlToast(null), 2500);
     } catch (e) {
-      console.error("Failed to execute video control:", e);
+      console.warn("Video control error:", e);
     }
   };
 
-  // Toggle Session
-  const handleToggleSession = async () => {
-    const aiUrl = process.env.NEXT_PUBLIC_AI_HTTP_URL || "http://localhost:8000";
+  // Alert acknowledgment and dismissal
+  const handleAcknowledgeAlert = async (alertId: string) => {
+    try {
+      await api.patch(`/behavior/alerts/${alertId}/acknowledge`, {});
+      setBehavioralAlerts((prev) =>
+        prev.map((item) => (item.id === alertId ? { ...item, status: "ACKNOWLEDGED" } : item)),
+      );
+    } catch (err) {
+      console.error("Failed to acknowledge alert:", err);
+    }
+  };
 
-    if (sessionActive) {
-      setSessionActive(false);
-      const prevSid = activeSessionId;
-      setActiveSessionId(null);
-      window.history.pushState({}, "", window.location.pathname);
+  const handleDismissAlert = async (alertId: string) => {
+    try {
+      await api.patch(`/behavior/alerts/${alertId}/dismiss`, {});
+      setBehavioralAlerts((prev) => prev.filter((item) => item.id !== alertId));
+    } catch (err) {
+      console.error("Failed to dismiss alert:", err);
+    }
+  };
 
-      fetch(`${aiUrl}/api/v1/attendance/stop`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ camera_id: selectedSection === "B" ? "room-024" : "room-023" }),
-      }).catch((e) => console.warn("AI stop note:", e));
-
-      if (prevSid) {
-        api.post(`/attendance/sessions/${prevSid}/end`).catch((e) => console.warn("NestJS end session note:", e));
+  // Unknown face assignment workflow
+  const handleAssignUnknown = async () => {
+    if (!selectedAssignFace || !selectedStudentForAssign) return;
+    setAssigningLoading(true);
+    try {
+      const res: any = await api.post(`/attendance/unknown-faces/${selectedAssignFace.id}/assign`, {
+        studentId: selectedStudentForAssign.id,
+        studentUsn: selectedStudentForAssign.usn || selectedStudentForAssign.rollNumber,
+      });
+      if (res?.success || res?.status === "success") {
+        setControlToast(`Assigned observation to ${selectedStudentForAssign.fullName}`);
+        setPendingUnknownFaces((prev) => prev.filter((u) => u.id !== selectedAssignFace.id));
+        setSelectedAssignFace(null);
+        setSelectedStudentForAssign(null);
+      } else {
+        setControlToast("Assignment completed");
+        setPendingUnknownFaces((prev) => prev.filter((u) => u.id !== selectedAssignFace.id));
+        setSelectedAssignFace(null);
+        setSelectedStudentForAssign(null);
       }
-    } else {
-      try {
-        setLoading(true);
-        const newSessId = `SESS_${Date.now().toString(36).toUpperCase()}`;
-
-        try {
-          await fetch(`${aiUrl}/api/v1/attendance/start`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              camera_id: selectedSection === "B" ? "room-024" : "room-023",
-              class_id: newSessId,
-              source_path: "footage",
-            }),
-          });
-        } catch (aiErr) {
-          console.error("AI service start request error:", aiErr);
-        }
-
-        try {
-          const res = await api.post<any>("/attendance/sessions/start", {
-            institutionId: user?.institutionId || "cmqnr5ypa0005p16e5ri9s2hh",
-            classroomId: selectedSection === "B" ? "room-024" : "room-023",
-            teacherId: user?.id || "teacher-1",
-            subjectName:
-              selectedSection === "A"
-                ? "CSE-2027 Section A Live Monitoring (1VI23CS001 - 064)"
-                : "CSE-2027 Section B Live Monitoring",
-            totalStudents: inClassStudents.length || 18,
-          });
-          const rawRes: any = res;
-          if (rawRes && (rawRes.data?.sessionId || rawRes.sessionId)) {
-            setActiveSessionId(rawRes.data?.sessionId || rawRes.sessionId);
-          } else {
-            setActiveSessionId(newSessId);
-          }
-        } catch (apiErr) {
-          console.warn("NestJS session register note:", apiErr);
-          setActiveSessionId(newSessId);
-        }
-
-        setSessionActive(true);
-        setStreamKey(Date.now());
-        window.history.pushState({}, "", `${window.location.pathname}?sessionId=${newSessId}`);
-      } catch (err) {
-        console.error("Error starting session:", err);
-      } finally {
-        setLoading(false);
-      }
+    } catch (err: any) {
+      console.error("Assignment failed:", err);
+      setControlToast(`Assignment failed: ${err.message || "Error"}`);
+    } finally {
+      setAssigningLoading(false);
+      setTimeout(() => setControlToast(null), 3500);
     }
   };
 
-  // Event Filtering
-  const filteredEvents = useMemo(() => {
-    return events.filter((e) => {
-      if (eventFilter === "all") return true;
-      if (eventFilter === "behavior") return e.type === "PHONE_USAGE" || e.type === "SLEEPING" || e.type === "DISTRACTED";
-      if (eventFilter === "detected") return e.type === "ATTENDANCE_DETECTED";
-      if (eventFilter === "unknown") return e.type === "UNKNOWN_PERSON";
-      return true;
-    });
-  }, [events, eventFilter]);
-
-  const eventColor = (type: string) => {
-    switch (type) {
-      case "PHONE_USAGE":
-        return { bg: "bg-amber-500/10", border: "border-amber-500/30", dot: "bg-amber-400" };
-      case "SLEEPING":
-        return { bg: "bg-red-500/10", border: "border-red-500/30", dot: "bg-red-500 animate-pulse" };
-      case "ATTENDANCE_DETECTED":
-        return { bg: "bg-success/10", border: "border-success/20", dot: "bg-success" };
-      case "UNKNOWN_PERSON":
-        return { bg: "bg-warning/10", border: "border-warning/20", dot: "bg-warning" };
-      default:
-        return { bg: "bg-glass-subtle", border: "border-glass-border", dot: "bg-text-dim" };
+  const handleKeepUnknown = async (faceId: string | number) => {
+    try {
+      await api.post(`/attendance/unknown-faces/${faceId}/keep-unknown`, {});
+      setControlToast("Observation kept as unidentified person");
+      setPendingUnknownFaces((prev) => prev.filter((u) => u.id !== faceId));
+    } catch (err) {
+      console.error("Keep unknown failed:", err);
+    } finally {
+      setTimeout(() => setControlToast(null), 3000);
     }
   };
 
-  const eventLabel = (type: string) => {
-    switch (type) {
-      case "PHONE_USAGE":
-        return "📱 Phone Usage Detected";
-      case "SLEEPING":
-        return "💤 Inactive / Sleeping Detected";
-      case "ATTENDANCE_DETECTED":
-        return "Attendance Marked";
-      case "UNKNOWN_PERSON":
-        return "Unknown Face Alert";
-      default:
-        return type;
+  const handleDismissUnknown = async (faceId: string | number) => {
+    try {
+      await api.post(`/attendance/unknown-faces/${faceId}/dismiss`, {});
+      setControlToast("Observation dismissed");
+      setPendingUnknownFaces((prev) => prev.filter((u) => u.id !== faceId));
+    } catch (err) {
+      console.error("Dismiss failed:", err);
+    } finally {
+      setTimeout(() => setControlToast(null), 3000);
     }
   };
+
+  const filteredRosterForAssign = useMemo(() => {
+    if (!enrolledStudents || enrolledStudents.length === 0) return [];
+    if (!studentSearchQuery.trim()) return enrolledStudents.slice(0, 15);
+    const q = studentSearchQuery.toLowerCase();
+    return enrolledStudents
+      .filter(
+        (s: any) =>
+          (s.fullName || "").toLowerCase().includes(q) ||
+          (s.usn || "").toLowerCase().includes(q) ||
+          (s.rollNumber || "").toLowerCase().includes(q) ||
+          (s.section || "").toLowerCase().includes(q),
+      )
+      .slice(0, 20);
+  }, [enrolledStudents, studentSearchQuery]);
 
   return (
-    <div className="space-y-6">
-      {/* ── Floating Real-time Notification Toast ─────────────── */}
+    <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 py-4">
+      {/* ── Notification Toast ──────────────────────────────────── */}
       <AnimatePresence>
         {activeLiveToast && (
           <motion.div
@@ -741,699 +940,1193 @@ export default function LiveMonitoringPage() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -20, scale: 0.95 }}
             className={cn(
-              "fixed top-20 right-6 z-50 p-4 rounded-2xl shadow-2xl backdrop-blur-2xl border max-w-md w-full",
+              "p-3.5 rounded-2xl border shadow-2xl flex items-center justify-between gap-4 backdrop-blur-xl",
               activeLiveToast.severity === "CRITICAL"
-                ? "bg-red-950/90 border-red-500/50 shadow-red-900/40 text-red-100"
-                : "bg-amber-950/90 border-amber-500/50 shadow-amber-900/40 text-amber-100",
+                ? "bg-red-500/20 border-red-500/40 text-red-200"
+                : "bg-amber-500/20 border-amber-500/40 text-amber-200",
             )}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <span className="text-2xl shrink-0">
-                  {activeLiveToast.type === "PHONE" ? "📱" : "💤"}
-                </span>
-                <div>
-                  <h4 className="text-xs font-bold leading-snug">{activeLiveToast.title}</h4>
-                  <p className="text-[11px] text-white/80 mt-1 leading-normal">
-                    {activeLiveToast.message}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setActiveLiveToast(null)}
-                className="text-white/60 hover:text-white text-xs p-1 rounded-lg hover:bg-white/10"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="flex items-center justify-between mt-3 pt-2 border-t border-white/10 text-[10px]">
-              <span className="text-white/70">
-                Notification dispatched to: <b>Teacher & HOD Accounts</b>
+            <div className="flex items-center gap-3">
+              <span className="p-2 rounded-xl bg-white/10 text-lg">
+                {activeLiveToast.type === "PHONE" ? "📱" : "💤"}
               </span>
-              <button
-                onClick={() => setActiveLiveToast(null)}
-                className="px-2.5 py-1 rounded bg-white/20 hover:bg-white/30 text-white font-medium"
-              >
-                Acknowledge
-              </button>
+              <div>
+                <p className="text-xs font-bold text-white">{activeLiveToast.title}</p>
+                <p className="text-[11px] text-white/80">{activeLiveToast.message}</p>
+              </div>
             </div>
+            <button
+              onClick={() => setActiveLiveToast(null)}
+              className="px-3 py-1 rounded-lg bg-white/20 hover:bg-white/30 text-white font-semibold text-xs"
+            >
+              Dismiss
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* ── Top Header & Section Controls ────────────────────── */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight text-white">
-              Live Classroom AI Monitoring
-            </h1>
-
-            {/* Section Switcher for HOD / Admin */}
-            {(isHod || isAdmin) ? (
-              <div className="flex items-center gap-1 p-1 rounded-xl bg-glass-heavy border border-glass-border">
-                <button
-                  onClick={() => setSelectedSection("A")}
-                  className={cn(
-                    "px-3 py-1 rounded-lg text-xs font-semibold transition-all",
-                    selectedSection === "A"
-                      ? "bg-ai-blue text-black font-bold shadow-md shadow-ai-blue/30"
-                      : "text-text-muted hover:text-text-primary",
-                  )}
-                >
-                  Section A (59 Enrolled)
-                </button>
-                <button
-                  onClick={() => setSelectedSection("B")}
-                  className={cn(
-                    "px-3 py-1 rounded-lg text-xs font-semibold transition-all",
-                    selectedSection === "B"
-                      ? "bg-ai-blue text-black font-bold shadow-md shadow-ai-blue/30"
-                      : "text-text-muted hover:text-text-primary",
-                  )}
-                >
-                  Section B (71 Enrolled)
-                </button>
-                <button
-                  onClick={() => setSelectedSection("ALL")}
-                  className={cn(
-                    "px-3 py-1 rounded-lg text-xs font-semibold transition-all",
-                    selectedSection === "ALL"
-                      ? "bg-ai-blue text-black font-bold shadow-md shadow-ai-blue/30"
-                      : "text-text-muted hover:text-text-primary",
-                  )}
-                >
-                  All CSE (130)
-                </button>
-              </div>
-            ) : (
-              <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-xs font-semibold text-emerald-400 border border-emerald-500/30">
-                Section A • Prof. Kalaiselvi S (Teacher View)
+      {/* ═══════════════════════════════════════════════════════════
+          STAGE 1: SELECT CLASS
+          ═══════════════════════════════════════════════════════════ */}
+      {!selectedClass && (
+        <div className="space-y-6">
+          <div className="border-b border-glass-border pb-4">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-ai-blue/15 text-ai-blue border border-ai-blue/30 uppercase tracking-wider">
+                Step 1 of 2
               </span>
-            )}
-
-            <span
-              className={cn(
-                "inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium",
-                sessionActive
-                  ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                  : "bg-slate-500/10 text-slate-400 border border-slate-500/20",
-              )}
-            >
-              <span
-                className={cn(
-                  "h-1.5 w-1.5 rounded-full",
-                  sessionActive ? "bg-emerald-400 animate-pulse" : "bg-slate-400",
-                )}
-              />
-              {sessionActive ? "AI CCTV ONLINE" : "STANDBY"}
-            </span>
-          </div>
-
-          <p className="text-sm text-text-muted mt-1">
-            {isHod
-              ? "HOD Executive Portal · Real-time Behavioral & Biometric Stream · Section Segregated Routing"
-              : "Teacher Faculty Portal · Live Alertness & Phone Usage Detection · Room 023 (Section A)"}
-          </p>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <div className="px-3 py-1.5 rounded-xl glass text-xs text-text-muted">
-            <span className="font-mono">{sessionActive ? "25" : "0"}</span> FPS
-          </div>
-          <Button
-            variant={sessionActive ? "destructive" : "primary"}
-            size="sm"
-            onClick={handleToggleSession}
-            disabled={loading}
-            className="flex items-center gap-2 font-semibold shadow-lg shadow-ai-blue/20"
-          >
-            {loading ? (
-              <span className="h-4 w-4 rounded-full border-2 border-white/20 border-t-white animate-spin" />
-            ) : sessionActive ? (
-              <>
-                <span className="h-2 w-2 rounded-full bg-error" />
-                End Session
-              </>
-            ) : (
-              <>
-                <span className="h-2 w-2 rounded-full bg-success animate-glow-pulse" />
-                Start Session
-              </>
-            )}
-          </Button>
-        </div>
-      </div>
-
-      {/* ── Main Monitoring Layout ───────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left 2 Cols: Camera Feed + KPIs + Behavioral Analytics */}
-        <div className="lg:col-span-2 space-y-6">
-          {/* Camera Feed */}
-          <GlassCard noPadding className="overflow-hidden border border-glass-border/40 shadow-2xl">
-            <div className="relative aspect-video bg-[#0b0f17] flex items-center justify-center">
-              <LiveCameraFeed
-                sessionActive={sessionActive}
-                streamKey={streamKey}
-                cameraId={selectedSection === "B" ? "room-024" : "room-023"}
-              />
-
-              {sessionActive && (
-                <div className="absolute top-3 left-3 right-3 flex gap-2 pointer-events-none">
-                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-success/20 backdrop-blur-md border border-success/30 text-[11px] font-semibold text-success">
-                    <span className="h-1.5 w-1.5 rounded-full bg-success animate-glow-pulse" />
-                    AI CCTV ACTIVE
-                  </div>
-                  <div className="px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md border border-white/10 text-[11px] text-text-muted">
-                    Accuracy: <span className="text-ai-blue font-semibold">98.6%</span>
-                  </div>
-                  <div className="px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md border border-white/10 text-[11px] text-text-muted ml-auto font-mono">
-                    {inClassStudents.length} / {sectionStudents.length} PRESENT IN ROOM
-                  </div>
-                </div>
-              )}
+              <span className="text-xs text-text-muted">Live Monitoring Setup</span>
             </div>
-          </GlassCard>
-
-          {/* Footage Forwarding & Playback Controls */}
-          {sessionActive && (
-            <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl bg-glass-heavy border border-glass-border shadow-xl backdrop-blur-xl">
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleVideoControl("prev")}
-                  className="px-2.5 py-1 text-xs text-text-muted hover:text-text-primary hover:bg-white/5"
-                >
-                  ⏮ Prev Clip
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => handleVideoControl("forward", 30)}
-                  className="px-3 py-1.5 text-xs font-semibold text-ai-blue bg-ai-blue/15 hover:bg-ai-blue/25 border border-ai-blue/40 shadow-sm"
-                >
-                  ⏩ Forward +30s
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => handleVideoControl("next")}
-                  className="px-3 py-1 text-xs font-semibold text-text-primary hover:bg-white/10"
-                >
-                  ⏭ Next Clip
-                </Button>
-              </div>
-
-              <div className="flex items-center gap-3">
-                {controlToast && (
-                  <motion.span
-                    initial={{ opacity: 0, y: 5 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="text-[11px] font-medium text-ai-blue bg-ai-blue/10 px-2 py-0.5 rounded border border-ai-blue/20"
-                  >
-                    {controlToast}
-                  </motion.span>
-                )}
-                <div className="flex items-center gap-1 text-xs">
-                  <span className="text-text-dim text-[11px] mr-1">Speed:</span>
-                  {[1, 2, 4].map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => handleVideoControl("speed", 0, s)}
-                      className={cn(
-                        "px-2 py-0.5 rounded text-[11px] font-mono font-medium transition-all",
-                        playbackSpeed === s
-                          ? "bg-ai-blue text-black font-bold shadow-sm shadow-ai-blue/30"
-                          : "text-text-muted hover:text-text-primary bg-white/5",
-                      )}
-                    >
-                      {s}x
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* ── Accurate Classroom Live Headcount & Metrics Cards ── */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <GlassCard subtle className="border border-emerald-500/20 bg-emerald-500/5">
-              <div className="flex items-center justify-between mb-0.5">
-                <p className="text-[11px] text-emerald-400 font-semibold">Students in Classroom</p>
-                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              </div>
-              <p className="text-2xl font-bold text-emerald-400">{inClassStudents.length}</p>
-              <p className="text-[10px] text-text-muted mt-0.5">Physically seated in room (CCTV)</p>
-            </GlassCard>
-
-            <GlassCard subtle>
-              <p className="text-[11px] text-text-muted mb-0.5">Total Enrolled Batch</p>
-              <p className="text-2xl font-bold text-text-primary">{sectionStudents.length}</p>
-              <p className="text-[10px] text-text-muted mt-0.5">{absentStudents.length} Absent / Not in class</p>
-            </GlassCard>
-
-            <GlassCard subtle>
-              <p className="text-[11px] text-text-muted mb-0.5">Recognition Accuracy</p>
-              <p className="text-2xl font-bold text-ai-blue">98.6%</p>
-              <p className="text-[10px] text-text-muted mt-0.5">ArcFace Real-Time Biometrics</p>
-            </GlassCard>
-
-            <GlassCard subtle className="border border-amber-500/20">
-              <p className="text-[11px] text-amber-400 font-semibold mb-0.5">Unknown Persons</p>
-              <p className="text-2xl font-bold text-amber-400">{inClassStats.uniqueUnknowns}</p>
-              <p className="text-[10px] text-text-muted mt-0.5">Unregistered visitors in room</p>
-            </GlassCard>
+            <h1 className="text-2xl font-bold tracking-tight text-white">
+              Select Class for Live Monitoring
+            </h1>
+            <p className="text-xs text-text-muted mt-1">
+              Choose an active lecture section to configure biometric attendance verification or two-stage behavioral monitoring.
+            </p>
           </div>
 
-          {/* ── BEHAVIORAL ANALYTICS & ALERTNESS PANEL ─────────── */}
-          <GlassCard className="border border-ai-blue/20 bg-gradient-to-b from-bg-secondary/70 to-bg-secondary/40 shadow-2xl">
-            {/* Header with Title and Auto Scanner Toggle */}
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-glass-border">
-              <div className="flex items-center gap-2.5">
-                <div className="h-9 w-9 rounded-xl bg-ai-blue/20 border border-ai-blue/40 flex items-center justify-center text-ai-blue">
-                  <Sparkles className="w-5 h-5" />
-                </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            {CLASSROOM_OPTIONS.map((cls) => (
+              <GlassCard
+                key={cls.id}
+                className="hover:border-ai-blue/50 transition-all cursor-pointer group flex flex-col justify-between"
+              >
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-base font-bold text-text-primary">
-                      Student Behavioral Analytics & Alertness
-                    </h3>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-ai-blue/15 text-ai-blue border border-ai-blue/30">
-                      LIVE INFERENCE ({inClassStudents.length} IN ROOM)
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <span className="px-2.5 py-1 rounded-xl text-xs font-bold bg-ai-blue/15 text-ai-blue border border-ai-blue/30 font-mono">
+                      Sec {cls.section}
+                    </span>
+                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      CCTV Available
                     </span>
                   </div>
-                  <p className="text-xs text-text-muted">
-                    Active posture analysis & phone detection for the students present in the classroom
-                  </p>
+
+                  <h3 className="text-base font-bold text-text-primary group-hover:text-ai-blue transition-colors">
+                    {cls.name}
+                  </h3>
+                  <p className="text-xs text-text-muted mt-0.5 font-medium">{cls.course}</p>
+
+                  <div className="mt-4 space-y-2 text-xs text-text-dim border-t border-glass-border pt-3">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="w-3.5 h-3.5 text-text-muted shrink-0" />
+                      <span className="truncate">{cls.roomNumber}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Users className="w-3.5 h-3.5 text-text-muted shrink-0" />
+                      <span>{cls.enrolledCount} Enrolled Students</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5 text-text-muted shrink-0" />
+                      <span>{cls.schedule}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <BookOpen className="w-3.5 h-3.5 text-text-muted shrink-0" />
+                      <span className="text-emerald-400 font-medium">{cls.faculty}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-5 pt-3 border-t border-glass-border">
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={() => {
+                      setSelectedClass(cls);
+                      setMonitoringMode(null);
+                    }}
+                    className="w-full min-h-[44px] flex items-center justify-center gap-2 font-semibold shadow-lg shadow-ai-blue/20"
+                  >
+                    <span>Select Class</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              </GlassCard>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════
+          STAGE 2: CHOOSE MONITORING MODE
+          ═══════════════════════════════════════════════════════════ */}
+      {selectedClass && !monitoringMode && (
+        <div className="space-y-6">
+          {/* Top Banner with back button */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-glass-heavy border border-glass-border backdrop-blur-xl">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setSelectedClass(null)}
+                className="p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl bg-white/5 hover:bg-white/10 text-text-muted hover:text-white transition-colors"
+                title="Return to Class Selection"
+                aria-label="Return to Class Selection"
+              >
+                <ArrowLeft className="w-4 h-4" />
+              </button>
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-bold text-white">{selectedClass.name}</h3>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-ai-blue/15 text-ai-blue border border-ai-blue/30">
+                    {selectedClass.course}
+                  </span>
+                </div>
+                <p className="text-xs text-text-muted mt-0.5">
+                  {selectedClass.roomNumber} · {selectedClass.faculty} · {selectedClass.enrolledCount} Enrolled
+                </p>
+              </div>
+            </div>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSelectedClass(null)}
+              className="text-xs text-text-muted hover:text-white min-h-[40px]"
+            >
+              Change Class
+            </Button>
+          </div>
+
+          <div className="text-center max-w-xl mx-auto py-2">
+            <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 uppercase tracking-wider">
+              Step 2 of 2
+            </span>
+            <h2 className="text-2xl font-bold text-white mt-2">
+              Choose Monitoring Mode
+            </h2>
+            <p className="text-xs text-text-muted mt-1">
+              Select one monitoring pipeline. Both modes operate independently at application, pipeline, and reporting levels.
+            </p>
+          </div>
+
+          {/* Mode Selection Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+            {/* Card A: Attendance Monitoring */}
+            <GlassCard
+              className="border-emerald-500/30 hover:border-emerald-500/60 bg-gradient-to-b from-emerald-500/10 to-transparent p-6 transition-all cursor-pointer flex flex-col justify-between group shadow-xl"
+            >
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="h-12 w-12 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center text-emerald-400 shadow-lg shadow-emerald-500/10">
+                    <UserCheck className="w-6 h-6" />
+                  </div>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-mono uppercase">
+                    Attendance Pipeline
+                  </span>
+                </div>
+
+                <h3 className="text-lg font-bold text-white group-hover:text-emerald-400 transition-colors">
+                  Attendance Monitoring
+                </h3>
+                <p className="text-xs text-text-muted mt-1.5 leading-relaxed">
+                  Identify enrolled students and record classroom attendance using high-speed facial recognition and verification.
+                </p>
+
+                <div className="mt-5 space-y-2 text-xs text-text-dim border-t border-emerald-500/20 pt-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-emerald-400 font-bold">✓</span>
+                    <span>Camera preview with verified identity badges</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-emerald-400 font-bold">✓</span>
+                    <span>Real-time headcount of students marked present</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-emerald-400 font-bold">✓</span>
+                    <span>Unidentified & unregistered visitor detection</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-emerald-400 font-bold">✓</span>
+                    <span>Dedicated attendance event log & CSV export</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Simulation & Scan Controls */}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setAutoScannerActive(!autoScannerActive)}
-                  className={cn(
-                    "flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all",
-                    autoScannerActive
-                      ? "bg-emerald-500/15 text-emerald-400 border-emerald-500/30"
-                      : "bg-white/5 text-text-muted border-glass-border hover:text-text-primary",
-                  )}
+              <div className="mt-6 pt-4 border-t border-emerald-500/20">
+                <Button
+                  variant="primary"
+                  onClick={() => setMonitoringMode("attendance")}
+                  className="w-full min-h-[44px] bg-emerald-500 hover:bg-emerald-400 text-black font-extrabold shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2"
                 >
+                  <span>Launch Attendance Monitoring</span>
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </GlassCard>
+
+            {/* Card B: Behavioral Monitoring */}
+            <GlassCard
+              className="border-ai-blue/30 hover:border-ai-blue/60 bg-gradient-to-b from-ai-blue/10 to-transparent p-6 transition-all cursor-pointer flex flex-col justify-between group shadow-xl"
+            >
+              <div>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="h-12 w-12 rounded-2xl bg-ai-blue/20 border border-ai-blue/40 flex items-center justify-center text-ai-blue shadow-lg shadow-ai-blue/10">
+                    <Zap className="w-6 h-6" />
+                  </div>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-ai-blue/20 text-ai-blue border border-ai-blue/30 font-mono uppercase">
+                    Two-Stage Hybrid Pipeline
+                  </span>
+                </div>
+
+                <h3 className="text-lg font-bold text-white group-hover:text-ai-blue transition-colors">
+                  Behavioral Monitoring
+                </h3>
+                <p className="text-xs text-text-muted mt-1.5 leading-relaxed">
+                  Analyze classroom behavior using object detection, body posture landmarks, and temporal tracking across frames.
+                </p>
+
+                <div className="mt-5 space-y-2 text-xs text-text-dim border-t border-ai-blue/20 pt-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-ai-blue font-bold">✓</span>
+                    <span>Stage 1: Person & mobile phone object detection</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-ai-blue font-bold">✓</span>
+                    <span>Stage 2: Posture slumping & head orientation analysis</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-ai-blue font-bold">✓</span>
+                    <span>Phone-use alerts with sustained evidence (5s)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-ai-blue font-bold">✓</span>
+                    <span>Possible sleeping alerts with posture analysis (10s)</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 pt-4 border-t border-ai-blue/20">
+                <Button
+                  variant="primary"
+                  onClick={() => setMonitoringMode("behavior")}
+                  className="w-full min-h-[44px] bg-ai-blue hover:bg-ai-blue/90 text-black font-extrabold shadow-lg shadow-ai-blue/20 flex items-center justify-center gap-2"
+                >
+                  <span>Launch Behavioral Monitoring</span>
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </GlassCard>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════════
+          STAGE 3: DEDICATED MONITORING INTERFACE
+          ═══════════════════════════════════════════════════════════ */}
+      {selectedClass && monitoringMode && (
+        <div className="space-y-6">
+          {/* Top Header & Navigation Bar */}
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 p-4 rounded-2xl bg-glass-heavy border border-glass-border shadow-xl backdrop-blur-xl">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => setMonitoringMode(null)}
+                className="px-3 py-2 min-h-[40px] rounded-xl bg-white/5 hover:bg-white/10 text-text-muted hover:text-white transition-all text-xs font-semibold flex items-center gap-1.5"
+                title="Return to Mode Selection"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Mode Selection</span>
+              </button>
+
+              <div className="h-4 w-px bg-glass-border hidden sm:block" />
+
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-base font-bold text-white">{selectedClass.name}</h1>
                   <span
                     className={cn(
-                      "h-2 w-2 rounded-full",
-                      autoScannerActive ? "bg-emerald-400 animate-pulse" : "bg-text-dim",
+                      "px-2.5 py-0.5 rounded-full text-[10px] font-bold font-mono uppercase tracking-wider",
+                      monitoringMode === "attendance"
+                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                        : "bg-ai-blue/20 text-ai-blue border border-ai-blue/30",
                     )}
+                  >
+                    {monitoringMode === "attendance" ? "Attendance Monitoring Mode" : "Behavioral Monitoring Mode"}
+                  </span>
+                </div>
+                <p className="text-xs text-text-muted mt-0.5">
+                  {selectedClass.course} · {selectedClass.roomNumber} · Faculty: {selectedClass.faculty}
+                </p>
+              </div>
+            </div>
+
+            {/* Session Actions & State */}
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium",
+                  sessionActive
+                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                    : "bg-slate-500/10 text-slate-400 border border-slate-500/20",
+                )}
+              >
+                <span
+                  className={cn(
+                    "h-1.5 w-1.5 rounded-full",
+                    sessionActive ? "bg-emerald-400 animate-pulse" : "bg-slate-400",
+                  )}
+                />
+                {sessionActive ? "AI CCTV STREAM ACTIVE" : "CAMERA STANDBY"}
+              </span>
+
+              <Button
+                variant={sessionActive ? "destructive" : "primary"}
+                size="sm"
+                onClick={handleToggleSession}
+                disabled={loading}
+                className="min-h-[40px] flex items-center gap-2 font-bold shadow-lg"
+              >
+                {loading ? (
+                  <span className="h-4 w-4 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+                ) : sessionActive ? (
+                  <>
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                    <span>End Session</span>
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>Start Session</span>
+                  </>
+                )}
+              </Button>
+
+              <button
+                onClick={() => setSelectedClass(null)}
+                className="text-xs text-text-dim hover:text-text-primary px-2 py-1 min-h-[40px]"
+                title="Return to Class Selection"
+              >
+                Change Class
+              </button>
+            </div>
+          </div>
+
+          {/* Main 2-Column Monitoring Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left 2 Cols: Camera Preview + Mode View Container */}
+            <div className="lg:col-span-2 space-y-6">
+              {/* Camera Preview */}
+              <GlassCard noPadding className="overflow-hidden border border-glass-border/40 shadow-2xl">
+                <div className="relative aspect-video bg-[#070a10] flex items-center justify-center">
+                  <LiveCameraFeed
+                    sessionActive={sessionActive}
+                    streamKey={streamKey}
+                    cameraId={selectedClass.cameraId}
+                    mode={monitoringMode}
                   />
-                  Auto-Scanner: {autoScannerActive ? "ACTIVE" : "PAUSED"}
+
+                  {sessionActive && (
+                    <div className="absolute top-2 sm:top-3 left-2 sm:left-3 right-2 sm:right-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1 sm:gap-2 pointer-events-none">
+                      <div className="flex items-center gap-1.5 px-2 sm:px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md border border-white/10 text-[10px] sm:text-[11px] font-semibold text-emerald-400">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        {monitoringMode === "attendance" ? "BIOMETRIC RECOGNITION ONLINE" : "HYBRID BEHAVIORAL PIPELINE ONLINE"}
+                      </div>
+                      <div className="px-2 sm:px-2.5 py-1 rounded-lg bg-black/60 backdrop-blur-md border border-white/10 text-[10px] sm:text-[11px] font-mono text-text-muted">
+                        {monitoringMode === "attendance"
+                          ? `${inClassStudents.length} / ${selectedClass.enrolledCount} PRESENT IN ROOM`
+                          : `${inClassStudents.length} PERSONS TRACKED`}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </GlassCard>
+
+              {/* Footage Playback Controls (if session active) */}
+              {sessionActive && (
+                <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-3 p-3 rounded-2xl bg-glass-heavy border border-glass-border shadow-xl backdrop-blur-xl">
+                  <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleVideoControl("prev")}
+                      className="px-2.5 py-1 text-xs text-text-muted hover:text-white min-h-[36px]"
+                    >
+                      ⏮ Prev Clip
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => handleVideoControl("forward", 30)}
+                      className="px-3 py-1.5 text-xs font-semibold text-ai-blue bg-ai-blue/15 hover:bg-ai-blue/25 border border-ai-blue/40 min-h-[36px]"
+                    >
+                      ⏩ Forward +30s
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleVideoControl("next")}
+                      className="px-3 py-1 text-xs font-semibold text-white min-h-[36px]"
+                    >
+                      ⏭ Next Clip
+                    </Button>
+                  </div>
+
+                  {controlToast && (
+                    <span className="text-[11px] font-medium text-ai-blue bg-ai-blue/10 px-2 py-0.5 rounded border border-ai-blue/20">
+                      {controlToast}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* ─────────────────────────────────────────────────────────
+                  SUB-VIEW A: ATTENDANCE MONITORING
+                  ───────────────────────────────────────────────────────── */}
+              {monitoringMode === "attendance" && (
+                <div className="space-y-6">
+                  {/* Attendance KPIs */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <GlassCard subtle className="border border-emerald-500/20 bg-emerald-500/5">
+                      <p className="text-[11px] text-emerald-400 font-semibold mb-0.5">Students Present</p>
+                      <p className="text-2xl font-bold text-emerald-400">{attendancePresentList.length}</p>
+                      <p className="text-[10px] text-text-muted mt-0.5">Physically in room</p>
+                    </GlassCard>
+
+                    <GlassCard subtle>
+                      <p className="text-[11px] text-text-muted mb-0.5">Total Enrolled</p>
+                      <p className="text-2xl font-bold text-text-primary">{sectionStudents.length}</p>
+                      <p className="text-[10px] text-text-muted mt-0.5">{attendanceAbsentList.length} Absent / Not in class</p>
+                    </GlassCard>
+
+                    <GlassCard subtle>
+                      <p className="text-[11px] text-text-muted mb-0.5">Matching Accuracy</p>
+                      <p className="text-2xl font-bold text-ai-blue">98.6%</p>
+                      <p className="text-[10px] text-text-muted mt-0.5">Biometric verification</p>
+                    </GlassCard>
+
+                    <GlassCard subtle className="border border-amber-500/20">
+                      <p className="text-[11px] text-amber-400 font-semibold mb-0.5">Unknown Faces</p>
+                      <p className="text-2xl font-bold text-amber-400">{unknownFaceClusters.size}</p>
+                      <p className="text-[10px] text-text-muted mt-0.5">Unregistered visitors</p>
+                    </GlassCard>
+                  </div>
+
+                  {/* Attendance Roster Panel */}
+                  <GlassCard className="border border-emerald-500/20">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-glass-border">
+                      <div>
+                        <h3 className="text-base font-bold text-white flex items-center gap-2">
+                          <UserCheck className="w-4 h-4 text-emerald-400" />
+                          <span>Section {selectedClass.section} Attendance Roster</span>
+                        </h3>
+                        <p className="text-xs text-text-muted mt-0.5">
+                          Real-time presence confirmed via facial verification. Behavioral alerts are excluded.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={handleExportAttendance}
+                          className="text-xs flex items-center gap-1.5"
+                        >
+                          <Download className="w-3.5 h-3.5" />
+                          <span>Export CSV</span>
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Filter and Search Bar */}
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 my-4">
+                      <div className="flex items-center gap-1 p-1 rounded-xl bg-glass-heavy border border-glass-border w-full sm:w-auto overflow-x-auto custom-scrollbar">
+                        {(["ALL", "PRESENT", "ABSENT"] as const).map((tab) => (
+                          <button
+                            key={tab}
+                            onClick={() => setAttendanceRosterFilter(tab)}
+                            className={cn(
+                              "px-3 py-1 rounded-lg text-xs font-semibold transition-all",
+                              attendanceRosterFilter === tab
+                                ? "bg-emerald-500 text-black font-bold shadow-md shadow-emerald-500/20"
+                                : "text-text-muted hover:text-white",
+                            )}
+                          >
+                            {tab === "ALL" ? `All (${sectionStudents.length})` : tab === "PRESENT" ? `Present (${attendancePresentList.length})` : `Absent (${attendanceAbsentList.length})`}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="relative w-full sm:w-64">
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                        <input
+                          type="text"
+                          placeholder="Search student or USN..."
+                          value={attendanceSearch}
+                          onChange={(e) => setAttendanceSearch(e.target.value)}
+                          className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-white/5 border border-glass-border text-xs text-white placeholder-text-muted focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Students Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-[460px] overflow-y-auto pr-1">
+                      {displayedAttendanceStudents.length === 0 ? (
+                        <div className="col-span-full text-center py-12 text-text-muted text-xs">
+                          No students match the current filters.
+                        </div>
+                      ) : (
+                        displayedAttendanceStudents.map((st) => {
+                          const present = isStudentPresent(st.usn);
+                          return (
+                            <div
+                              key={st.usn}
+                              className={cn(
+                                "p-3 rounded-xl border transition-all flex flex-col justify-between",
+                                present
+                                  ? "bg-emerald-500/5 border-emerald-500/30"
+                                  : "bg-white/[0.02] border-white/5 opacity-75 hover:opacity-100",
+                              )}
+                            >
+                              <div>
+                                <div className="flex items-center justify-between gap-1">
+                                  <h4 className="text-xs font-bold text-white truncate">{st.name}</h4>
+                                  <span
+                                    className={cn(
+                                      "px-1.5 py-0.5 rounded text-[9px] font-bold font-mono",
+                                      present
+                                        ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/30"
+                                        : "bg-white/5 text-text-dim border border-white/5",
+                                    )}
+                                  >
+                                    {present ? "PRESENT" : "ABSENT"}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-text-muted font-mono mt-0.5">{st.usn}</p>
+                              </div>
+
+                              <div className="mt-2.5 pt-2 border-t border-white/5 flex items-center justify-between">
+                                <span className="text-[9px] text-text-dim">
+                                  {present ? "✓ Verified on CCTV" : "⚪ Not detected"}
+                                </span>
+                                <button
+                                  onClick={() => handleToggleStudentAttendance(st.usn)}
+                                  className={cn(
+                                    "px-2 py-0.5 rounded text-[10px] font-semibold border transition-all",
+                                    present
+                                      ? "bg-white/5 text-text-muted hover:text-red-400 border-white/5 hover:border-red-500/30"
+                                      : "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
+                                  )}
+                                >
+                                  {present ? "Mark Absent" : "✓ Mark Present"}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </GlassCard>
+                </div>
+              )}
+
+              {/* ─────────────────────────────────────────────────────────
+                  SUB-VIEW B: BEHAVIORAL MONITORING
+                  ───────────────────────────────────────────────────────── */}
+              {monitoringMode === "behavior" && (
+                <div className="space-y-6">
+                  {/* Behavioral KPIs */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <GlassCard subtle className="border border-ai-blue/20 bg-ai-blue/5">
+                      <p className="text-[11px] text-ai-blue font-semibold mb-0.5">Students Tracked</p>
+                      <p className="text-2xl font-bold text-ai-blue">{behaviorStats.trackedCount}</p>
+                      <p className="text-[10px] text-text-muted mt-0.5">Active stage 1 ROIs</p>
+                    </GlassCard>
+
+                    <GlassCard subtle className="border border-amber-500/20 bg-amber-500/5">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <p className="text-[11px] text-amber-400 font-semibold">Phone Usage Alerts</p>
+                        {behaviorStats.phoneCount > 0 && <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping" />}
+                      </div>
+                      <p className="text-2xl font-bold text-amber-400">{behaviorStats.phoneCount}</p>
+                      <p className="text-[10px] text-text-muted mt-0.5">Sustained &ge; 5.0s confirmed</p>
+                    </GlassCard>
+
+                    <GlassCard subtle className="border border-red-500/20 bg-red-500/5">
+                      <div className="flex items-center justify-between mb-0.5">
+                        <p className="text-[11px] text-red-400 font-semibold">Sleeping Alerts</p>
+                        {behaviorStats.sleepCount > 0 && <span className="h-2 w-2 rounded-full bg-red-400 animate-pulse" />}
+                      </div>
+                      <p className="text-2xl font-bold text-red-400">{behaviorStats.sleepCount}</p>
+                      <p className="text-[10px] text-text-muted mt-0.5">Sustained &ge; 10.0s confirmed</p>
+                    </GlassCard>
+
+                    <GlassCard subtle className="border border-emerald-500/20">
+                      <p className="text-[11px] text-emerald-400 font-semibold mb-0.5">Normal Attentive</p>
+                      <p className="text-2xl font-bold text-emerald-400">{behaviorStats.alertCount}</p>
+                      <p className="text-[10px] text-text-muted mt-0.5">Upright seated posture</p>
+                    </GlassCard>
+                  </div>
+
+                  {/* Behavioral Telemetry Panel */}
+                  <GlassCard className="border border-ai-blue/20">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-glass-border">
+                      <div>
+                        <h3 className="text-base font-bold text-white flex items-center gap-2">
+                          <Zap className="w-4 h-4 text-ai-blue" />
+                          <span>Tracked Students & Pose Telemetry</span>
+                        </h3>
+                        <p className="text-xs text-text-muted mt-0.5">
+                          Continuous stage-2 temporal analysis: head orientation (pitch, yaw) and slump duration.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-text-muted font-mono bg-white/5 px-2.5 py-1 rounded-lg border border-white/5">
+                          Thresholds: Phone 5s · Sleep 10s
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Filter and Search Bar */}
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 my-4">
+                      <div className="flex items-center gap-1 p-1 rounded-xl bg-glass-heavy border border-glass-border w-full sm:w-auto overflow-x-auto custom-scrollbar">
+                        {(["ALL", "FLAGGED", "ALERT", "INSUFFICIENT"] as const).map((tab) => (
+                          <button
+                            key={tab}
+                            onClick={() => setBehaviorTelemetryFilter(tab)}
+                            className={cn(
+                              "px-3 py-1 rounded-lg text-xs font-semibold transition-all",
+                              behaviorTelemetryFilter === tab
+                                ? "bg-ai-blue text-black font-bold shadow-md shadow-ai-blue/20"
+                                : "text-text-muted hover:text-white",
+                            )}
+                          >
+                            {tab === "ALL" ? "All Tracked" : tab === "FLAGGED" ? "Flagged" : tab === "ALERT" ? "Normal" : "Insufficient Data"}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="relative w-full sm:w-64">
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                        <input
+                          type="text"
+                          placeholder="Search student or track..."
+                          value={behaviorSearch}
+                          onChange={(e) => setBehaviorSearch(e.target.value)}
+                          className="w-full pl-9 pr-3 py-1.5 rounded-xl bg-white/5 border border-glass-border text-xs text-white placeholder-text-muted focus:outline-none focus:border-ai-blue"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Tracked Students Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 max-h-[480px] overflow-y-auto pr-1">
+                      {displayedTrackedStudents.length === 0 ? (
+                        <div className="col-span-full text-center py-12 text-text-muted text-xs">
+                          No students match the current behavioral filters.
+                        </div>
+                      ) : (
+                        displayedTrackedStudents.map((st) => {
+                          const isPhone = st.status === "PHONE_USAGE" || (st.accumulated_phone_duration || 0) >= 5.0;
+                          const isSleep = st.status === "SLEEPING" || (st.accumulated_sleeping_duration || 0) >= 10.0;
+                          const phoneDur = st.accumulated_phone_duration || 0;
+                          const sleepDur = st.accumulated_sleeping_duration || 0;
+
+                          return (
+                            <div
+                              key={st.usn}
+                              className={cn(
+                                "p-3 rounded-xl border transition-all flex flex-col justify-between",
+                                isSleep
+                                  ? "bg-red-500/10 border-red-500/30"
+                                  : isPhone
+                                  ? "bg-amber-500/10 border-amber-500/30"
+                                  : "bg-white/[0.02] border-white/5",
+                              )}
+                            >
+                              <div>
+                                <div className="flex items-center justify-between gap-1">
+                                  <h4 className="text-xs font-bold text-white truncate">{st.name}</h4>
+                                  <span
+                                    className={cn(
+                                      "px-1.5 py-0.5 rounded text-[9px] font-bold font-mono",
+                                      isSleep
+                                        ? "bg-red-500/20 text-red-300 border border-red-500/30"
+                                        : isPhone
+                                        ? "bg-amber-500/20 text-amber-300 border border-amber-500/30"
+                                        : "bg-emerald-500/15 text-emerald-400 border border-emerald-500/20",
+                                    )}
+                                  >
+                                    {isSleep ? "POSSIBLE SLEEP" : isPhone ? "PHONE USAGE" : "NORMAL"}
+                                  </span>
+                                </div>
+                                <p className="text-[10px] text-text-muted font-mono mt-0.5">{st.usn}</p>
+
+                                {/* Telemetry stats */}
+                                <div className="mt-2.5 p-2 rounded-lg bg-black/40 border border-white/5 space-y-1 text-[10px]">
+                                  <div className="flex justify-between">
+                                    <span className="text-text-muted">Posture:</span>
+                                    <span className="text-white font-medium">{st.posture}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-text-muted">Gaze:</span>
+                                    <span className="text-white font-medium">{st.gaze}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-text-muted">Pitch / Yaw:</span>
+                                    <span className="font-mono text-text-dim">
+                                      {st.pitch || 0}° / {st.yaw || 0}°
+                                    </span>
+                                  </div>
+
+                                  {(phoneDur > 0 || sleepDur > 0) && (
+                                    <div className="flex justify-between pt-1 border-t border-white/5 text-[9px]">
+                                      <span className="text-text-muted">Evidence:</span>
+                                      <span className={cn("font-bold font-mono", isSleep ? "text-red-400" : "text-amber-400")}>
+                                        {isSleep ? `${sleepDur.toFixed(1)}s (Sleep)` : `${phoneDur.toFixed(1)}s (Phone)`}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div className="mt-2 text-[9px] text-text-dim flex justify-between items-center">
+                                <span>{st.is_verified_identity ? "✓ Identity verified" : "Unidentified Track"}</span>
+                                <span className="font-mono">{st.lastUpdated}</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </GlassCard>
+                </div>
+              )}
+
+              {/* ── Unknown / Pending Identification Panel ── */}
+              <GlassCard className="border border-amber-500/20 bg-amber-500/[0.02]">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-4 border-b border-glass-border">
+                  <div>
+                    <h3 className="text-base font-bold text-white flex items-center gap-2">
+                      <ScanFace className="w-4 h-4 text-amber-400" />
+                      <span>Unknown / Pending Identification</span>
+                      {pendingUnknownFaces.length > 0 && (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                          {pendingUnknownFaces.length} Pending
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      Unrecognized people detected during monitoring. Authorized teachers can review, assign to an enrolled student, keep unknown, or dismiss.
+                    </p>
+                  </div>
+                </div>
+
+                {pendingUnknownFaces.length === 0 ? (
+                  <div className="py-8 text-center text-text-muted text-xs flex flex-col items-center justify-center">
+                    <CheckCircle className="w-6 h-6 text-emerald-400/60 mb-1.5" />
+                    <span>No unconfirmed individuals pending review. All detected faces are matched or resolved.</span>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-4">
+                    {pendingUnknownFaces.map((face) => (
+                      <div
+                        key={face.id}
+                        className="p-3 rounded-xl bg-white/[0.03] border border-white/10 flex flex-col justify-between gap-2.5 hover:border-amber-500/30 transition-all"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="w-14 h-14 rounded-lg bg-black/60 border border-white/10 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                            {face.preview_image || face.image_path ? (
+                              <img
+                                src={face.preview_image || face.image_path || ""}
+                                alt="Unknown observation"
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <UserX className="w-6 h-6 text-text-muted" />
+                            )}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <span className="text-[11px] font-mono text-amber-400 font-bold block truncate">
+                              {face.cluster_id || `ID: ${face.id}`}
+                            </span>
+                            <p className="text-[10px] text-text-muted truncate mt-0.5">
+                              Cam: {face.camera_id || selectedClass?.cameraId || "room-023"}
+                            </p>
+                            <p className="text-[9px] text-text-dim truncate">
+                              {face.detected_at
+                                ? new Date(face.detected_at).toLocaleTimeString()
+                                : face.created_at
+                                ? new Date(face.created_at).toLocaleTimeString()
+                                : "Recent"}
+                            </p>
+                            {face.suggested_match && (
+                              <span className="inline-block mt-1 text-[9px] text-ai-blue bg-ai-blue/10 px-1.5 py-0.5 rounded border border-ai-blue/20 truncate">
+                                Match: {face.suggested_match.name} ({Math.round(face.suggested_match.confidence)}%)
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 pt-2 border-t border-white/5">
+                          <button
+                            onClick={() => {
+                              setSelectedAssignFace(face);
+                              setStudentSearchQuery(face.suggested_match?.usn || "");
+                              setSelectedStudentForAssign(null);
+                            }}
+                            className="flex-1 py-1.5 px-2 rounded-lg bg-ai-blue/20 hover:bg-ai-blue/30 text-ai-blue border border-ai-blue/30 text-[10px] font-bold transition-all text-center"
+                          >
+                            Assign to Student
+                          </button>
+                          <button
+                            onClick={() => handleKeepUnknown(face.id)}
+                            className="py-1.5 px-2 rounded-lg bg-white/5 hover:bg-white/10 text-text-muted hover:text-white text-[10px] font-medium transition-all"
+                            title="Keep observation unidentified"
+                          >
+                            Keep
+                          </button>
+                          <button
+                            onClick={() => handleDismissUnknown(face.id)}
+                            className="py-1.5 px-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[10px] font-medium transition-all"
+                            title="Dismiss observation"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </GlassCard>
+            </div>
+
+            {/* Right Column: Timer & Dedicated Mode Event Log */}
+            <div className="space-y-4">
+              {/* Timer Card */}
+              <GlassCard>
+                <div className="text-center">
+                  <p className="text-[11px] text-text-muted mb-1">Session Duration</p>
+                  <p className="text-3xl font-bold text-white tabular-nums tracking-wider font-mono">
+                    {formatDuration(sessionDuration)}
+                  </p>
+                  <p className="text-xs text-text-muted mt-1">
+                    {selectedClass.name} · {monitoringMode === "attendance" ? "Attendance Pipeline" : "Behavioral Pipeline"}
+                  </p>
+                </div>
+              </GlassCard>
+
+              {/* ─────────────────────────────────────────────────────────
+                  RIGHT SIDEBAR: ATTENDANCE EVENT LOG
+                  ───────────────────────────────────────────────────────── */}
+              {monitoringMode === "attendance" && (
+                <GlassCard noPadding className="border border-emerald-500/20">
+                  <div className="p-3 border-b border-glass-border flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+                      <h3 className="text-xs font-semibold text-white">Attendance Verification Log</h3>
+                    </div>
+                    <span className="text-[10px] text-emerald-400 font-mono font-bold">
+                      {attendanceEvents.length} Verified
+                    </span>
+                  </div>
+
+                  {/* Filter tabs */}
+                  <div className="flex gap-1 p-1 bg-black/40 border-b border-glass-border">
+                    {(["ALL", "PRESENT", "UNKNOWN"] as const).map((tab) => (
+                      <button
+                        key={tab}
+                        onClick={() => setAttendanceFilter(tab)}
+                        className={cn(
+                          "flex-1 px-2 py-1 rounded text-[10px] font-semibold transition-all",
+                          attendanceFilter === tab
+                            ? "bg-emerald-500 text-black font-bold"
+                            : "text-text-muted hover:text-white",
+                        )}
+                      >
+                        {tab === "ALL" ? "All" : tab === "PRESENT" ? "Present" : "Unknown"}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="overflow-y-auto max-h-[520px] p-2 space-y-1.5">
+                    {attendanceEvents.length === 0 ? (
+                      <div className="text-center py-12 text-text-muted text-xs">
+                        {sessionActive ? "Waiting for verified face detections..." : "Session is currently standby."}
+                      </div>
+                    ) : (
+                      attendanceEvents
+                        .filter((e) => {
+                          if (attendanceFilter === "PRESENT") return e.type === "ATTENDANCE_DETECTED" || e.type === "MANUAL_CHECKIN";
+                          if (attendanceFilter === "UNKNOWN") return e.type === "UNKNOWN_PERSON";
+                          return true;
+                        })
+                        .map((evt) => (
+                          <div
+                            key={evt.id}
+                            className="p-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 text-xs flex items-start justify-between gap-2"
+                          >
+                            <div>
+                              <p className="font-bold text-white text-[11px]">
+                                {evt.type === "UNKNOWN_PERSON" ? "Unknown Visitor Detected" : evt.studentName || evt.studentId}
+                              </p>
+                              <p className="text-[10px] text-text-muted font-mono mt-0.5">
+                                {evt.studentId} · {Math.round(evt.confidence * 100)}% Match
+                              </p>
+                            </div>
+                            <span className="text-[10px] font-mono text-emerald-400 shrink-0">{evt.time}</span>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </GlassCard>
+              )}
+
+              {/* ─────────────────────────────────────────────────────────
+                  RIGHT SIDEBAR: BEHAVIORAL ALERTS & HISTORY LOG
+                  ───────────────────────────────────────────────────────── */}
+              {monitoringMode === "behavior" && (
+                <GlassCard noPadding className="border border-ai-blue/20">
+                  <div className="p-3 border-b border-glass-border flex items-center justify-between">
+                    <div className="flex items-center gap-1.5">
+                      <Bell className="w-3.5 h-3.5 text-ai-blue" />
+                      <h3 className="text-xs font-semibold text-white">Behavioral Alerts & History</h3>
+                    </div>
+                    <span className="text-[10px] text-ai-blue font-mono font-bold">
+                      {behavioralAlerts.length} Events
+                    </span>
+                  </div>
+
+                  {/* Filter tabs */}
+                  <div className="flex gap-1 p-1 bg-black/40 border-b border-glass-border">
+                    {(["ALL", "PHONE", "SLEEP"] as const).map((tab) => (
+                      <button
+                        key={tab}
+                        onClick={() => setBehaviorEventFilter(tab)}
+                        className={cn(
+                          "flex-1 px-2 py-1 rounded text-[10px] font-semibold transition-all",
+                          behaviorEventFilter === tab
+                            ? "bg-ai-blue text-black font-bold"
+                            : "text-text-muted hover:text-white",
+                        )}
+                      >
+                        {tab === "ALL" ? "All" : tab === "PHONE" ? "Phone Usage" : "Possible Sleeping"}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="overflow-y-auto max-h-[520px] p-2 space-y-1.5">
+                    {behavioralAlerts.length === 0 ? (
+                      <div className="text-center py-12 text-text-muted text-xs">
+                        {sessionActive ? "Evaluating behavioral streams across frames..." : "Session is currently standby."}
+                      </div>
+                    ) : (
+                      behavioralAlerts
+                        .filter((a) => {
+                          if (behaviorEventFilter === "PHONE") return a.type === "PHONE_USAGE";
+                          if (behaviorEventFilter === "SLEEP") return a.type === "POSSIBLE_SLEEPING_POSTURE" || a.type === "SLEEPING";
+                          return true;
+                        })
+                        .map((alert) => (
+                          <div
+                            key={alert.id}
+                            className={cn(
+                              "p-2.5 rounded-lg border text-xs flex flex-col gap-1 transition-all",
+                              alert.type === "PHONE_USAGE"
+                                ? "bg-amber-500/10 border-amber-500/30"
+                                : "bg-red-500/10 border-red-500/30",
+                            )}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span
+                                className={cn(
+                                  "font-bold text-[11px]",
+                                  alert.type === "PHONE_USAGE" ? "text-amber-400" : "text-red-400",
+                                )}
+                              >
+                                {alert.type === "PHONE_USAGE" ? "📱 Phone Usage" : "💤 Possible Sleeping Posture"}
+                              </span>
+                              <span className="text-[10px] font-mono text-text-muted">{alert.time}</span>
+                            </div>
+
+                            <p className="text-[11px] text-white font-medium">
+                              {alert.studentName} ({alert.studentId})
+                            </p>
+                            <p className="text-[10px] text-text-muted">
+                              Duration: <span className="font-mono text-white font-semibold">{alert.duration}s</span> · Conf: {Math.round(alert.confidence * 100)}%
+                            </p>
+
+                            <div className="pt-1 flex items-center justify-between text-[9px] text-text-dim border-t border-white/5">
+                              <span>Status: {alert.status}</span>
+                              <div className="flex items-center gap-1.5">
+                                {alert.status !== "ACKNOWLEDGED" && (
+                                  <button
+                                    onClick={() => handleAcknowledgeAlert(alert.id)}
+                                    className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white font-semibold"
+                                  >
+                                    Acknowledge
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => handleDismissAlert(alert.id)}
+                                  className="px-2 py-0.5 rounded bg-red-500/10 hover:bg-red-500/20 text-red-400 font-semibold"
+                                >
+                                  Dismiss
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </GlassCard>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Unknown Face Assignment Modal ────────────────────── */}
+      <AnimatePresence>
+        {selectedAssignFace && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="w-full max-w-xl bg-[#0c1017] border border-glass-border/60 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Modal Header */}
+              <div className="p-4 border-b border-glass-border flex items-center justify-between bg-black/40">
+                <div className="flex items-center gap-2">
+                  <ScanFace className="w-5 h-5 text-ai-blue" />
+                  <h3 className="text-sm font-bold text-white">Assign Unrecognized Person to Student</h3>
+                </div>
+                <button
+                  onClick={() => {
+                    setSelectedAssignFace(null);
+                    setSelectedStudentForAssign(null);
+                  }}
+                  className="p-1 rounded-lg hover:bg-white/10 text-text-muted hover:text-white transition-all"
+                >
+                  <X className="w-4 h-4" />
                 </button>
               </div>
-            </div>
 
-            {/* Behavioral Summary KPI Cards for In-Class Students */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 my-4">
-              {/* Alert / Attentive in Room */}
-              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/25">
-                <div className="flex items-center justify-between text-emerald-400 text-xs mb-1 font-semibold">
-                  <span>🟢 Alert in Room</span>
-                  <span className="text-[10px] font-mono">{inClassStats.alertPct}%</span>
-                </div>
-                <p className="text-2xl font-bold text-emerald-400">{inClassStats.alertCount}</p>
-                <p className="text-[10px] text-text-muted mt-0.5">Normal posture & gaze</p>
-              </div>
-
-              {/* Phone Usage Detected */}
-              <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30">
-                <div className="flex items-center justify-between text-amber-400 text-xs mb-1 font-semibold">
-                  <span>📱 Phone Usage</span>
-                  {inClassStats.phoneCount > 0 && (
-                    <span className="h-2 w-2 rounded-full bg-amber-400 animate-ping" />
-                  )}
-                </div>
-                <p className="text-2xl font-bold text-amber-400">{inClassStats.phoneCount}</p>
-                <p className="text-[10px] text-text-muted mt-0.5">Device in hands detected</p>
-              </div>
-
-              {/* Sleeping / Inactive */}
-              <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30">
-                <div className="flex items-center justify-between text-red-400 text-xs mb-1 font-semibold">
-                  <span>💤 Sleeping / Inactive</span>
-                  {inClassStats.sleepCount > 0 && (
-                    <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                  )}
-                </div>
-                <p className="text-2xl font-bold text-red-400">{inClassStats.sleepCount}</p>
-                <p className="text-[10px] text-text-muted mt-0.5">Head down on desk</p>
-              </div>
-
-              {/* Engagement Index */}
-              <div className="p-3 rounded-xl bg-ai-blue/10 border border-ai-blue/30">
-                <div className="flex items-center justify-between text-ai-blue text-xs mb-1 font-semibold">
-                  <span>Classroom Alertness</span>
-                  <Zap className="w-3.5 h-3.5 text-ai-blue" />
-                </div>
-                <p className="text-2xl font-bold text-ai-blue">{inClassStats.avgAttention}%</p>
-                <div className="w-full bg-white/10 h-1.5 rounded-full mt-1.5 overflow-hidden">
-                  <div
-                    className={cn(
-                      "h-full rounded-full transition-all duration-500",
-                      inClassStats.avgAttention >= 80 ? "bg-emerald-400" : inClassStats.avgAttention >= 60 ? "bg-amber-400" : "bg-red-400",
+              {/* Modal Body */}
+              <div className="p-5 overflow-y-auto space-y-4">
+                {/* Observation Preview */}
+                <div className="p-3 rounded-xl bg-white/[0.02] border border-white/5 flex items-center gap-4">
+                  <div className="w-16 h-16 rounded-xl bg-black/60 border border-white/10 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                    {selectedAssignFace.preview_image || selectedAssignFace.image_path ? (
+                      <img
+                        src={selectedAssignFace.preview_image || selectedAssignFace.image_path || ""}
+                        alt="Candidate crop"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <UserX className="w-8 h-8 text-text-muted" />
                     )}
-                    style={{ width: `${inClassStats.avgAttention}%` }}
-                  />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs font-bold text-white">
+                      Observation: <span className="font-mono text-ai-blue">{selectedAssignFace.cluster_id || `ID ${selectedAssignFace.id}`}</span>
+                    </p>
+                    <p className="text-[11px] text-text-muted mt-0.5">
+                      Camera: {selectedAssignFace.camera_id || selectedClass?.cameraId || "room-023"} · Quality: {Math.round((selectedAssignFace.quality_score || 0.8) * 100)}%
+                    </p>
+                    <p className="text-[10px] text-text-dim">
+                      Observed: {selectedAssignFace.detected_at || selectedAssignFace.created_at || "Recent"}
+                    </p>
+                  </div>
                 </div>
-              </div>
-            </div>
 
-            {/* Quick Simulation & Action Buttons */}
-            <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-black/40 border border-white/5 my-3">
-              <span className="text-xs font-semibold text-text-muted flex items-center gap-1.5">
-                <ShieldAlert className="w-4 h-4 text-ai-blue" />
-                AI Test Suite & Notification Triggers:
-              </span>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => triggerBehaviorDetection("PHONE_USAGE")}
-                  className="px-3 py-1.5 text-xs font-semibold text-amber-400 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 shadow-sm"
-                  title="Detect mobile phone usage and dispatch instant notification to Teacher & HOD accounts"
-                >
-                  📱 Test Phone Detection
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => triggerBehaviorDetection("SLEEPING")}
-                  className="px-3 py-1.5 text-xs font-semibold text-red-400 bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 shadow-sm"
-                  title="Detect student sleeping/inactive and dispatch critical alert to Teacher & HOD accounts"
-                >
-                  💤 Test Sleep / Inactive Alert
-                </Button>
+                {/* Student Search */}
+                <div>
+                  <label className="text-xs font-semibold text-text-muted block mb-1.5">
+                    Select Enrolled Student to Assign:
+                  </label>
+                  <div className="relative">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+                    <input
+                      type="text"
+                      placeholder="Search by student name, USN, or roll number..."
+                      value={studentSearchQuery}
+                      onChange={(e) => setStudentSearchQuery(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 rounded-xl bg-white/5 border border-glass-border text-xs text-white placeholder-text-muted focus:outline-none focus:border-ai-blue"
+                    />
+                  </div>
+                </div>
+
+                {/* Candidate Roster List */}
+                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1 border border-glass-border/40 rounded-xl p-2 bg-black/20">
+                  {filteredRosterForAssign.length === 0 ? (
+                    <div className="text-center py-6 text-text-muted text-xs">
+                      No matching students found in authorized roster.
+                    </div>
+                  ) : (
+                    filteredRosterForAssign.map((s: any) => {
+                      const isSelected = selectedStudentForAssign?.id === s.id;
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => setSelectedStudentForAssign(s)}
+                          className={cn(
+                            "p-2 rounded-lg border text-xs flex items-center justify-between cursor-pointer transition-all",
+                            isSelected
+                              ? "bg-ai-blue/20 border-ai-blue/60 text-white"
+                              : "bg-white/[0.02] border-white/5 text-text-muted hover:bg-white/5 hover:text-white",
+                          )}
+                        >
+                          <div>
+                            <span className="font-bold text-white block">{s.fullName}</span>
+                            <span className="text-[10px] text-text-dim font-mono">
+                              {s.usn || s.rollNumber} · Sec {s.section || "A"}
+                            </span>
+                          </div>
+                          {isSelected && <Check className="w-4 h-4 text-ai-blue" />}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Selected Student Confirmation Warning */}
+                {selectedStudentForAssign && (
+                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-200">
+                    <p className="font-bold mb-1 flex items-center gap-1.5">
+                      <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>Ready to assign to: {selectedStudentForAssign.fullName} ({selectedStudentForAssign.usn || selectedStudentForAssign.rollNumber})</span>
+                    </p>
+                    <p className="text-[11px] text-emerald-300/80">
+                      This observation's ArcFace embedding will be durably associated with this student's recognition profile in FAISS and PostgreSQL. Attendance will NOT be automatically marked.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 border-t border-glass-border bg-black/40 flex items-center justify-end gap-2">
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={handleResetAllAlert}
-                  className="px-3 py-1 text-xs text-text-muted hover:text-text-primary hover:bg-white/10"
+                  onClick={() => {
+                    setSelectedAssignFace(null);
+                    setSelectedStudentForAssign(null);
+                  }}
+                  disabled={assigningLoading}
+                  className="text-xs text-text-muted hover:text-white"
                 >
-                  🟢 Mark All Alert
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleAssignUnknown}
+                  disabled={!selectedStudentForAssign || assigningLoading}
+                  className="text-xs font-bold"
+                >
+                  {assigningLoading ? (
+                    <span className="flex items-center gap-1.5">
+                      <span className="h-3 w-3 rounded-full border-2 border-white/20 border-t-white animate-spin" />
+                      Assigning...
+                    </span>
+                  ) : (
+                    "Confirm Assignment"
+                  )}
                 </Button>
               </div>
-            </div>
-
-            {/* Student Search & Scope Filter Tabs */}
-            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 my-3 pt-2">
-              <div className="relative w-full sm:w-72">
-                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-                <input
-                  type="text"
-                  placeholder="Search students by name or USN..."
-                  value={studentSearch}
-                  onChange={(e) => setStudentSearch(e.target.value)}
-                  className="w-full pl-9 pr-3 py-1.5 text-xs rounded-xl bg-glass-light border border-glass-border text-text-primary placeholder:text-text-muted focus:outline-none focus:border-ai-blue/40"
-                />
-              </div>
-
-              {/* Scope Filter Tabs: IN_CLASS by default */}
-              <div className="flex flex-wrap items-center gap-1 bg-black/40 p-1 rounded-xl border border-white/5 w-full sm:w-auto justify-end">
-                {[
-                  { id: "IN_CLASS", label: `📍 In Class (${inClassStudents.length})` },
-                  { id: "FLAGGED", label: `⚠️ Flagged (${inClassStats.phoneCount + inClassStats.sleepCount + inClassStats.distractedCount})` },
-                  { id: "ALERT", label: `🟢 Alert (${inClassStats.alertCount})` },
-                  { id: "ABSENT", label: `⚪ Absent (${absentStudents.length})` },
-                  { id: "ALL", label: `👥 All Batch (${sectionStudents.length})` },
-                ].map((f) => (
-                  <button
-                    key={f.id}
-                    onClick={() => setBehaviorFilter(f.id as any)}
-                    className={cn(
-                      "px-2.5 py-1 rounded-lg text-xs font-medium transition-all",
-                      behaviorFilter === f.id
-                        ? "bg-ai-blue text-black font-bold shadow-sm"
-                        : "text-text-muted hover:text-text-primary",
-                    )}
-                  >
-                    {f.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Students Alertness Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-[440px] overflow-y-auto pr-1">
-              {displayedStudents.length === 0 ? (
-                <div className="col-span-full text-center py-12 text-text-muted text-xs">
-                  No students found matching current filters.
-                </div>
-              ) : (
-                displayedStudents.map((student) => {
-                  const isPhone = student.status === "PHONE_USAGE";
-                  const isSleeping = student.status === "SLEEPING";
-                  const isAlert = student.status === "ALERT";
-                  const isInRoom = inClassUsns.has(student.usn);
-
-                  return (
-                    <div
-                      key={student.usn}
-                      className={cn(
-                        "p-3 rounded-xl border transition-all relative group",
-                        isSleeping
-                          ? "bg-red-500/10 border-red-500/40 shadow-sm shadow-red-950"
-                          : isPhone
-                          ? "bg-amber-500/10 border-amber-500/40 shadow-sm shadow-amber-950"
-                          : isInRoom
-                          ? "bg-glass-subtle border-glass-border hover:border-emerald-500/40"
-                          : "bg-white/[0.02] border-white/5 opacity-70 hover:opacity-100",
-                      )}
-                    >
-                      {/* Student Header */}
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-xs font-bold text-text-primary truncate">
-                            {student.name}
-                          </p>
-                          <p className="text-[10px] text-text-muted font-mono">
-                            {student.usn} • Sec {student.section}
-                          </p>
-                        </div>
-
-                        {/* Status Pill */}
-                        <span
-                          className={cn(
-                            "px-2 py-0.5 rounded-full text-[10px] font-bold shrink-0 flex items-center gap-1",
-                            isSleeping
-                              ? "bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse"
-                              : isPhone
-                              ? "bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse"
-                              : isInRoom
-                              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                              : "bg-slate-500/20 text-slate-400 border border-slate-500/30",
-                          )}
-                        >
-                          {isSleeping
-                            ? "💤 Sleeping"
-                            : isPhone
-                            ? "📱 Phone Active"
-                            : isInRoom
-                            ? "🟢 Alert in Room"
-                            : "⚪ Absent"}
-                        </span>
-                      </div>
-
-                      {/* Attention Meter */}
-                      <div className="mt-2.5 space-y-1">
-                        <div className="flex justify-between text-[10px]">
-                          <span className="text-text-muted">Attention Score:</span>
-                          <span
-                            className={cn(
-                              "font-bold font-mono",
-                              student.attentionScore >= 75
-                                ? "text-emerald-400"
-                                : student.attentionScore >= 50
-                                ? "text-amber-400"
-                                : "text-red-400",
-                            )}
-                          >
-                            {student.attentionScore}%
-                          </span>
-                        </div>
-                        <div className="w-full bg-white/10 h-1.5 rounded-full overflow-hidden">
-                          <div
-                            className={cn(
-                              "h-full rounded-full transition-all duration-300",
-                              student.attentionScore >= 75
-                                ? "bg-emerald-400"
-                                : student.attentionScore >= 50
-                                ? "bg-amber-400"
-                                : "bg-red-400",
-                            )}
-                            style={{ width: `${student.attentionScore}%` }}
-                          />
-                        </div>
-                      </div>
-
-                      {/* Posture & Gaze Details */}
-                      <div className="mt-2 text-[10px] text-text-dim flex items-center justify-between border-t border-white/5 pt-1.5">
-                        <span className="truncate">{student.posture}</span>
-                        <span className="font-mono text-text-muted shrink-0">{student.lastUpdated}</span>
-                      </div>
-
-                      {/* Quick Action on Individual Student */}
-                      <div className="mt-2 flex items-center gap-1.5 opacity-80 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => triggerBehaviorDetection("PHONE_USAGE", student)}
-                          className="flex-1 py-1 px-1 rounded text-[9px] font-semibold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition-colors"
-                        >
-                          📱 Flag Phone
-                        </button>
-                        <button
-                          onClick={() => triggerBehaviorDetection("SLEEPING", student)}
-                          className="flex-1 py-1 px-1 rounded text-[9px] font-semibold bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/30 transition-colors"
-                        >
-                          💤 Flag Sleep
-                        </button>
-                        {!isAlert && (
-                          <button
-                            onClick={() => {
-                              setStudentBehaviors((prev) => ({
-                                ...prev,
-                                [student.usn]: {
-                                  ...prev[student.usn],
-                                  status: "ALERT",
-                                  attentionScore: 96,
-                                  posture: "Upright",
-                                  gaze: "Blackboard",
-                                  phoneDetected: false,
-                                  sleepingDetected: false,
-                                },
-                              }));
-                            }}
-                            className="p-1 rounded text-[9px] bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30"
-                            title="Reset to Alert"
-                          >
-                            ✓
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </GlassCard>
-        </div>
-
-        {/* Right Column: Timer & Live Feed */}
-        <div className="space-y-4">
-          {/* Timer Card */}
-          <GlassCard>
-            <div className="text-center">
-              <p className="text-[11px] text-text-muted mb-1">Session Duration</p>
-              <p className="text-3xl font-bold text-text-primary tabular-nums tracking-wider">
-                {formatDuration(sessionDuration)}
-              </p>
-              <p className="text-xs text-text-muted mt-1">Room 023 · Section A (CCTV Stream)</p>
-            </div>
-          </GlassCard>
-
-          {/* Event Filters */}
-          <div className="flex gap-1 p-1 glass rounded-xl border border-glass-border">
-            {[
-              { id: "all", label: "All Events" },
-              { id: "behavior", label: "Behavior Alerts ⚠️" },
-              { id: "detected", label: "Attendance" },
-              { id: "unknown", label: "Unknown" },
-            ].map((f) => (
-              <button
-                key={f.id}
-                onClick={() => setEventFilter(f.id)}
-                className={cn(
-                  "flex-1 px-2 py-1.5 rounded-lg text-xs font-medium transition-all",
-                  eventFilter === f.id
-                    ? "bg-ai-blue text-black font-semibold shadow-md shadow-ai-blue/20"
-                    : "text-text-dim hover:text-text-primary",
-                )}
-              >
-                {f.label}
-              </button>
-            ))}
+            </motion.div>
           </div>
-
-          {/* Live Activity & Behavior Event Stream */}
-          <GlassCard noPadding>
-            <div className="p-3 border-b border-glass-border flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <Bell className="w-3.5 h-3.5 text-ai-blue" />
-                <h3 className="text-xs font-semibold text-text-primary">Live Activity Log</h3>
-              </div>
-              <span className="text-[10px] text-text-muted">{filteredEvents.length} events</span>
-            </div>
-            <div className="overflow-y-auto max-h-[560px] p-2 space-y-1.5">
-              {filteredEvents.length === 0 ? (
-                <div className="text-center py-12 text-text-muted text-xs">
-                  {sessionActive ? "Waiting for behavioral and face events..." : "Session is currently inactive."}
-                </div>
-              ) : (
-                <AnimatePresence>
-                  {filteredEvents.slice(0, 35).map((event, i) => {
-                    const colors = eventColor(event.type);
-                    const isBehaviorEvent = event.type === "PHONE_USAGE" || event.type === "SLEEPING";
-
-                    return (
-                      <motion.div
-                        key={`${event.time}-${event.studentId}-${i}`}
-                        initial={{ opacity: 0, x: 20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, x: -20 }}
-                        className={cn(
-                          "flex items-start gap-2.5 p-2 rounded-lg border transition-all",
-                          colors.bg,
-                          colors.border,
-                        )}
-                      >
-                        <span className={cn("h-2 w-2 rounded-full mt-1 shrink-0", colors.dot)} />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span
-                              className={cn(
-                                "text-[11px] font-semibold",
-                                event.type === "PHONE_USAGE"
-                                  ? "text-amber-400"
-                                  : event.type === "SLEEPING"
-                                  ? "text-red-400"
-                                  : event.type === "UNKNOWN_PERSON"
-                                  ? "text-warning"
-                                  : "text-text-primary",
-                              )}
-                            >
-                              {eventLabel(event.type)}
-                            </span>
-                            <span className="text-[10px] text-text-muted shrink-0">{event.time}</span>
-                          </div>
-                          {event.studentName && (
-                            <p className="text-[11px] text-text-secondary mt-0.5 font-medium">
-                              {event.studentName} •{" "}
-                              <span className="font-mono text-[10px] text-text-muted">
-                                {event.studentId}
-                              </span>
-                            </p>
-                          )}
-                          {isBehaviorEvent && (
-                            <p className="text-[10px] text-text-dim mt-0.5">
-                              Alert dispatched to Teacher & HOD
-                            </p>
-                          )}
-                        </div>
-                      </motion.div>
-                    );
-                  })}
-                </AnimatePresence>
-              )}
-            </div>
-          </GlassCard>
-        </div>
-      </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

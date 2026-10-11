@@ -39,7 +39,7 @@ __pycache__/
 *.MOV
 *.mov
 *.mp4
-videos/
+/videos/
 dataset/
 # Python virtual environment
 .venv/
@@ -65,3 +65,11 @@ AttendifyAI/
 # SQLite databases
 *.db
 
+
+# AI service runtime data (face crops, embeddings, unknown faces)
+apps/ai-service/storage/unknown_faces/
+apps/ai-service/storage/*.json
+*.npy
+test_storage/
+vectors/backup_all_sections/
+storage/demo_requests.csv

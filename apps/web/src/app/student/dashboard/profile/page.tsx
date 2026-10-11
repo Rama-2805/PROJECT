@@ -152,7 +152,7 @@ export default function StudentProfilePage() {
                   src={
                     student.profilePhoto.startsWith("http") || student.profilePhoto.startsWith("data:")
                       ? student.profilePhoto
-                      : `${process.env.NEXT_PUBLIC_AI_URL || "http://localhost:8000"}${student.profilePhoto.startsWith("/") ? "" : "/"}${student.profilePhoto}`
+                      : `${student.profilePhoto.startsWith("/") ? "" : "/"}${student.profilePhoto}`
                   }
                   alt={student.fullName}
                   className={`h-24 w-24 rounded-2xl object-cover border-2 shadow-lg ${
@@ -167,7 +167,7 @@ export default function StudentProfilePage() {
                 </div>
               )}
               {student.faceEnrolled && (
-                <span className="absolute -bottom-1 -right-1 p-1 bg-emerald-500 rounded-full text-black shadow" title="FAISS Biometric Active">
+                <span className="absolute -bottom-1 -right-1 p-1 bg-emerald-500 rounded-full text-black shadow" title="Biometric Verification Active">
                   <ShieldCheck className="w-3.5 h-3.5" />
                 </span>
               )}

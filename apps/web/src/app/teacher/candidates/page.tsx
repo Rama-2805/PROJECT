@@ -16,24 +16,26 @@ import {
 /* ═══════════════════════════════════════════════════════════════════
    TYPES & INTERFACES
 ═══════════════════════════════════════════════════════════════════ */
-const AI_BASE = process.env.NEXT_PUBLIC_AI_URL || "http://localhost:8000";
+// All /storage/* paths are proxied through Next.js rewrites — use relative URLs
+const AI_BASE = "";
 
 function resolveCropUrl(urlOrPath: string | null | undefined): string {
   if (!urlOrPath) return "/placeholder-avatar.png";
   if (urlOrPath.startsWith("http://127.0.0.1:8000")) {
-    return urlOrPath.replace("http://127.0.0.1:8000", AI_BASE);
+    // Legacy absolute URL — extract relative path
+    urlOrPath = urlOrPath.replace("http://127.0.0.1:8000", "");
   }
   if (urlOrPath.startsWith("http://") || urlOrPath.startsWith("https://") || urlOrPath.startsWith("data:")) {
     return urlOrPath;
   }
   if (urlOrPath.startsWith("/")) {
-    return `${AI_BASE}${urlOrPath}`;
+    return urlOrPath;
   }
   if (urlOrPath.includes("storage/")) {
     const sub = urlOrPath.split("storage/")[1];
-    return `${AI_BASE}/storage/${sub}`;
+    return `/storage/${sub}`;
   }
-  return `${AI_BASE}/storage/${urlOrPath}`;
+  return `/storage/${urlOrPath}`;
 }
 
 interface ClusterGalleryItem {
@@ -367,7 +369,7 @@ export default function IdentityCandidatesPage() {
         </div>
 
         {/* Session selector & refresh */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
           {sessions.length > 1 && (
             <select
               value={selectedSessionId}
@@ -375,7 +377,7 @@ export default function IdentityCandidatesPage() {
                 setSelectedSessionId(e.target.value);
                 fetchClustersForSession(e.target.value);
               }}
-              className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 focus:border-cyan-500 focus:outline-none"
+              className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-lg px-3 py-2 focus:border-cyan-500 focus:outline-none w-full sm:w-auto"
             >
               {sessions.map(s => (
                 <option key={s.id} value={s.id}>
@@ -397,7 +399,7 @@ export default function IdentityCandidatesPage() {
       </div>
 
       {/* ─── Pipeline Stats ────────────────────────────────────── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <GlassCard className="p-4 border-l-4 border-l-cyan-500">
           <p className="text-xs text-slate-400 font-medium uppercase tracking-wider">Total Clusters</p>
           <div className="flex items-baseline justify-between mt-2">
@@ -447,7 +449,7 @@ export default function IdentityCandidatesPage() {
           </div>
 
           {/* Status Tabs */}
-          <div className="flex bg-slate-950/80 p-1 rounded-lg border border-slate-800 w-full sm:w-auto justify-around">
+          <div className="flex bg-slate-950/80 p-1 rounded-lg border border-slate-800 w-full sm:w-auto justify-around overflow-x-auto scrollbar-none">
             {(["ALL", "UNASSIGNED", "ASSIGNED"] as const).map(tab => (
               <button
                 key={tab}
@@ -782,7 +784,7 @@ export default function IdentityCandidatesPage() {
 
       {/* ─── STUDENT-SELECTION DIALOG (MODAL) ───────────────────── */}
       {assignModalOpen && targetCluster && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/75 backdrop-blur-md">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}

@@ -13,19 +13,20 @@ import { cn } from "@/lib/utils/cn";
 import { apiRequest } from "@/lib/api/client";
 import Link from "next/link";
 
-const AI_BASE = process.env.NEXT_PUBLIC_AI_URL || "http://localhost:8000";
+// All /storage/* paths are proxied through Next.js rewrites — use relative URLs
+const AI_BASE = "";
 
 function resolveImageUrl(path?: any): string | null {
   if (!path) return null;
   const raw = typeof path === "string" ? path : (path.imagePath || path.imageUrl || path.url || path.path || "");
   if (!raw || typeof raw !== "string") return null;
   if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("data:")) return raw;
-  if (raw.startsWith("/")) return `${AI_BASE}${raw}`;
+  if (raw.startsWith("/")) return raw;
   if (raw.includes("storage/")) {
     const sub = raw.split("storage/")[1];
-    return `${AI_BASE}/storage/${sub}`;
+    return `/storage/${sub}`;
   }
-  return `${AI_BASE}/storage/${raw}`;
+  return `/storage/${raw}`;
 }
 
 const TABS = ["Overview", "Biometrics & Face", "Attendance", "Subjects", "AI Insights"];
@@ -113,7 +114,7 @@ export default function StudentProfilePage() {
               <span>{fullName}</span>
               {isEnrolled && (
                 <span className="text-[10px] font-mono px-2.5 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 font-bold flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" /> FAISS BIOMETRIC REGISTERED
+                  <CheckCircle2 className="w-3 h-3" /> BIOMETRIC REGISTERED
                 </span>
               )}
             </h1>
@@ -194,8 +195,8 @@ export default function StudentProfilePage() {
                   <span className="text-text-primary font-semibold font-mono">{student?.phone || "—"}</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-text-muted flex items-center gap-2"><Fingerprint className="w-3.5 h-3.5"/> ArcFace Vectors</span>
-                  <span className="text-emerald-400 font-bold font-mono">{biometrics?.faceSamples || (isEnrolled ? 1 : 0)} 512D Vectors</span>
+                  <span className="text-text-muted flex items-center gap-2"><Fingerprint className="w-3.5 h-3.5"/> Face Profile</span>
+                  <span className="text-emerald-400 font-bold font-mono">{biometrics?.faceSamples || (isEnrolled ? 1 : 0)} Verified Samples</span>
                 </div>
               </div>
             </div>
@@ -205,12 +206,12 @@ export default function StudentProfilePage() {
           <div className="p-6 rounded-2xl bg-gradient-to-br from-blue-500/10 via-purple-500/5 to-transparent border border-glass-border backdrop-blur-md shadow-glass">
             <div className="flex items-center gap-2 mb-4">
               <Brain className="w-5 h-5 text-blue-400" />
-              <h3 className="font-bold text-text-primary text-sm tracking-wide">AI Attendance & Biometrics Engine</h3>
+              <h3 className="font-bold text-text-primary text-sm tracking-wide">Attendance & Biometrics Verification</h3>
             </div>
             <div className="space-y-4">
               <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
                 <p className="text-xs text-emerald-200 leading-normal">
-                  <span className="font-bold text-emerald-400">FAISS Recognition:</span> Real-time multi-camera identity matching authenticated across lecture halls.
+                  <span className="font-bold text-emerald-400">Identity Matching:</span> Real-time multi-camera identity verification authenticated across lecture halls.
                 </p>
               </div>
               <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/20">
@@ -266,7 +267,7 @@ export default function StudentProfilePage() {
                   </div>
                   <div className="mt-3 flex items-baseline gap-2">
                     <span className="text-3xl font-bold text-text-primary font-mono">{biometrics?.faceSamples || (isEnrolled ? 1 : 0)}</span>
-                    <span className="text-xs text-purple-400 font-semibold">Vectors</span>
+                    <span className="text-xs text-purple-400 font-semibold">Samples</span>
                   </div>
                 </div>
 
@@ -314,9 +315,9 @@ export default function StudentProfilePage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="font-bold text-text-primary text-sm flex items-center gap-2">
-                      <ScanFace className="w-4 h-4 text-emerald-400" /> ArcFace 512D Vector Index & Crops
+                      <ScanFace className="w-4 h-4 text-emerald-400" /> Biometric Face Profile & Samples
                     </h3>
-                    <p className="text-xs text-text-muted mt-0.5">High-quality face representations extracted during classroom video tracking</p>
+                    <p className="text-xs text-text-muted mt-0.5">High-quality face representations captured during classroom sessions</p>
                   </div>
                   <Link
                     href="/dashboard/face-enrollment"
@@ -329,24 +330,24 @@ export default function StudentProfilePage() {
                 {/* Telemetry Strip */}
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <div className="p-3 rounded-xl bg-glass-light/40 border border-glass-border/40">
-                    <p className="text-[10px] text-text-muted uppercase font-semibold">Vector Size</p>
-                    <p className="text-xs font-bold text-text-primary font-mono mt-0.5">512 Dimensions</p>
-                    <p className="text-[9px] text-emerald-400 font-mono">ArcFace L2 Norm</p>
+                    <p className="text-[10px] text-text-muted uppercase font-semibold">Verification Engine</p>
+                    <p className="text-xs font-bold text-text-primary font-mono mt-0.5">High Precision</p>
+                    <p className="text-[9px] text-emerald-400 font-mono">Calibrated</p>
                   </div>
                   <div className="p-3 rounded-xl bg-glass-light/40 border border-glass-border/40">
-                    <p className="text-[10px] text-text-muted uppercase font-semibold">Face Detector</p>
-                    <p className="text-xs font-bold text-text-primary font-mono mt-0.5">SCRFD 10G</p>
-                    <p className="text-[9px] text-blue-400 font-mono">Multi-Scale Gated</p>
+                    <p className="text-[10px] text-text-muted uppercase font-semibold">Detection Mode</p>
+                    <p className="text-xs font-bold text-text-primary font-mono mt-0.5">Active Scanner</p>
+                    <p className="text-[9px] text-blue-400 font-mono">Multi-Angle Stream</p>
                   </div>
                   <div className="p-3 rounded-xl bg-glass-light/40 border border-glass-border/40">
                     <p className="text-[10px] text-text-muted uppercase font-semibold">Total Samples</p>
-                    <p className="text-xs font-bold text-text-primary font-mono mt-0.5">{biometrics?.faceSamples || (isEnrolled ? 1 : 0)} Vectors</p>
+                    <p className="text-xs font-bold text-text-primary font-mono mt-0.5">{biometrics?.faceSamples || (isEnrolled ? 1 : 0)} Samples</p>
                     <p className="text-[9px] text-purple-400 font-mono">Multi-Angle Crops</p>
                   </div>
                   <div className="p-3 rounded-xl bg-glass-light/40 border border-glass-border/40">
-                    <p className="text-[10px] text-text-muted uppercase font-semibold">Index Status</p>
-                    <p className="text-xs font-bold text-emerald-400 font-mono mt-0.5">{isEnrolled ? "FAISS INDEXED" : "PENDING"}</p>
-                    <p className="text-[9px] text-text-muted font-mono">Cosine Sim ≥ 0.60</p>
+                    <p className="text-[10px] text-text-muted uppercase font-semibold">Directory Status</p>
+                    <p className="text-xs font-bold text-emerald-400 font-mono mt-0.5">{isEnrolled ? "REGISTERED" : "PENDING"}</p>
+                    <p className="text-[9px] text-text-muted font-mono">Active Verification</p>
                   </div>
                 </div>
 
@@ -360,7 +361,7 @@ export default function StudentProfilePage() {
                             Cluster #{c.clusterNumber} {c.sessionName ? `— ${c.sessionName}` : ""}
                           </span>
                           <span className="text-xs font-mono text-emerald-400 font-semibold">
-                            {c.sampleCount} vectors (Avg Q: {typeof c.qualityAvg === "number" ? c.qualityAvg.toFixed(1) : "—"}%)
+                            {c.sampleCount} samples (Avg Quality: {typeof c.qualityAvg === "number" ? c.qualityAvg.toFixed(1) : "—"}%)
                           </span>
                         </div>
                         {c.images && c.images.length > 0 ? (
@@ -399,7 +400,7 @@ export default function StudentProfilePage() {
                     <div className="space-y-1">
                       <p className="text-xs font-bold text-text-primary">Verified Primary Face Exemplar</p>
                       <p className="text-xs text-text-muted">
-                        ArcFace 512D feature embeddings registered into production FAISS index for automatic attendance logging.
+                        Biometric facial profile registered in campus directory for automatic attendance verification.
                       </p>
                     </div>
                   </div>
@@ -424,8 +425,8 @@ export default function StudentProfilePage() {
                 <span className="text-xs font-mono font-bold text-emerald-400">{attendance}% Attendance</span>
               </div>
               <div className="p-4 rounded-xl bg-glass-light/20 border border-glass-border text-xs text-text-muted space-y-2">
-                <p className="font-semibold text-text-secondary">Automated Camera Verification Engine</p>
-                <p>Present in all scheduled lectures. Automated face recognition matched with &gt; 99% cosine similarity.</p>
+                <p className="font-semibold text-text-secondary">Automated Camera Verification</p>
+                <p>Present in all scheduled lectures with high-confidence biometric identity verification.</p>
               </div>
             </div>
           )}
@@ -457,12 +458,12 @@ export default function StudentProfilePage() {
           {activeTab === "AI Insights" && (
             <div className="p-6 rounded-2xl bg-bg-secondary border border-glass-border space-y-4">
               <h3 className="font-bold text-text-primary text-sm flex items-center gap-2">
-                <Brain className="w-4 h-4 text-purple-400" /> Deep Learning Predictive Analytics
+                <Brain className="w-4 h-4 text-purple-400" /> Automated Verification Analytics
               </h3>
               <div className="space-y-3 text-xs">
                 <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/20">
                   <p className="font-bold text-purple-300">Biometric Authenticity: HIGH</p>
-                  <p className="text-text-muted mt-1">Multi-stage SCRFD + MediaPipe validation indicates 0 spoofing risk with high temporal stability.</p>
+                  <p className="text-text-muted mt-1">Multi-angle biometric validation indicates reliable identity verification with high temporal stability.</p>
                 </div>
                 <div className="p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20">
                   <p className="font-bold text-emerald-300">Academic Trajectory: DISTINCTION</p>

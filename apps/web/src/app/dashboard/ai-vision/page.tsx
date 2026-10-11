@@ -41,11 +41,11 @@ const ROADMAP: RoadmapItem[] = [
     title: "AI Foundation & Core Capabilities",
     description: "Establish the fundamental AI infrastructure and core recognition capabilities",
     capabilities: [
-      "Face recognition with ArcFace (99.1% accuracy)",
-      "Behavior detection (YOLOv8) — phone, sleeping, distraction",
+      "High-precision biometric face verification (99.1% accuracy)",
+      "Classroom behavior detection — phone usage, sleeping, distraction",
       "Pose classification for engagement analysis",
-      "MLOps pipeline: training, evaluation, deployment",
-      "Edge device management with OTA updates",
+      "Continuous evaluation and deployment pipeline",
+      "Edge device management with automated updates",
     ],
     status: "completed",
     impact: "high",
@@ -137,9 +137,9 @@ const ROADMAP: RoadmapItem[] = [
 ];
 
 const MATURITY_LEVELS: CapabilityMaturity[] = [
-  { area: "Face Recognition", icon: "👤", current: 95, target: 99, description: "ArcFace-based recognition with 99.1% accuracy" },
-  { area: "Behavior Detection", icon: "🧠", current: 85, target: 97, description: "YOLOv8 behavior analysis for 6 behavior classes" },
-  { area: "Pose Classification", icon: "🏃", current: 70, target: 92, description: "MobileNetV3-based posture and engagement analysis" },
+  { area: "Face Recognition", icon: "👤", current: 95, target: 99, description: "Automated biometric recognition with 99.1% accuracy" },
+  { area: "Behavior Detection", icon: "🧠", current: 85, target: 97, description: "Real-time behavior analysis across standard classes" },
+  { area: "Pose Classification", icon: "🏃", current: 70, target: 92, description: "Posture and classroom engagement assessment" },
   { area: "Edge Computing", icon: "💻", current: 80, target: 95, description: "On-device inference with OTA model updates" },
   { area: "Personalized Analytics", icon: "📊", current: 40, target: 90, description: "Per-student learning pattern analysis" },
   { area: "Predictive Models", icon: "🔮", current: 25, target: 85, description: "Academic outcome and dropout prediction" },
@@ -180,9 +180,9 @@ export default function AIVisionPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Check connection to local FastAPI AI service on port 8000
+  // Check connection to AI service via the proxied /api/v1 path
   useEffect(() => {
-    fetch("http://localhost:8000/health")
+    fetch("/api/v1/health")
       .then((res) => {
         if (res.ok) setApiConnectionStatus("online");
         else setApiConnectionStatus("offline");
@@ -241,16 +241,16 @@ export default function AIVisionPage() {
       const formData = new FormData();
       formData.append("image", fileToSend, "image.png");
 
-      let endpoint = "http://localhost:8000/api/v1/grounding/detect";
+      let endpoint = "/api/v1/grounding/detect";
       if (task === "phrase") {
-        endpoint = "http://localhost:8000/api/v1/grounding/phrase";
+        endpoint = "/api/v1/grounding/phrase";
         formData.append("query", queryText);
       } else if (task === "gui") {
-        endpoint = "http://localhost:8000/api/v1/grounding/gui";
+        endpoint = "/api/v1/grounding/gui";
         formData.append("query", queryText);
         formData.append("output_type", "box");
       } else if (task === "ocr") {
-        endpoint = "http://localhost:8000/api/v1/grounding/ocr";
+        endpoint = "/api/v1/grounding/ocr";
       } else {
         formData.append("classes", queryText);
       }

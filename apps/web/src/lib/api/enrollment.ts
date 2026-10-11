@@ -7,13 +7,18 @@
 
 import { apiRequest } from "./client";
 
-const AI_WS_URL =
-  process.env.NEXT_PUBLIC_AI_WS_URL ||
-  process.env.NEXT_PUBLIC_WS_URL?.replace("4000", "8000") ||
-  "ws://localhost:8000";
+// In production, all AI service paths are proxied through Next.js rewrites
+// (/api/v1/*, /storage/*) so we use relative URLs by default.
+const AI_WS_URL = (() => {
+  if (process.env.NEXT_PUBLIC_AI_WS_URL) return process.env.NEXT_PUBLIC_AI_WS_URL;
+  if (typeof window !== "undefined") {
+    const proto = window.location.protocol === "https:" ? "wss" : "ws";
+    return `${proto}://${window.location.host}`;
+  }
+  return "ws://localhost:8000";
+})();
 
-export const AI_HTTP_URL =
-  process.env.NEXT_PUBLIC_AI_SERVICE_URL || "http://localhost:8000";
+export const AI_HTTP_URL = "";
 
 // ── Types ────────────────────────────────────────────────────────────
 

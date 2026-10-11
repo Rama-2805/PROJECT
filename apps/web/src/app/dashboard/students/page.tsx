@@ -14,19 +14,20 @@ import { cn } from "@/lib/utils/cn";
 import { apiRequest } from "@/lib/api/client";
 import Link from "next/link";
 
-const AI_BASE = process.env.NEXT_PUBLIC_AI_URL || "http://localhost:8000";
+// All /storage/* paths are proxied through Next.js rewrites — use relative URLs
+const AI_BASE = "";
 
 function resolveImageUrl(path?: any): string | null {
   if (!path) return null;
   const raw = typeof path === "string" ? path : (path.imagePath || path.imageUrl || path.url || path.path || "");
   if (!raw || typeof raw !== "string") return null;
   if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("data:")) return raw;
-  if (raw.startsWith("/")) return `${AI_BASE}${raw}`;
+  if (raw.startsWith("/")) return raw;
   if (raw.includes("storage/")) {
     const sub = raw.split("storage/")[1];
-    return `${AI_BASE}/storage/${sub}`;
+    return `/storage/${sub}`;
   }
-  return `${AI_BASE}/storage/${raw}`;
+  return `/storage/${raw}`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -193,9 +194,11 @@ function SkeletonRow() {
 function StudentBiometricsModal({
   student,
   onClose,
+  onClearEnrollment,
 }: {
   student: Student;
   onClose: () => void;
+  onClearEnrollment?: (student: Student) => void;
 }) {
   const [data, setData] = useState<BiometricsData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -245,7 +248,7 @@ function StudentBiometricsModal({
               <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
                 Biometric Face Profile & Cluster
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                  {student.faceEnrolled ? "ENROLLED IN FAISS" : "PENDING DATA"}
+                  {student.faceEnrolled ? "BIOMETRIC ENROLLED" : "ENROLLMENT PENDING"}
                 </span>
               </h2>
               <p className="text-xs text-text-muted">
@@ -253,12 +256,24 @@ function StudentBiometricsModal({
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-glass-light hover:bg-glass-medium text-text-muted hover:text-text-primary flex items-center justify-center transition-all cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            {student.faceEnrolled && onClearEnrollment && (
+              <button
+                onClick={() => onClearEnrollment(student)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/15 hover:bg-red-500/25 border border-red-500/35 text-red-400 text-xs font-semibold transition-all cursor-pointer shadow-[0_0_10px_rgba(239,68,68,0.2)]"
+                title="Clear biometric face enrollment and unassign cluster"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Clear Face Data</span>
+              </button>
+            )}
+            <button
+              onClick={onClose}
+              className="w-8 h-8 rounded-lg bg-glass-light hover:bg-glass-medium text-text-muted hover:text-text-primary flex items-center justify-center transition-all cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Modal Body */}
@@ -305,35 +320,35 @@ function StudentBiometricsModal({
                 </div>
 
                 <div className="text-right sm:border-l sm:border-glass-border/40 sm:pl-5 space-y-1 shrink-0">
-                  <span className="text-[10px] text-text-muted uppercase font-semibold block">FAISS Biometric Index</span>
+                  <span className="text-[10px] text-text-muted uppercase font-semibold block">Biometric Profile</span>
                   <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 font-mono text-xs font-bold shadow-[0_0_15px_rgba(16,185,129,0.2)]">
                     <Fingerprint className="w-3.5 h-3.5" />
-                    <span>{data?.faceSamples || (student.faceEnrolled ? 1 : 0)} Vectors</span>
+                    <span>{data?.faceSamples || (student.faceEnrolled ? 1 : 0)} Samples</span>
                   </div>
                 </div>
               </div>
 
-              {/* Technical AI Telemetry Grid */}
+              {/* Technical Telemetry Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 <div className="p-3 rounded-xl bg-glass-light/40 border border-glass-border/40">
-                  <p className="text-[10px] text-text-muted uppercase font-semibold">Vector Model</p>
-                  <p className="text-xs font-bold text-text-primary font-mono mt-0.5">ArcFace 512D</p>
-                  <p className="text-[9px] text-emerald-400 font-mono">L2 Normalized</p>
+                  <p className="text-[10px] text-text-muted uppercase font-semibold">Verification Engine</p>
+                  <p className="text-xs font-bold text-text-primary font-mono mt-0.5">High Precision</p>
+                  <p className="text-[9px] text-emerald-400 font-mono">Calibrated</p>
                 </div>
                 <div className="p-3 rounded-xl bg-glass-light/40 border border-glass-border/40">
-                  <p className="text-[10px] text-text-muted uppercase font-semibold">Detector</p>
-                  <p className="text-xs font-bold text-text-primary font-mono mt-0.5">SCRFD 10G</p>
-                  <p className="text-[9px] text-blue-400 font-mono">Multi-Scale Gated</p>
+                  <p className="text-[10px] text-text-muted uppercase font-semibold">Detection Mode</p>
+                  <p className="text-xs font-bold text-text-primary font-mono mt-0.5">Active Scanner</p>
+                  <p className="text-[9px] text-blue-400 font-mono">Real-time Stream</p>
                 </div>
                 <div className="p-3 rounded-xl bg-glass-light/40 border border-glass-border/40">
-                  <p className="text-[10px] text-text-muted uppercase font-semibold">Quality Gate</p>
-                  <p className="text-xs font-bold text-text-primary font-mono mt-0.5">MediaPipe Mesh</p>
-                  <p className="text-[9px] text-purple-400 font-mono">Yaw/Pitch/Roll Checked</p>
+                  <p className="text-[10px] text-text-muted uppercase font-semibold">Quality Assessment</p>
+                  <p className="text-xs font-bold text-text-primary font-mono mt-0.5">Passed</p>
+                  <p className="text-[9px] text-purple-400 font-mono">Angle & Lighting Validated</p>
                 </div>
                 <div className="p-3 rounded-xl bg-glass-light/40 border border-glass-border/40">
-                  <p className="text-[10px] text-text-muted uppercase font-semibold">Match Metric</p>
-                  <p className="text-xs font-bold text-text-primary font-mono mt-0.5">Cosine Sim ≥ 0.60</p>
-                  <p className="text-[9px] text-text-muted font-mono">Strict Invariant</p>
+                  <p className="text-[10px] text-text-muted uppercase font-semibold">Match Threshold</p>
+                  <p className="text-xs font-bold text-text-primary font-mono mt-0.5">High Confidence</p>
+                  <p className="text-[9px] text-text-muted font-mono">Standard Verification</p>
                 </div>
               </div>
 
@@ -439,7 +454,7 @@ function StudentBiometricsModal({
                     <div className="space-y-1">
                       <p className="text-xs font-bold text-text-primary">Verified Primary Face Exemplar</p>
                       <p className="text-xs text-text-muted">
-                        ArcFace 512D feature embeddings successfully extracted and indexed in the FAISS vector space for automatic attendance logging.
+                        Biometric facial template successfully verified and registered in the campus directory for automated roll call.
                       </p>
                     </div>
                   </div>
@@ -466,14 +481,25 @@ function StudentBiometricsModal({
 
         {/* Modal Footer */}
         <div className="px-6 py-3.5 border-t border-glass-border/40 bg-glass-light/40 flex items-center justify-between shrink-0">
-          <Link
-            href="/dashboard/face-enrollment"
-            className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-semibold transition-colors"
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Open AI Enrollment Studio</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/dashboard/face-enrollment"
+              className="flex items-center gap-1.5 text-xs text-emerald-400 hover:text-emerald-300 font-semibold transition-colors"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Open AI Enrollment Studio</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </Link>
+            {student.faceEnrolled && onClearEnrollment && (
+              <button
+                onClick={() => onClearEnrollment(student)}
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-xl bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 text-xs font-semibold transition-all cursor-pointer"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Clear Face Biometrics</span>
+              </button>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="px-4 py-2 rounded-xl bg-glass-light hover:bg-glass-medium border border-glass-border text-xs font-semibold text-text-primary transition-all cursor-pointer"
@@ -532,6 +558,8 @@ export default function StudentsPage() {
   const [deleting, setDeleting] = useState(false);
   const [showResetAllModal, setShowResetAllModal] = useState(false);
   const [resettingAll, setResettingAll] = useState(false);
+  const [clearFaceModalStudent, setClearFaceModalStudent] = useState<Student | null>(null);
+  const [clearingFace, setClearingFace] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // ── Load departments once ─────────────────────────────────────
@@ -689,7 +717,7 @@ export default function StudentsPage() {
     try {
       const res = await apiRequest<any>("/students/reset-all-enrollment", { method: "POST" });
       if (res && !res.error && !(res as any).statusCode) {
-        setToastMessage("🧹 All student biometric face enrollments and FAISS vectors have been reset.");
+        setToastMessage("✓ All student biometric face enrollments have been reset.");
         setTimeout(() => setToastMessage(null), 5000);
         fetchStudents(page, searchQuery, deptFilter, semFilter);
       } else {
@@ -700,6 +728,44 @@ export default function StudentsPage() {
     } finally {
       setResettingAll(false);
       setShowResetAllModal(false);
+    }
+  };
+
+  const handleConfirmClearFaceEnrollment = async () => {
+    if (!clearFaceModalStudent) return;
+    setClearingFace(true);
+    try {
+      const res = await apiRequest<any>(`/students/${clearFaceModalStudent.id}/face-enrollment`, {
+        method: "DELETE",
+      });
+      if (res && !res.error && !(res as any).statusCode) {
+        setToastMessage(`✓ Cleared face enrollment for ${clearFaceModalStudent.fullName}.`);
+        setTimeout(() => setToastMessage(null), 5000);
+        // Optimistically update local student record
+        setStudents(prev =>
+          prev.map(s =>
+            s.id === clearFaceModalStudent.id
+              ? {
+                  ...s,
+                  faceEnrolled: false,
+                  faceSamples: 0,
+                  profilePhoto: null,
+                  primaryFaceImagePath: null,
+                }
+              : s
+          )
+        );
+        if (selectedBiometricsStudent?.id === clearFaceModalStudent.id) {
+          setSelectedBiometricsStudent(null);
+        }
+      } else {
+        alert((res as any)?.message || res?.error || "Failed to clear face enrollment");
+      }
+    } catch {
+      alert("Network error while clearing face enrollment.");
+    } finally {
+      setClearingFace(false);
+      setClearFaceModalStudent(null);
     }
   };
 
@@ -733,7 +799,7 @@ export default function StudentsPage() {
   };
 
   return (
-    <div className="flex flex-col h-[calc(100vh-120px)] space-y-4">
+    <div className="flex flex-col min-h-[calc(100vh-120px)] h-auto lg:h-[calc(100vh-120px)] space-y-4">
 
       {/* ── Header ─────────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -745,7 +811,7 @@ export default function StudentsPage() {
             {loading ? "Loading..." : `${total.toLocaleString()} students across all departments`}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link
             href="/dashboard/face-enrollment"
             className="flex items-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-3.5 py-2 text-xs font-semibold text-emerald-400 hover:bg-emerald-500/25 transition-all shadow-[0_0_15px_rgba(16,185,129,0.2)]"
@@ -834,7 +900,7 @@ export default function StudentsPage() {
             className="bg-bg-primary/20 border border-glass-border rounded-lg px-3 py-2 text-xs font-semibold text-text-secondary focus:outline-none focus:ring-2 focus:ring-emerald-500/50 cursor-pointer"
           >
             <option value="ALL" className="bg-bg-secondary">All Biometric Statuses</option>
-            <option value="ENROLLED" className="bg-bg-secondary">✓ Face Enrolled in FAISS</option>
+            <option value="ENROLLED" className="bg-bg-secondary">✓ Biometric Enrolled</option>
             <option value="PENDING" className="bg-bg-secondary">Pending Face Data</option>
           </select>
 
@@ -906,9 +972,11 @@ export default function StudentsPage() {
 
       {/* ── Table ──────────────────────────────────────────── */}
       <div className="flex-1 rounded-xl border border-glass-border bg-glass-medium backdrop-blur-md overflow-hidden flex flex-col min-h-0">
+        <div className="overflow-x-auto flex-1 flex flex-col custom-scrollbar">
+          <div className="min-w-[860px] flex-1 flex flex-col">
 
-        {/* Table Header */}
-        <div className="grid grid-cols-12 gap-3 px-4 py-3 border-b border-glass-border bg-glass-light text-[10px] font-semibold text-text-muted uppercase tracking-wider shrink-0">
+            {/* Table Header */}
+            <div className="grid grid-cols-12 gap-3 px-4 py-3 border-b border-glass-border bg-glass-light text-[10px] font-semibold text-text-muted uppercase tracking-wider shrink-0">
           <div className="col-span-3">Student / USN</div>
           <div className="col-span-1">Gender</div>
           <div className="col-span-2">Biometric Status</div>
@@ -1002,16 +1070,28 @@ export default function StudentsPage() {
                 </div>
 
                 {/* Biometric Status & Cluster View Button */}
-                <div className="col-span-2 flex items-center gap-2">
+                <div className="col-span-2 flex items-center gap-1.5">
                   {student.faceEnrolled ? (
-                    <button
-                      onClick={() => setSelectedBiometricsStudent(student)}
-                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-400 text-[11px] font-semibold transition-all shadow-[0_0_10px_rgba(16,185,129,0.15)] group-hover:border-emerald-500/60 cursor-pointer"
-                      title="Click to view full face cluster and 512D ArcFace embeddings"
-                    >
-                      <Fingerprint className="w-3.5 h-3.5 shrink-0" />
-                      <span>Enrolled</span>
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => setSelectedBiometricsStudent(student)}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/35 text-emerald-400 text-[11px] font-semibold transition-all shadow-[0_0_10px_rgba(16,185,129,0.15)] group-hover:border-emerald-500/60 cursor-pointer"
+                        title="Click to view biometric face profile"
+                      >
+                        <Fingerprint className="w-3.5 h-3.5 shrink-0" />
+                        <span>Enrolled</span>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setClearFaceModalStudent(student);
+                        }}
+                        className="inline-flex items-center justify-center p-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 transition-colors cursor-pointer"
+                        title={`Clear face enrollment for ${student.fullName}`}
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                      </button>
+                    </div>
                   ) : (
                     <button
                       onClick={() => setSelectedBiometricsStudent(student)}
@@ -1072,7 +1152,7 @@ export default function StudentsPage() {
                   </p>
                 </div>
 
-                {/* Actions: View Cluster, Reset Pw, Delete Student */}
+                {/* Actions: View Cluster, Clear Face, Reset Pw, Delete Student */}
                 <div className="col-span-1 flex items-center justify-center gap-1.5">
                   <button
                     onClick={() => setSelectedBiometricsStudent(student)}
@@ -1081,6 +1161,15 @@ export default function StudentsPage() {
                   >
                     <Eye className="w-3.5 h-3.5" />
                   </button>
+                  {student.faceEnrolled && (
+                    <button
+                      onClick={() => setClearFaceModalStudent(student)}
+                      className="inline-flex items-center justify-center p-1.5 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 transition-colors cursor-pointer"
+                      title={`Clear Face Enrollment for ${student.fullName}`}
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                   <button
                     onClick={() => setResetModalStudent(student)}
                     className="inline-flex items-center justify-center p-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 transition-colors cursor-pointer"
@@ -1101,14 +1190,17 @@ export default function StudentsPage() {
           })}
         </div>
 
+          </div>
+        </div>
+
         {/* ── Single-Page Total Footer ─────────────────────────── */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-t border-glass-border bg-glass-light shrink-0">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 px-4 py-2.5 border-t border-glass-border bg-glass-light shrink-0">
           <p className="text-xs text-text-muted font-medium">
             Showing all <span className="text-text-primary font-semibold font-mono">{displayStudents.length}</span> students
           </p>
           <div className="flex items-center gap-2 text-[11px] text-text-muted">
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>Real-time FAISS Biometric Synchronization Active</span>
+            <span>Real-time Biometric Directory Synchronization Active</span>
           </div>
         </div>
       </div>
@@ -1118,6 +1210,9 @@ export default function StudentsPage() {
         <StudentBiometricsModal
           student={selectedBiometricsStudent}
           onClose={() => setSelectedBiometricsStudent(null)}
+          onClearEnrollment={(student) => {
+            setClearFaceModalStudent(student);
+          }}
         />
       )}
 
@@ -1246,7 +1341,7 @@ export default function StudentsPage() {
               </div>
             </div>
             <p className="text-sm text-text-secondary mt-3 mb-4 leading-relaxed">
-              Are you sure you want to reset all enrolled face biometrics? This will clear all student face vectors from the FAISS database and mark all student records as un-enrolled.
+              Are you sure you want to reset all enrolled face biometrics? This will clear all student facial profile templates from the directory and mark all student records as pending enrollment.
             </p>
             <div className="bg-amber-500/10 p-3.5 rounded-xl border border-amber-500/20 mb-5 text-xs text-amber-300 space-y-1">
               <p className="font-semibold flex items-center gap-1.5">
@@ -1254,7 +1349,7 @@ export default function StudentsPage() {
                 Existing student academic records will remain safe.
               </p>
               <p className="text-[11px] text-text-muted">
-                Only the ArcFace 512D facial vectors and face crop exemplars will be cleared for re-enrollment.
+                Only the biometric facial profile templates and photo samples will be cleared for re-enrollment.
               </p>
             </div>
             <div className="flex items-center justify-end gap-3">
@@ -1276,6 +1371,63 @@ export default function StudentsPage() {
                 ) : (
                   <>
                     <RotateCcw className="w-4 h-4" /> Reset All Enrolled Faces
+                  </>
+                )}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* ── Clear Single Student Face Enrollment Confirmation Modal ──── */}
+      {clearFaceModalStudent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="w-full max-w-md bg-[#141212] border border-red-500/40 p-6 rounded-2xl shadow-[0_0_50px_rgba(239,68,68,0.25)] relative overflow-hidden"
+          >
+            <div className="flex items-center gap-3 text-red-400 mb-2">
+              <div className="p-2.5 rounded-xl bg-red-500/20 border border-red-500/40">
+                <RotateCcw className="w-6 h-6 shrink-0 text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-text-primary">Clear Face Enrollment</h3>
+                <p className="text-[11px] text-text-muted">Purge Biometric Vectors & Unassign Cluster</p>
+              </div>
+            </div>
+            <p className="text-sm text-text-secondary mt-3 mb-4 leading-relaxed">
+              Are you sure you want to clear face enrollment for <span className="font-bold text-text-primary">{clearFaceModalStudent.fullName}</span> (<code className="text-red-300 font-mono">{clearFaceModalStudent.studentId || clearFaceModalStudent.rollNumber}</code>)?
+            </p>
+            <div className="bg-red-500/10 p-3.5 rounded-xl border border-red-500/20 mb-5 text-xs text-red-300 space-y-1">
+              <p className="font-semibold flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                This student will be marked as un-enrolled.
+              </p>
+              <p className="text-[11px] text-text-muted">
+                All biometric templates and facial profile records for this student will be cleared from the directory, and all associated session clusters will be unassigned. Academic grades and attendance history will remain safe.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-3">
+              <button
+                onClick={() => setClearFaceModalStudent(null)}
+                className="px-4 py-2 text-xs font-semibold text-text-muted hover:text-text-primary transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmClearFaceEnrollment}
+                disabled={clearingFace}
+                className="px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-xl transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-1.5 shadow-[0_0_20px_rgba(239,68,68,0.3)]"
+              >
+                {clearingFace ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Clearing...
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="w-4 h-4" /> Clear Face Biometrics
                   </>
                 )}
               </button>
