@@ -75,7 +75,7 @@ export default function AIEdgeModelsPage() {
 
       {/* Model Filter */}
       <div className="flex gap-1 p-1 mb-6 glass rounded-xl border border-glass-border w-fit">
-        {[{ id: "all", label: "All Models" }, { id: "ArcFace", label: "ArcFace" }, { id: "Behavior YOLO", label: "Behavior YOLO" }].map(f => (
+        {[{ id: "all", label: "All Subsystems" }, { id: "ArcFace", label: "Face Recognition" }, { id: "Behavior YOLO", label: "Behavior Analysis" }].map(f => (
           <button key={f.id} onClick={() => setModelFilter(f.id)} className={cn(
             "px-3 py-1.5 rounded-lg text-[10px] font-medium transition-all",
             modelFilter === f.id ? "bg-ai-blue text-black font-semibold" : "text-text-dim hover:text-text-primary",
@@ -103,7 +103,7 @@ export default function AIEdgeModelsPage() {
                   </div>
                   <div>
                     <h3 className="text-sm font-semibold text-text-primary">{device.deviceName}</h3>
-                    <span className="text-[9px] font-mono text-text-muted">{device.deviceId} • {device.modelName}</span>
+                    <span className="text-[9px] font-mono text-text-muted">{device.deviceId} • {device.modelName === "ArcFace" ? "Face Recognition" : device.modelName === "Behavior YOLO" ? "Behavior Analysis" : device.modelName}</span>
                   </div>
                 </div>
                 <span className={cn("text-[9px] px-1.5 py-0.5 rounded-full border font-medium shrink-0", STATUS_COLORS[device.status])}>

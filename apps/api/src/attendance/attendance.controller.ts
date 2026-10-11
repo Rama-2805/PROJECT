@@ -6,6 +6,7 @@ import {
   Body,
   Param,
   Query,
+  Req,
   UseGuards,
 } from "@nestjs/common";
 import { AttendanceService } from "./attendance.service";
@@ -97,6 +98,28 @@ export class AttendanceController {
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
   deleteUnknownFace(@Param("id") id: string) {
     return this.attendance.deleteUnknownFace(id);
+  }
+
+  @Post("unknown-faces/:id/assign")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  assignUnknownFace(
+    @Param("id") id: string,
+    @Body() dto: { studentId: string; studentUsn?: string },
+    @Req() req: any,
+  ) {
+    return this.attendance.assignUnknownFace(id, dto, req.user?.id);
+  }
+
+  @Post("unknown-faces/:id/keep-unknown")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  keepUnknownFace(@Param("id") id: string) {
+    return this.attendance.keepUnknownFace(id);
+  }
+
+  @Post("unknown-faces/:id/dismiss")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  dismissUnknownFace(@Param("id") id: string) {
+    return this.attendance.dismissUnknownFace(id);
   }
 
   @Post("unknown-faces/enroll")

@@ -153,7 +153,7 @@ export default function ClassroomsPage() {
           <h2 className="text-lg font-semibold text-text-primary">Classroom Management</h2>
           <p className="text-xs text-text-muted">Monitor and manage all classrooms across campus</p>
         </div>
-        <Button size="sm" onClick={() => setIsAddModalOpen(true)}>
+        <Button size="sm" onClick={() => setIsAddModalOpen(true)} className="self-start sm:self-auto min-h-[40px]">
           <Plus className="w-4 h-4 mr-1.5" />
           Add Classroom
         </Button>

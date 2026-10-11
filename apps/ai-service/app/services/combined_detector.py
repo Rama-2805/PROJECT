@@ -8,7 +8,7 @@ import logging
 import numpy as np
 from typing import List, Dict, Any
 from .face_detector import face_detector as scrfd_detector
-from .yolo_detector import yolo_detector
+from .yolo26_detector import yolo26_detector
 
 logger = logging.getLogger("smartcampus.combined_detector")
 
@@ -32,23 +32,23 @@ def _calculate_iou(box1: List[int], box2: List[int]) -> float:
 
 
 class CombinedDetector:
-    """Combines SCRFD 10G and YOLO11 detections via IoU NMS fusion."""
+    """Combines SCRFD 10G and YOLO26-Face detections via IoU NMS fusion."""
 
     def __init__(self, iou_threshold: float = 0.50):
         self.iou_threshold = iou_threshold
         self.scrfd = scrfd_detector
-        self.yolo = yolo_detector
+        self.yolo26 = yolo26_detector
 
     def detect_faces(self, frame: np.ndarray) -> List[Dict[str, Any]]:
-        """Run SCRFD 10G and YOLO11, merging detections using NMS."""
+        """Run SCRFD 10G and YOLO26-Face, merging detections using NMS."""
         if frame is None or frame.size == 0:
             return []
 
         h, w = frame.shape[:2]
-        logger.info(f"[COMBINED] Running SCRFD 10G + YOLO11 on frame: {w}x{h}")
+        logger.info(f"[COMBINED] Running SCRFD 10G + YOLO26-Face on frame: {w}x{h}")
 
-        scrfd_dets = self.scrfd.detect_faces(frame)
-        yolo_dets = self.yolo.detect_faces(frame)
+        scrfd_dets = self.scrfd.detect_scrfd_faces(frame)
+        yolo_dets = self.yolo26.detect_faces(frame)
 
         all_dets = list(scrfd_dets) + list(yolo_dets)
         if not all_dets:

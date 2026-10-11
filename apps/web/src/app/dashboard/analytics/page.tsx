@@ -333,10 +333,10 @@ export default function AnalyticsPage() {
           <h2 className="text-lg font-semibold text-text-primary">University Intelligence Center</h2>
           <p className="text-xs text-text-muted">AI-powered analytics, visual trends, and continuous learning diagnostics</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => window.print()}>Export Dashboard</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => window.print()} className="min-h-[40px]">Export Dashboard</Button>
           <a href="/dashboard/reports?tab=generate">
-            <Button size="sm">Generate Reports</Button>
+            <Button size="sm" className="min-h-[40px]">Generate Reports</Button>
           </a>
         </div>
       </div>
@@ -402,13 +402,13 @@ export default function AnalyticsPage() {
       </GlassCard>
 
       {/* Tabs */}
-      <div className="flex flex-wrap items-center gap-1 p-1 rounded-lg bg-glass-light border border-glass-border w-fit">
+      <div className="flex items-center gap-1 p-1 rounded-lg bg-glass-light border border-glass-border w-full sm:w-fit overflow-x-auto custom-scrollbar">
         {tabs.map((tab) => (
           <button
             key={tab.key}
             onClick={() => setActiveTab(tab.key)}
             className={cn(
-              "px-3 py-1.5 rounded-md text-[11px] font-medium transition-all",
+              "px-3 py-1.5 rounded-md text-[11px] font-medium transition-all whitespace-nowrap",
               activeTab === tab.key
                 ? "bg-ai-blue/20 text-ai-blue border border-ai-blue/20"
                 : "text-text-muted hover:text-text-primary",
@@ -536,27 +536,31 @@ export default function AnalyticsPage() {
               <h3 className="text-xs font-bold uppercase tracking-wider text-text-primary mb-2 font-mono">Attendance Heatmap (Hours vs Days)</h3>
               <p className="text-[10px] text-text-muted mb-4">Darker cells indicate higher recognition & attendance densities</p>
               
-              <div className="grid grid-cols-8 gap-1 text-[9px] font-mono text-center">
-                <span />
-                {["9 AM", "10 AM", "11 AM", "12 PM", "2 PM", "3 PM", "4 PM"].map((h) => <span key={h} className="text-text-muted font-bold">{h}</span>)}
-                
-                {["Mon", "Tue", "Wed", "Thu", "Fri"].map((day, dIdx) => (
-                  <>
-                    <span key={day} className="text-left text-text-muted font-bold self-center">{day}</span>
-                    {Array.from({ length: 7 }).map((_, hIdx) => {
-                      const baseOpacity = 0.45 + (dIdx * 0.1) - (hIdx * 0.05) + Math.random() * 0.15;
-                      const opacityVal = Math.min(1, Math.max(0.1, baseOpacity));
-                      return (
-                        <div
-                          key={hIdx}
-                          className="aspect-square rounded-md transition-all hover:scale-105 cursor-pointer"
-                          style={{ backgroundColor: `rgba(16, 185, 129, ${opacityVal})` }}
-                          title={`Density: ${(opacityVal * 100).toFixed(0)}%`}
-                        />
-                      );
-                    })}
-                  </>
-                ))}
+              <div className="overflow-x-auto custom-scrollbar">
+                <div className="min-w-[420px]">
+                  <div className="grid grid-cols-8 gap-1 text-[9px] font-mono text-center">
+                    <span />
+                    {["9 AM", "10 AM", "11 AM", "12 PM", "2 PM", "3 PM", "4 PM"].map((h) => <span key={h} className="text-text-muted font-bold">{h}</span>)}
+                    
+                    {["Mon", "Tue", "Wed", "Thu", "Fri"].map((day, dIdx) => (
+                      <>
+                        <span key={day} className="text-left text-text-muted font-bold self-center">{day}</span>
+                        {Array.from({ length: 7 }).map((_, hIdx) => {
+                          const baseOpacity = 0.45 + (dIdx * 0.1) - (hIdx * 0.05) + Math.random() * 0.15;
+                          const opacityVal = Math.min(1, Math.max(0.1, baseOpacity));
+                          return (
+                            <div
+                              key={hIdx}
+                              className="aspect-square rounded-md transition-all hover:scale-105 cursor-pointer"
+                              style={{ backgroundColor: `rgba(16, 185, 129, ${opacityVal})` }}
+                              title={`Density: ${(opacityVal * 100).toFixed(0)}%`}
+                            />
+                          );
+                        })}
+                      </>
+                    ))}
+                  </div>
+                </div>
               </div>
             </GlassCard>
 
@@ -719,15 +723,15 @@ export default function AnalyticsPage() {
               </div>
             </GlassCard>
 
-            {/* FAISS Rebuild Logs */}
+            {/* Directory Synchronization Logs */}
             <GlassCard className="space-y-4">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-text-primary font-mono">FAISS Rebuild & Index History</h3>
+              <h3 className="text-xs font-bold uppercase tracking-wider text-text-primary font-mono">Directory Index Synchronization History</h3>
               <div className="divide-y divide-glass-border">
                 {learningMetrics.rebuildHistory.map((log) => (
                   <div key={log.id} className="py-2 flex items-center justify-between text-xs">
                     <div>
-                      <p className="font-semibold text-text-primary">{log.date} Rebuild Log</p>
-                      <p className="text-[10px] text-text-muted">{log.vectors.toLocaleString()} active vectors indexed</p>
+                      <p className="font-semibold text-text-primary">{log.date} Synchronization Log</p>
+                      <p className="text-[10px] text-text-muted">{log.vectors.toLocaleString()} biometric profiles indexed</p>
                     </div>
                     <div className="text-right">
                       <span className="text-[10px] font-mono text-text-muted block">Duration: {log.latency}</span>
@@ -750,7 +754,7 @@ export default function AnalyticsPage() {
             <GlassCard className="lg:col-span-2 space-y-4">
               <h3 className="text-xs font-bold uppercase tracking-wider text-text-primary font-mono">High Risk Students</h3>
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+                <table className="w-full min-w-[460px] text-left text-xs">
                   <thead>
                     <tr className="border-b border-glass-border text-text-muted uppercase text-[9px]">
                       <th className="py-2">Student</th>

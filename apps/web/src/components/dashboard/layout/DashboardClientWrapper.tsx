@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect } from "react";
 import { useUIStore } from "@/store/uiStore";
+import { useIsMobile } from "@/lib/hooks/useMediaQuery";
+import { usePathname } from "next/navigation";
 import { TopNavbar } from "./TopNavbar";
 import { GlassSidebar } from "./GlassSidebar";
 import { CommandPalette } from "../CommandPalette";
@@ -11,9 +13,19 @@ import { ProgressiveFluxLoader } from "@/components/ui/progressive-flux-loader";
 
 export function DashboardClientWrapper({ children }: { children: React.ReactNode }) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
+  const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
   const theme = useUIStore((s) => s.theme);
+  const isMobile = useIsMobile();
+  const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
   const [showIntro, setShowIntro] = useState(false);
+
+  // Close mobile sidebar on route change
+  useEffect(() => {
+    if (isMobile) {
+      setSidebarOpen(false);
+    }
+  }, [pathname, isMobile, setSidebarOpen]);
 
   // Avoid hydration mismatch by waiting for mount & enforce admin role guard
   useEffect(() => {
@@ -67,19 +79,35 @@ export function DashboardClientWrapper({ children }: { children: React.ReactNode
       {/* Sidebar */}
       <GlassSidebar />
 
+      {/* Mobile Backdrop Overlay */}
+      <AnimatePresence>
+        {isMobile && sidebarOpen && (
+          <motion.div
+            key="mobile-sidebar-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={() => setSidebarOpen(false)}
+            className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm lg:hidden"
+            aria-hidden="true"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Main Content Area */}
       <motion.div
         layout
-        className="flex flex-col flex-1 h-full relative z-10"
+        className="flex flex-col flex-1 h-full relative z-10 min-w-0"
         initial={false}
         animate={{
-          marginLeft: sidebarOpen ? "280px" : "80px",
+          marginLeft: isMobile ? "0px" : (sidebarOpen ? "280px" : "80px"),
         }}
         transition={{ type: "spring", stiffness: 300, damping: 30 }}
       >
         <TopNavbar />
         
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 scroll-smooth relative z-10">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 scroll-smooth relative z-10 w-full max-w-full">
           {children}
         </main>
       </motion.div>

@@ -74,3 +74,4 @@ apps/ai-service/storage/*.json
 test_storage/
 vectors/backup_all_sections/
 storage/demo_requests.csv
+*.backup

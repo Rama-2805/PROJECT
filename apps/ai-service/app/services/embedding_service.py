@@ -20,6 +20,29 @@ class EmbeddingService:
     def __init__(self):
         self.embedding_size = 512
 
+    @property
+    def rec_model(self):
+        """Lazy-load or retrieve the 512D ArcFace recognition model."""
+        if not hasattr(self, "_rec_model") or self._rec_model is None:
+            self._rec_model = None
+            try:
+                m = face_detector.model
+                if m and hasattr(m, "models") and "recognition" in m.models:
+                    self._rec_model = m.models["recognition"]
+            except Exception:
+                pass
+            if self._rec_model is None:
+                try:
+                    import insightface
+                    from pathlib import Path
+                    rec_path = Path.home() / ".insightface" / "models" / "buffalo_l" / "w600k_r50.onnx"
+                    if rec_path.exists():
+                        self._rec_model = insightface.model_zoo.get_model(str(rec_path))
+                        self._rec_model.prepare(ctx_id=-1)
+                except Exception as e:
+                    logger.error(f"Failed to directly load ArcFace recognition model: {e}")
+        return self._rec_model
+
     def generate_embedding(self, face_crop: np.ndarray, landmarks: Optional[Any] = None) -> Optional[np.ndarray]:
         """Extract a 512D ArcFace embedding from a cropped BGR face image with 5-point landmark alignment."""
         if face_crop is None or face_crop.size == 0:
@@ -29,8 +52,7 @@ class EmbeddingService:
             from .face_quality_service import face_quality_service
             aligned = face_quality_service.align_face(face_crop, landmarks)
 
-            # Get recognition model from detector singleton
-            rec_model = face_detector.model.models.get("recognition")
+            rec_model = self.rec_model
             if rec_model is not None:
                 feat = rec_model.get_feat(aligned)
                 if feat is not None:

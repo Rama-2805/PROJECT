@@ -348,6 +348,7 @@ export class EnrollmentService {
             detectedFacesCount: aiStatus.detectedFacesCount ?? aiStatus.face_detections ?? s.detectedFacesCount,
             framesWithFaces: aiStatus.frames_with_faces ?? aiStatus.diagnostics?.frames_with_faces ?? 0,
             currentFrameFaces: aiStatus.current_frame_faces ?? 0,
+            activeDetector: aiStatus.activeDetector || aiStatus.diagnostics?.active_detector || "YOLO26-S-Face",
             generatedClusters: aiStatus.generatedClusters ?? s.generatedClusters,
             aiStatus,
           };
@@ -454,6 +455,7 @@ export class EnrollmentService {
       detectedFacesCount: aiStatus?.detectedFacesCount ?? aiStatus?.face_detections ?? session.detectedFacesCount,
       framesWithFaces: aiStatus?.frames_with_faces ?? aiStatus?.diagnostics?.frames_with_faces ?? 0,
       currentFrameFaces: aiStatus?.current_frame_faces ?? 0,
+      activeDetector: aiStatus?.activeDetector || aiStatus?.diagnostics?.active_detector || "YOLO26-S-Face",
       aiStatus,
       clusterCount: session._count.studentClusters,
     };
@@ -567,7 +569,8 @@ export class EnrollmentService {
   }
 
   async startSessionProcessing(sessionId: string, detector?: string) {
-    return this.processSessionVideos(sessionId, detector);
+    const activeDetector = detector || "yolo26";
+    return this.processSessionVideos(sessionId, activeDetector);
   }
 
   async getSessionDetails(sessionId: string) {
@@ -827,24 +830,91 @@ export class EnrollmentService {
       const defaultDept = await this.prisma.department.findFirst();
       const defaultCourse = await this.prisma.course.findFirst();
 
+      // 1. Resolve valid department ID from database
+      let resolvedDeptId = defaultDept?.id || "cmqnr5yph0006p16ezp5u56wb";
+      if (dto.departmentId) {
+        let dept: any = null;
+        try {
+          dept = await this.prisma.department.findUnique({ where: { id: dto.departmentId } });
+        } catch {}
+        if (!dept) {
+          dept = await this.prisma.department.findFirst({
+            where: {
+              OR: [
+                { name: { contains: dto.departmentId, mode: "insensitive" } },
+                { code: { equals: dto.departmentId, mode: "insensitive" } },
+              ],
+            },
+          });
+        }
+        if (dept) resolvedDeptId = dept.id;
+      }
+
+      // 2. Resolve valid course ID from database
+      let resolvedCourseId = defaultCourse?.id || "cmqnr5ypm0007p16e3k3rxm7g";
+      const programQuery = dto.programId || dto.courseId;
+      if (programQuery) {
+        let course: any = null;
+        try {
+          course = await this.prisma.course.findUnique({ where: { id: programQuery } });
+        } catch {}
+        if (!course) {
+          course = await this.prisma.course.findFirst({
+            where: {
+              OR: [
+                { name: { contains: programQuery, mode: "insensitive" } },
+                { code: { equals: programQuery, mode: "insensitive" } },
+              ],
+            },
+          });
+        }
+        if (course) resolvedCourseId = course.id;
+      }
+
+      // 3. Resolve semester integer
+      let semNum = 6;
+      if (dto.semester) {
+        const parsed = parseInt(String(dto.semester).replace(/\D/g, ""), 10);
+        if (!isNaN(parsed) && parsed >= 1 && parsed <= 8) semNum = parsed;
+      }
+
+      const instId =
+        cluster.session?.institutionId ||
+        defaultDept?.institutionId ||
+        "cmqnr5ypa0005p16e5ri9s2hh";
+
       const newStudent = await this.prisma.student.create({
         data: {
-          institutionId: cluster.session.institutionId,
-          departmentId: dto.departmentId || defaultDept?.id || "cmqnr5yph0006p16ezp5u56wb",
-          courseId: dto.programId || defaultCourse?.id || "cmqnr5ypm0007p16e3k3rxm7g",
+          institutionId: instId,
+          departmentId: resolvedDeptId,
+          courseId: resolvedCourseId,
           studentId: dto.usn || `USN_${Date.now()}`,
           rollNumber: dto.usn,
           fullName: dto.fullName,
           email: dto.email,
           phone: dto.phone,
+          semester: semNum,
           section: targetSection,
           sectionId: targetSection,
+          batchYear: 2023,
           faceEnrolled: true,
           faceSamples: cluster.sampleCount || 1,
           profilePhoto: cluster.bestImagePath,
           primaryFaceImagePath: cluster.bestImagePath,
         },
       });
+
+      if (cluster.bestImagePath) {
+        await this.prisma.faceImage.create({
+          data: {
+            studentId: newStudent.id,
+            imagePath: cluster.bestImagePath,
+            isPrimary: true,
+            qualityScore: cluster.qualityAvg ? cluster.qualityAvg / 100 : 0.85,
+          },
+        });
+      }
+
       studentId = newStudent.id;
     } else if (studentId) {
       // 1. Purge all other cluster assignments for this student so old clusters are deleted/unassigned
@@ -937,7 +1007,9 @@ export class EnrollmentService {
 
       if (usn && sId) {
         try {
-          const aiCid = dto.clusterId || `cluster_${String(cluster.clusterNumber).padStart(3, "0")}`;
+          const aiCid = cluster.clusterNumber
+            ? `cluster_${String(cluster.clusterNumber).padStart(3, "0")}`
+            : (dto.clusterId?.startsWith("cluster_") ? dto.clusterId : "cluster_001");
           // 1. Assign in AI service with force=true to unassign prior session clusters
           await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sId}/clusters/${aiCid}/assign`, {
             method: "POST",
@@ -968,14 +1040,224 @@ export class EnrollmentService {
   }
 
   async finalizeEnrollmentSession(sessionId: string) {
+    // 1. VALIDATION
     const session = await this.prisma.enrollmentSession.findUnique({
       where: { id: sessionId },
-      include: { studentClusters: true },
+      include: {
+        studentClusters: {
+          include: { images: true, assignments: true },
+        },
+      },
     });
     if (!session) throw new NotFoundException("Enrollment session not found");
 
-    const assignedCount = session.studentClusters.filter((c) => c.status === "ASSIGNED").length;
+    // Idempotent retry safety: if already completed and embeddings exist, return immediately
+    if (session.status === "COMPLETED") {
+      const existingEmbeddingsCount = await this.prisma.faceEmbedding.count({
+        where: {
+          metadata: { contains: sessionId },
+        },
+      });
+      if (existingEmbeddingsCount > 0) {
+        return {
+          success: true,
+          sessionId,
+          assignedCount: session.studentClusters.filter((c) => c.status === "ASSIGNED").length,
+          embeddingsPersisted: existingEmbeddingsCount,
+          status: "COMPLETED",
+          message: "Enrollment session already finalized. Durable biometric profiles are active.",
+        };
+      }
+    }
 
+    // Fetch confirmed cluster data from AI service to get the actual 512D ArcFace embeddings
+    let aiClusters: any[] = [];
+    try {
+      const aiUrl = `${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/clusters`;
+      const res = await fetch(aiUrl);
+      if (res.ok) {
+        const body = await res.json();
+        aiClusters = body.clusters || [];
+      }
+    } catch (err) {
+      console.warn(`[Finalize] AI service clusters fetch notice: ${err}`);
+    }
+
+    // Auto-sync clusters into Postgres if Postgres clusters are empty or fewer than AI clusters
+    if (session.studentClusters.length === 0 && aiClusters.length > 0) {
+      await this.syncAiClusters(sessionId);
+    }
+
+    // Re-query refreshed clusters
+    const freshClusters = await this.prisma.studentCluster.findMany({
+      where: { enrollmentSessionId: sessionId },
+      include: { images: true, assignments: true },
+      orderBy: { clusterNumber: "asc" },
+    });
+
+    if (freshClusters.length === 0 && aiClusters.length === 0) {
+      throw new BadRequestException("Session contains no usable face cluster data to finalize.");
+    }
+
+    // 2. PERSIST CONFIRMED STUDENT IDENTITIES & 512D ARCFACE EMBEDDINGS
+    let confirmedCount = 0;
+    let embeddingsPersisted = 0;
+
+    // Build map of AI cluster details by clusterId or clusterNumber
+    const aiClusterMap = new Map<string, any>();
+    for (const ac of aiClusters) {
+      if (ac.clusterId) aiClusterMap.set(ac.clusterId, ac);
+      if (ac.cluster_id) aiClusterMap.set(ac.cluster_id, ac);
+      if (ac.clusterNumber) aiClusterMap.set(String(ac.clusterNumber), ac);
+    }
+
+    for (const cluster of freshClusters) {
+      // Find matching AI cluster
+      const aiC = aiClusterMap.get(cluster.id) ||
+                  aiClusterMap.get(`cluster_${String(cluster.clusterNumber).padStart(3, "0")}`) ||
+                  aiClusterMap.get(String(cluster.clusterNumber)) ||
+                  {};
+
+      // Determine assigned student
+      let studentId = cluster.assignedStudentId || cluster.assignments?.[0]?.studentId;
+      let studentUsn = aiC.assignedStudent?.usn || aiC.usn || aiC.assignedUsn;
+
+      if (!studentId && studentUsn) {
+        const matchedStudent = await this.prisma.student.findFirst({
+          where: {
+            OR: [
+              { rollNumber: studentUsn },
+              { studentId: studentUsn },
+              { usn: studentUsn },
+              { rollNumber: { equals: studentUsn, mode: "insensitive" } },
+              { studentId: { equals: studentUsn, mode: "insensitive" } },
+            ],
+          },
+        });
+        if (matchedStudent) {
+          studentId = matchedStudent.id;
+        }
+      }
+
+      // Check if cluster is confirmed
+      const isConfirmed = cluster.status === "ASSIGNED" ||
+                          aiC.identity_status === "CONFIRMED" ||
+                          aiC.isEnrolled === true ||
+                          aiC.enrolled === true ||
+                          Boolean(studentId);
+
+      if (!isConfirmed || !studentId) {
+        // Skip unassigned or pending review clusters — DO NOT force every cluster to become a student
+        continue;
+      }
+
+      const student = await this.prisma.student.findUnique({ where: { id: studentId } });
+      if (!student) continue;
+
+      const usn = student.rollNumber || student.studentId || student.usn || "";
+
+      // Extract valid 512D ArcFace embeddings
+      const embeddingsToPersist: number[][] = [];
+
+      const candidateEmbeddings = [
+        aiC.representative_embedding,
+        aiC.centroid_embedding,
+        aiC.centroid,
+        aiC.medoid_embedding,
+        ...(Array.isArray(aiC.embeddings) ? aiC.embeddings : []),
+      ];
+
+      for (const emb of candidateEmbeddings) {
+        if (Array.isArray(emb) && emb.length === 512) {
+          // Validate embedding data integrity (no NaNs, finite floats)
+          const isValid = emb.every((v: any) => typeof v === "number" && !isNaN(v) && isFinite(v));
+          if (isValid) {
+            embeddingsToPersist.push(emb);
+          }
+        }
+      }
+
+      // Persist embeddings durably into Postgres FaceEmbedding table (idempotent: avoid duplicates)
+      const bestImage = cluster.images.find((img) => img.isBest) || cluster.images[0];
+      const thumbnailPath = cluster.bestImagePath || bestImage?.imagePath || aiC.bestImagePath || null;
+
+      for (const embVec of embeddingsToPersist) {
+        const vecStr = JSON.stringify(embVec);
+        const existing = await this.prisma.faceEmbedding.findFirst({
+          where: {
+            studentId: student.id,
+            thumbnailPath: thumbnailPath || undefined,
+          },
+        });
+
+        if (!existing) {
+          await this.prisma.faceEmbedding.create({
+            data: {
+              studentId: student.id,
+              embeddingVector: vecStr,
+              confidence: cluster.confidence || aiC.identity_mean_similarity || 0.90,
+              thumbnailPath: thumbnailPath,
+              metadata: JSON.stringify({
+                sessionId,
+                clusterId: cluster.id,
+                clusterNumber: cluster.clusterNumber,
+                sampleCount: cluster.sampleCount || aiC.sampleCount || 1,
+                qualityAvg: cluster.qualityAvg || aiC.qualityAvg || 0.85,
+                source: "SESSION_FINALIZATION",
+              }),
+            },
+          });
+          embeddingsPersisted++;
+        }
+      }
+
+      // Update student profile status in Postgres
+      await this.prisma.student.update({
+        where: { id: student.id },
+        data: {
+          faceEnrolled: true,
+          faceSamples: Math.max(student.faceSamples || 0, cluster.sampleCount || aiC.sampleCount || 1),
+          primaryFaceImagePath: thumbnailPath || student.primaryFaceImagePath || undefined,
+          profilePhoto: thumbnailPath || student.profilePhoto || undefined,
+        },
+      });
+
+      // Update cluster status
+      await this.prisma.studentCluster.update({
+        where: { id: cluster.id },
+        data: {
+          status: "ASSIGNED",
+          assignedStudentId: student.id,
+        },
+      });
+
+      // Audit trail
+      await this.prisma.enrollmentHistory.create({
+        data: {
+          studentId: student.id,
+          performedById: "system",
+          action: "ENROLLED",
+          metadata: JSON.stringify({
+            sessionId,
+            clusterId: cluster.id,
+            usn,
+            embeddingsCount: embeddingsToPersist.length,
+          }),
+        },
+      });
+
+      confirmedCount++;
+    }
+
+    // Batch update FAISS vector index in AI service
+    try {
+      const finalizeFaissUrl = `${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/finalize-faiss`;
+      await fetch(finalizeFaissUrl, { method: "POST" });
+    } catch (fErr) {
+      console.warn(`[Finalize] FAISS batch finalize notification notice: ${fErr}`);
+    }
+
+    // 3. MARK SESSION AS FINALIZED
     await this.prisma.enrollmentSession.update({
       where: { id: sessionId },
       data: {
@@ -988,15 +1270,41 @@ export class EnrollmentService {
       data: {
         enrollmentSessionId: sessionId,
         action: "FINALIZED",
-        details: JSON.stringify({ assignedCount }),
+        details: JSON.stringify({
+          confirmedCount,
+          embeddingsPersisted,
+          timestamp: new Date().toISOString(),
+        }),
       },
     });
+
+    // 4. CLEAN UP TEMPORARY CAPTURE DATA ONLY AFTER PERSISTENCE SUCCEEDS
+    // Safely delete intermediate debug frames and temporary captures
+    // NEVER delete confirmed student records, durable embeddings, permanent clusters, or tracks gallery
+    try {
+      const sessDirCandidates = [
+        path.join(process.cwd(), "..", "ai-service", "storage", "enrollment", sessionId),
+        path.join(process.cwd(), "storage", "enrollment", sessionId),
+      ];
+      for (const sDir of sessDirCandidates) {
+        if (fs.existsSync(sDir)) {
+          const debugFramesDir = path.join(sDir, "debug_frames");
+          if (fs.existsSync(debugFramesDir)) {
+            fs.rmSync(debugFramesDir, { recursive: true, force: true });
+          }
+        }
+      }
+    } catch (cleanupErr) {
+      console.warn(`[Finalize] Temporary capture cleanup notice: ${cleanupErr}`);
+    }
 
     return {
       success: true,
       sessionId,
-      assignedCount,
-      message: "Enrollment session finalized. Biometric profiles stored & FAISS vector index updated.",
+      assignedCount: confirmedCount,
+      embeddingsPersisted,
+      status: "COMPLETED",
+      message: `Enrollment session finalized successfully. ${confirmedCount} confirmed student identities and ${embeddingsPersisted} durable embeddings stored.`,
     };
   }
 
@@ -1040,13 +1348,14 @@ export class EnrollmentService {
     }
 
     // Call FastAPI AI service to start pipeline
+    const activeDetector = detector || "yolo26";
     const aiUrl = `${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/process`;
     let res: Response;
     try {
       res = await fetch(aiUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoPaths, detector }),
+        body: JSON.stringify({ videoPaths, detector: activeDetector }),
       });
     } catch (fetchErr: any) {
       await this.prisma.enrollmentSession.updateMany({
@@ -1112,6 +1421,58 @@ export class EnrollmentService {
       smallest_cluster: 0,
       average_cluster_quality: 85.0,
     };
+  }
+
+  async pauseSessionProcessing(sessionId: string) {
+    const session = await this.prisma.enrollmentSession.findUnique({ where: { id: sessionId } });
+    if (!session) throw new NotFoundException("Enrollment session not found");
+
+    try {
+      const res = await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/pause`, {
+        method: "POST",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        await this.prisma.enrollmentSession.update({
+          where: { id: sessionId },
+          data: { status: "PAUSED" },
+        });
+        return { success: true, sessionId, status: "PAUSED", message: "Session processing paused at current segment." };
+      }
+    } catch (err) {
+      console.warn(`[pauseSessionProcessing] AI service call warning: ${err}`);
+    }
+    await this.prisma.enrollmentSession.update({
+      where: { id: sessionId },
+      data: { status: "PAUSED" },
+    });
+    return { success: true, sessionId, status: "PAUSED" };
+  }
+
+  async resumeSessionProcessing(sessionId: string) {
+    const session = await this.prisma.enrollmentSession.findUnique({ where: { id: sessionId } });
+    if (!session) throw new NotFoundException("Enrollment session not found");
+
+    try {
+      const res = await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/resume`, {
+        method: "POST",
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        await this.prisma.enrollmentSession.update({
+          where: { id: sessionId },
+          data: { status: "PROCESSING" },
+        });
+        return { success: true, sessionId, status: "PROCESSING", message: "Session processing resumed." };
+      }
+    } catch (err) {
+      console.warn(`[resumeSessionProcessing] AI service call warning: ${err}`);
+    }
+    await this.prisma.enrollmentSession.update({
+      where: { id: sessionId },
+      data: { status: "PROCESSING" },
+    });
+    return { success: true, sessionId, status: "PROCESSING" };
   }
 
   async stopSessionProcessing(sessionId: string) {

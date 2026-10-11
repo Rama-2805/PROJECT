@@ -215,7 +215,7 @@ export default function ReportsPage() {
       )}
 
       {/* Tabs */}
-      <div className="flex flex-wrap items-center gap-1 p-1 rounded-lg bg-glass-light border border-glass-border mb-6 w-fit">
+      <div className="flex flex-wrap items-center gap-1 p-1 rounded-lg bg-glass-light border border-glass-border mb-6 w-full sm:w-fit overflow-x-auto scrollbar-none">
         {tabs.map((tab) => (
           <button
             key={tab.key}
@@ -310,7 +310,7 @@ export default function ReportsPage() {
       {activeTab === "history" && (
         <motion.div {...fadeUp} key="history">
           {/* Filter badges */}
-          <div className="flex flex-wrap items-center gap-1 p-1 rounded-lg bg-glass-light border border-glass-border mb-4 w-fit">
+          <div className="flex flex-wrap items-center gap-1 p-1 rounded-lg bg-glass-light border border-glass-border mb-4 w-full sm:w-fit overflow-x-auto scrollbar-none">
             {["ALL", "ATTENDANCE", "BEHAVIOR", "STUDENT_PERFORMANCE", "DEVICE_HEALTH"].map((type) => (
               <button
                 key={type}
@@ -332,7 +332,7 @@ export default function ReportsPage() {
               {filtered.map((report) => (
                 <div
                   key={report.id}
-                  className="flex items-center justify-between p-3 rounded-lg border border-glass-border bg-glass-light hover:bg-glass-medium transition-all"
+                  className="flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-lg border border-glass-border bg-glass-light hover:bg-glass-medium transition-all gap-2"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <span className={cn(
@@ -423,7 +423,7 @@ export default function ReportsPage() {
               <div className="space-y-3">
                 <h4 className="text-xs font-bold text-text-primary uppercase tracking-wider font-mono">Subject Breakdown</h4>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
+                  <table className="w-full text-left text-xs min-w-[420px]">
                     <thead>
                       <tr className="border-b border-glass-border text-text-muted uppercase text-[9px]">
                         <th className="py-2">Subject Code</th>
@@ -516,7 +516,7 @@ export default function ReportsPage() {
             </div>
             
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-xs min-w-[420px]">
                 <thead>
                   <tr className="border-b border-glass-border text-text-muted uppercase text-[9px]">
                     <th className="py-2">USN</th>

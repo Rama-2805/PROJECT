@@ -222,7 +222,7 @@ export default function SettingsPage() {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 items-start">
         {/* Navigation Tabs */}
-        <GlassCard className="p-2 md:col-span-1 flex md:flex-col gap-1 overflow-x-auto md:overflow-x-visible">
+        <GlassCard className="p-2 md:col-span-1 flex md:flex-col gap-1 overflow-x-auto md:overflow-x-visible scrollbar-none">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -231,7 +231,7 @@ export default function SettingsPage() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  "flex items-center gap-3 w-full px-4 py-3 rounded-xl text-left text-xs font-semibold transition-all whitespace-nowrap cursor-pointer",
+                  "flex items-center gap-3 shrink-0 md:w-full px-4 py-3 rounded-xl text-left text-xs font-semibold transition-all whitespace-nowrap cursor-pointer",
                   isActive
                     ? "bg-white/10 text-white border border-white/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)]"
                     : "text-text-muted hover:text-text-primary hover:bg-white/[0.02]"
@@ -392,7 +392,7 @@ export default function SettingsPage() {
                       />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="flex flex-col gap-1.5">
                         <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Max Student Intake Limit</label>
                         <input

@@ -2103,8 +2103,8 @@
     "last_seen": 1786776591.74,
     "firstSeenSec": 1786776591.73,
     "lastSeenSec": 1786776591.74,
-    "identity_status": "UNKNOWN",
-    "status": "UNASSIGNED",
+    "identity_status": "CONFIRMED",
+    "status": "ASSIGNED",
     "student_id": null,
     "usn": null,
     "name": null,
@@ -2179,7 +2179,9 @@
       "/storage/enrollment/cmsu0jmk200005w6eb8ilb7ry/tracks/track_026/sample_755da7.jpg",
       "/storage/enrollment/cmsu0jmk200005w6eb8ilb7ry/tracks/track_027/sample_3e8811.jpg",
       "/storage/enrollment/cmsu0jmk200005w6eb8ilb7ry/tracks/track_029/sample_f58100.jpg"
-    ]
+    ],
+    "isEnrolled": true,
+    "enrolled": true
   },
   {
     "cluster_id": "cluster_002",

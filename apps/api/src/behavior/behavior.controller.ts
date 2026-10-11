@@ -31,6 +31,12 @@ export class BehaviorController {
     return this.behavior.ingest(dto);
   }
 
+  @Get("live")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD)
+  getLiveBehavior(@Query("cameraId") cameraId?: string) {
+    return this.behavior.getLiveBehavior(cameraId);
+  }
+
   @Get("events")
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.RESEARCH_ANALYST)
   getEvents(@Query() query: BehaviorQueryDto) {

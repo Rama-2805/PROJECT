@@ -20,6 +20,13 @@ router = APIRouter(prefix=f"{settings.api_prefix}/behavior", tags=["Behavior"])
 live_connections: dict[str, list[WebSocket]] = {}
 
 
+@router.get("/live")
+async def get_live_behavior(camera_id: Optional[str] = None):
+    """Retrieve live orientation-based attention and behavioral measurements from attendance engine."""
+    from ..services.attendance_engine import attendance_engine
+    return attendance_engine.get_live_behavior_metrics(camera_id)
+
+
 @router.post("/ingest")
 async def ingest_behavior(event: BehaviorEvent):
     """Receive a behavior event from the AI service."""

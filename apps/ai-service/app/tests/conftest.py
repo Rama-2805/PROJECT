@@ -98,6 +98,8 @@ def mock_insightface(monkeypatch):
     # So we need: insightface.app.FaceAnalysis(...) → mock_app
     mock_insightface_module = MagicMock()
     mock_insightface_module.app.FaceAnalysis.return_value = mock_app
+    orig_insightface = sys.modules.get("insightface")
+    orig_insightface_app = sys.modules.get("insightface.app")
 
     sys.modules["insightface"] = mock_insightface_module
     sys.modules["insightface.app"] = mock_insightface_module.app
@@ -109,3 +111,13 @@ def mock_insightface(monkeypatch):
     monkeypatch.setattr(cv2, "imread", lambda *args, **kwargs: np.ones((100, 100, 3), dtype=np.uint8) * 127)
 
     yield mock_app
+
+    if orig_insightface is not None:
+        sys.modules["insightface"] = orig_insightface
+    else:
+        sys.modules.pop("insightface", None)
+
+    if orig_insightface_app is not None:
+        sys.modules["insightface.app"] = orig_insightface_app
+    else:
+        sys.modules.pop("insightface.app", None)

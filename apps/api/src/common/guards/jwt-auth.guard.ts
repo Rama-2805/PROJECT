@@ -19,12 +19,13 @@ export class JwtAuthGuard extends AuthGuard("jwt") {
       return true;
     }
 
-    // 2. Mock token / DEMO mode / Dev mode bypass
+    // 2. Mock token / DEMO mode / Dev mode bypass (strictly disabled in production)
+    const isProd = process.env.NODE_ENV === "production";
     const isMockToken = authHeader.includes("mock-token");
     const isDemo = process.env.DEMO_MODE === "true" || process.env.NEXT_PUBLIC_DEMO_MODE === "true";
     const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === "development";
 
-    if (isMockToken || isDemo || isDev) {
+    if (!isProd && (isMockToken || isDemo || isDev)) {
       // Try super.canActivate first if there is a non-mock token
       if (authHeader && !isMockToken) {
         try {

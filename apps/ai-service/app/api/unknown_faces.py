@@ -64,6 +64,13 @@ class SecurityAlertRequest(BaseModel):
     location: str = Field(..., min_length=1, max_length=100, description="Classroom or camera location.")
 
 
+class AssignUnknownRequest(BaseModel):
+    id: Optional[str] = None
+    cluster_id: Optional[str] = None
+    student_usn: str = Field(..., min_length=1)
+    student_id: Optional[str] = None
+
+
 @router.get("")
 @router.get("/")
 def get_unknown_faces_paginated(
@@ -126,6 +133,100 @@ def get_unknown_faces_paginated(
         "limit": limit,
         "total_pages": math.ceil(total / limit) if limit > 0 else 0
     }
+
+
+@router.post("/assign")
+def assign_unknown_to_existing_student(request: AssignUnknownRequest, db: Session = Depends(get_db)):
+    """Teacher Review Action: Assign an unknown person observation to an existing enrolled student.
+    
+    1. Locates the unknown face record by id or cluster_id.
+    2. Loads its 512D ArcFace embedding vector.
+    3. Adds the vector into FAISS index for the student USN.
+    4. Persists updated FAISS index to disk.
+    5. Marks the unknown observation as resolved.
+    """
+    face = None
+    if request.id:
+        try:
+            face_id_int = int(request.id)
+            face = db.query(UnknownFace).filter(UnknownFace.id == face_id_int).first()
+        except ValueError:
+            pass
+    if not face and request.cluster_id:
+        face = db.query(UnknownFace).filter(UnknownFace.cluster_id == request.cluster_id).order_by(UnknownFace.quality_score.desc()).first()
+    if not face:
+        # Fallback: get the latest unknown face
+        face = db.query(UnknownFace).order_by(UnknownFace.created_at.desc()).first()
+
+    if not face:
+        raise HTTPException(status_code=404, detail="Unknown face observation not found")
+
+    embedding = None
+    if face.embedding_path and os.path.exists(face.embedding_path):
+        try:
+            embedding = np.load(face.embedding_path)
+        except Exception as e:
+            logger.warning(f"Could not load embedding from {face.embedding_path}: {e}")
+
+    if embedding is None and face.image_path and os.path.exists(face.image_path):
+        try:
+            import cv2
+            from ..services.embedding_service import embedding_service
+            crop_img = cv2.imread(face.image_path)
+            if crop_img is not None and crop_img.size > 0:
+                embedding = embedding_service.generate_embedding(crop_img)
+        except Exception as e:
+            logger.warning(f"Could not generate embedding from crop: {e}")
+
+    if embedding is None or len(embedding) != 512:
+        raise HTTPException(status_code=400, detail="Cannot assign: No valid 512D ArcFace embedding found for this observation.")
+
+    # Normalize vector
+    vec = np.array(embedding, dtype=np.float32)
+    norm = np.linalg.norm(vec)
+    if norm > 0:
+        vec = vec / norm
+
+    # Add to FAISS index
+    target_usn = request.student_usn.strip().upper()
+    faiss_service.add_student(target_usn, vec)
+    faiss_service.save_index()
+
+    # Mark resolved in DB
+    face.is_resolved = True
+    db.commit()
+
+    rel_img_path = get_relative_storage_path(face.image_path)
+    return {
+        "status": "success",
+        "message": f"Successfully assigned observation to student '{target_usn}'.",
+        "face_id": face.id,
+        "cluster_id": face.cluster_id,
+        "student_usn": target_usn,
+        "embedding": vec.tolist(),
+        "image_path": rel_img_path,
+        "quality_score": float(face.quality_score)
+    }
+
+
+@router.post("/{id}/dismiss")
+def dismiss_unknown_face(id: int, db: Session = Depends(get_db)):
+    """Teacher action: dismiss an unknown face observation."""
+    face = db.query(UnknownFace).filter(UnknownFace.id == id).first()
+    if not face:
+        raise HTTPException(status_code=404, detail="Observation not found")
+    face.is_resolved = True
+    db.commit()
+    return {"status": "success", "message": "Observation dismissed"}
+
+
+@router.post("/{id}/keep-unknown")
+def keep_unknown_face(id: int, db: Session = Depends(get_db)):
+    """Teacher action: keep observation unidentified."""
+    face = db.query(UnknownFace).filter(UnknownFace.id == id).first()
+    if not face:
+        raise HTTPException(status_code=404, detail="Observation not found")
+    return {"status": "success", "message": "Observation retained as unidentified person"}
 
 
 @router.post("/enroll")

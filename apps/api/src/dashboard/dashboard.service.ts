@@ -91,10 +91,10 @@ export class DashboardService {
       ai_summary: "Vemana IT SmartCampus operating normally. All 6 edge nodes streaming live.",
       recent_events: realRecentEvents,
       ai_models: [
-        { name: "ArcFace Embedding", status: "online", accuracy: 99.4 },
-        { name: "YuNet Face Detection", status: "online", accuracy: 99.1 },
-        { name: "YOLOv11 Person Tracker", status: "online", accuracy: 98.7 },
-        { name: "FAISS Vector Search", status: "online", accuracy: 99.8 },
+        { name: "Face Recognition Engine", status: "online", accuracy: 99.4 },
+        { name: "Face Detection Pipeline", status: "online", accuracy: 99.1 },
+        { name: "Classroom Person Tracker", status: "online", accuracy: 98.7 },
+        { name: "Biometric Verification Index", status: "online", accuracy: 99.8 },
       ],
     };
   }

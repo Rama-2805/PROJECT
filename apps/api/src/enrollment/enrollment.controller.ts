@@ -247,6 +247,18 @@ export class EnrollmentController {
     return this.enrollment.syncAiClusters(id);
   }
 
+  @Post("sessions/:id/pause")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  pauseSessionProcessing(@Param("id") id: string) {
+    return this.enrollment.pauseSessionProcessing(id);
+  }
+
+  @Post("sessions/:id/resume")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  resumeSessionProcessing(@Param("id") id: string) {
+    return this.enrollment.resumeSessionProcessing(id);
+  }
+
   @Post("sessions/:id/stop")
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
   stopSessionProcessing(@Param("id") id: string) {

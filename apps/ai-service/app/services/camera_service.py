@@ -20,6 +20,7 @@ from pathlib import Path
 class FootageSequenceCapture:
     """Streams video clips sequentially one-by-one from the project's footage directory."""
     def __init__(self, footage_dir: Optional[str] = None, loop: bool = True, target_fps: float = 24.0):
+        self._lock = threading.Lock()
         self.loop = loop
         self.target_fps = target_fps
         self._opened = True
@@ -30,6 +31,7 @@ class FootageSequenceCapture:
         self.last_frame_time = 0.0
         self._frame_count = 0
         self.current_video_name = ""
+        self.speed_multiplier = 1.0
         
         if self.video_files:
             # Start with 2.mp4 if present so classroom with 45 students is immediately processed
@@ -73,27 +75,35 @@ class FootageSequenceCapture:
         return files
 
     def _open_video(self, idx: int) -> bool:
-        if self.cap is not None:
-            self.cap.release()
-            self.cap = None
-        if not self.video_files:
-            return False
-        self.current_video_idx = idx % len(self.video_files)
-        filepath = self.video_files[self.current_video_idx]
-        self.current_video_name = os.path.basename(filepath)
-        self.cap = cv2.VideoCapture(filepath)
-        if self.cap.isOpened():
-            fps = self.cap.get(cv2.CAP_PROP_FPS)
-            if fps and 5 <= fps <= 60:
-                self.target_fps = fps
-            logger.info(f"[FOOTAGE] Opened video ({self.current_video_idx + 1}/{len(self.video_files)}): '{self.current_video_name}' (FPS={self.target_fps:.1f})")
-            return True
-        else:
-            logger.error(f"[FOOTAGE] Failed to open video file: '{filepath}'")
-            return False
+        with self._lock:
+            if self.cap is not None:
+                try:
+                    self.cap.release()
+                except Exception:
+                    pass
+                self.cap = None
+            if not self.video_files:
+                return False
+            self.current_video_idx = idx % len(self.video_files)
+            filepath = self.video_files[self.current_video_idx]
+            self.current_video_name = os.path.basename(filepath)
+            self.cap = cv2.VideoCapture(filepath)
+            if self.cap.isOpened():
+                try:
+                    fps = self.cap.get(cv2.CAP_PROP_FPS)
+                    if fps and 5 <= float(fps) <= 60:
+                        self.target_fps = float(fps)
+                except (TypeError, ValueError):
+                    pass
+                logger.info(f"[FOOTAGE] Opened video ({self.current_video_idx + 1}/{len(self.video_files)}): '{self.current_video_name}' (FPS={self.target_fps:.1f})")
+                return True
+            else:
+                logger.error(f"[FOOTAGE] Failed to open video file: '{filepath}'")
+                return False
 
     def isOpened(self) -> bool:
-        return self._opened and self.cap is not None and self.cap.isOpened()
+        with self._lock:
+            return self._opened and self.cap is not None and self.cap.isOpened()
 
     def read(self) -> Tuple[bool, Optional[np.ndarray]]:
         if not self._opened or not self.video_files:
@@ -110,33 +120,49 @@ class FootageSequenceCapture:
         self.last_frame_time = time.time()
         self._frame_count += 1
 
-        if self.cap is None or not self.cap.isOpened():
-            if not self._open_video(self.current_video_idx):
-                return False, None
-
-        ret, frame = self.cap.read()
-        if not ret or frame is None:
-            # Video ended! Advance to next video in the sequence
-            logger.info(f"[FOOTAGE] Video '{self.current_video_name}' completed. Advancing to next video in footage folder...")
-            next_idx = self.current_video_idx + 1
-            if next_idx >= len(self.video_files) and not self.loop:
-                self._opened = False
-                return False, None
-            
-            if self._open_video(next_idx):
-                ret, frame = self.cap.read()
-                if not ret or frame is None:
+        with self._lock:
+            if self.cap is None or not self.cap.isOpened():
+                if not self.video_files:
                     return False, None
-            else:
-                return False, None
+                filepath = self.video_files[self.current_video_idx]
+                self.current_video_name = os.path.basename(filepath)
+                self.cap = cv2.VideoCapture(filepath)
+                if not self.cap.isOpened():
+                    return False, None
 
-        return True, frame
+            ret, frame = self.cap.read()
+            if not ret or frame is None:
+                # Video ended! Advance to next video in the sequence
+                logger.info(f"[FOOTAGE] Video '{self.current_video_name}' completed. Advancing to next video in footage folder...")
+                next_idx = self.current_video_idx + 1
+                if next_idx >= len(self.video_files) and not self.loop:
+                    self._opened = False
+                    return False, None
+                
+                self.current_video_idx = next_idx % len(self.video_files)
+                filepath = self.video_files[self.current_video_idx]
+                self.current_video_name = os.path.basename(filepath)
+                if self.cap is not None:
+                    try:
+                        self.cap.release()
+                    except Exception:
+                        pass
+                self.cap = cv2.VideoCapture(filepath)
+                if self.cap.isOpened():
+                    ret, frame = self.cap.read()
+                    if not ret or frame is None:
+                        return False, None
+                else:
+                    return False, None
+
+            return True, frame
 
     def next_video(self) -> str:
         """Skip immediately to the next video clip in footage sequence."""
         if not self.video_files:
             return ""
         next_idx = (self.current_video_idx + 1) % len(self.video_files)
+        logger.info(f"[FOOTAGE] User requested next video clip: switching from idx {self.current_video_idx} to {next_idx}")
         self._open_video(next_idx)
         return self.current_video_name
 
@@ -145,23 +171,25 @@ class FootageSequenceCapture:
         if not self.video_files:
             return ""
         prev_idx = (self.current_video_idx - 1) % len(self.video_files)
+        logger.info(f"[FOOTAGE] User requested previous video clip: switching from idx {self.current_video_idx} to {prev_idx}")
         self._open_video(prev_idx)
         return self.current_video_name
 
     def seek_forward(self, seconds: float = 30.0) -> bool:
         """Fast-forward position within current clip by specified seconds."""
-        if self.cap is None or not self.cap.isOpened():
-            return False
-        cur_pos = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
-        fps = self.target_fps or 25.0
-        total_frames = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
-        new_pos = cur_pos + (seconds * fps)
-        if new_pos >= total_frames - 10:
-            self.next_video()
+        with self._lock:
+            if self.cap is None or not self.cap.isOpened():
+                return False
+            cur_pos = self.cap.get(cv2.CAP_PROP_POS_FRAMES)
+            fps = self.target_fps or 25.0
+            total_frames = self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            new_pos = cur_pos + (seconds * fps)
+            if new_pos >= total_frames - 10:
+                self.next_video()
+                return True
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, new_pos))
+            logger.info(f"[FOOTAGE] Fast-forwarded {seconds}s in '{self.current_video_name}' (frame {int(cur_pos)} -> {int(new_pos)})")
             return True
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, new_pos))
-        logger.info(f"[FOOTAGE] Fast-forwarded {seconds}s in '{self.current_video_name}' (frame {int(cur_pos)} -> {int(new_pos)})")
-        return True
 
     def set_speed(self, speed: float = 1.0):
         """Set playback speed multiplier (e.g. 1.0, 2.0, 4.0)."""
@@ -357,18 +385,66 @@ class CameraService:
         cap = self._captures.get(camera_id)
         if cap is None and self._captures:
             cap = next(iter(self._captures.values()))
+        new_name = ""
         if hasattr(cap, "next_video"):
-            return cap.next_video()
-        return ""
+            new_name = cap.next_video()
+
+        # Flush frame buffer queue and latest cached frames so new video frames show immediately
+        with self._lock:
+            buf = self._buffers.get(camera_id)
+            if buf is not None:
+                while not buf.empty():
+                    try:
+                        buf.get_nowait()
+                    except queue.Empty:
+                        break
+            self._latest_frames.pop(camera_id, None)
+
+        # Clear attendance engine tracker & annotated frame cache to prevent stale tracks
+        try:
+            from .attendance_engine import attendance_engine
+            with attendance_engine._lock:
+                attendance_engine.annotated_frames.pop(camera_id, None)
+                if camera_id in attendance_engine.active_sessions:
+                    from .face_tracker import IoUTracker
+                    attendance_engine.active_sessions[camera_id]["tracker"] = IoUTracker(iou_threshold=0.22, max_lost_frames=90)
+        except Exception as e:
+            logger.debug(f"Note on resetting tracker on next_video: {e}")
+
+        return new_name
 
     def prev_video(self, camera_id: str = "room-023") -> str:
         """Skip to previous video in footage playlist."""
         cap = self._captures.get(camera_id)
         if cap is None and self._captures:
             cap = next(iter(self._captures.values()))
+        new_name = ""
         if hasattr(cap, "prev_video"):
-            return cap.prev_video()
-        return ""
+            new_name = cap.prev_video()
+
+        # Flush frame buffer queue and latest cached frames so new video frames show immediately
+        with self._lock:
+            buf = self._buffers.get(camera_id)
+            if buf is not None:
+                while not buf.empty():
+                    try:
+                        buf.get_nowait()
+                    except queue.Empty:
+                        break
+            self._latest_frames.pop(camera_id, None)
+
+        # Clear attendance engine tracker & annotated frame cache to prevent stale tracks
+        try:
+            from .attendance_engine import attendance_engine
+            with attendance_engine._lock:
+                attendance_engine.annotated_frames.pop(camera_id, None)
+                if camera_id in attendance_engine.active_sessions:
+                    from .face_tracker import IoUTracker
+                    attendance_engine.active_sessions[camera_id]["tracker"] = IoUTracker(iou_threshold=0.22, max_lost_frames=90)
+        except Exception as e:
+            logger.debug(f"Note on resetting tracker on prev_video: {e}")
+
+        return new_name
 
     def seek_forward(self, camera_id: str = "room-023", seconds: float = 30.0) -> bool:
         """Fast-forward active video by seconds."""

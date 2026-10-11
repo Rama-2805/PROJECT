@@ -140,7 +140,7 @@ export default function HODPage() {
           <h2 className="text-xl font-bold text-text-primary tracking-tight">HOD Management</h2>
           <p className="text-xs text-text-muted">Manage department HODs, assign departments, and configure credentials</p>
         </div>
-        <Button size="sm" onClick={() => setIsAddModalOpen(true)}>
+        <Button size="sm" onClick={() => setIsAddModalOpen(true)} className="self-start sm:self-auto min-h-[40px]">
           <ShieldCheck className="w-4 h-4 mr-2" />
           Add HOD Account
         </Button>

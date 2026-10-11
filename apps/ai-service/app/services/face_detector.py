@@ -123,7 +123,7 @@ class FaceDetector:
 
         return True, "valid"
 
-    def detect_faces(self, frame: np.ndarray) -> List[Dict[str, Any]]:
+    def detect_scrfd_faces(self, frame: np.ndarray) -> List[Dict[str, Any]]:
         """Detect all faces in a BGR image frame using SCRFD 10G with validation filtering."""
         if frame is None or frame.size == 0:
             return []
@@ -169,9 +169,37 @@ class FaceDetector:
                 "crop": face_crop,
                 "raw_face": None,
                 "embedding": None,  # Deferred: ArcFace embeddings generated only on selected crops
+                "detector": "scrfd",
             })
 
         return detections
+
+    def detect_faces(self, frame: np.ndarray) -> List[Dict[str, Any]]:
+        """Detect all faces in a BGR image frame using the configured detector (default: YOLO26-Face)."""
+        if frame is None or frame.size == 0:
+            return []
+
+        model_type = getattr(settings, "detection_model", "yolo26").lower()
+
+        if model_type == "yolo26":
+            from .yolo26_detector import yolo26_detector
+            try:
+                return yolo26_detector.detect_faces(frame)
+            except Exception as e:
+                yolo26_detector.last_error = str(e)
+                logger.error(f"[YOLO26-DISPATCH] YOLO26-Face detector encountered error: {e}", exc_info=True)
+                raise RuntimeError(f"YOLO26-Face detection failed: {e}") from e
+
+        elif model_type == "combined":
+            from .combined_detector import combined_detector
+            try:
+                return combined_detector.detect_faces(frame)
+            except Exception as e:
+                logger.error(f"[COMBINED-DISPATCH] Combined detector encountered error: {e}", exc_info=True)
+                raise RuntimeError(f"Combined detection failed: {e}") from e
+
+        # Baseline: SCRFD 10G (only when explicitly configured)
+        return self.detect_scrfd_faces(frame)
 
     def set_det_size(self, size_tuple: Tuple[int, int]):
         """Dynamically set det_size on InsightFace SCRFD model."""

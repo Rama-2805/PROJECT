@@ -30,7 +30,7 @@ interface ModelEvaluation {
 
 const MOCK_EVALUATIONS: ModelEvaluation[] = [
   {
-    id: "ev-1", modelId: "m-1", modelName: "ArcFace Face Recognizer", modelType: "FACE_RECOGNITION", version: "2.1.0",
+    id: "ev-1", modelId: "m-1", modelName: "Face Recognition Engine", modelType: "FACE_RECOGNITION", version: "2.1.0",
     precision: 0.992, recall: 0.988, f1Score: 0.990, accuracy: 99.1,
     falsePositives: 12, falseNegatives: 8, avgLatency: 120, p95Latency: 185,
     robustnessScore: 0.95, testSampleCount: 2500, datasetVersion: "2.0.0",
@@ -38,7 +38,7 @@ const MOCK_EVALUATIONS: ModelEvaluation[] = [
     createdAt: new Date("2025-06-04"),
   },
   {
-    id: "ev-2", modelId: "m-2", modelName: "YOLO Behavior Detector", modelType: "BEHAVIOR", version: "1.3.0",
+    id: "ev-2", modelId: "m-2", modelName: "Classroom Behavior Engine", modelType: "BEHAVIOR", version: "1.3.0",
     precision: 0.935, recall: 0.918, f1Score: 0.926, accuracy: 94.5,
     falsePositives: 45, falseNegatives: 32, avgLatency: 85, p95Latency: 130,
     robustnessScore: 0.88, testSampleCount: 4500, datasetVersion: "1.0.0",
@@ -54,7 +54,7 @@ const MOCK_EVALUATIONS: ModelEvaluation[] = [
     createdAt: new Date("2025-06-12"),
   },
   {
-    id: "ev-4", modelId: "m-1", modelName: "ArcFace v1.0 Baseline", modelType: "FACE_RECOGNITION", version: "1.0.0",
+    id: "ev-4", modelId: "m-1", modelName: "Face Recognition Engine v1.0", modelType: "FACE_RECOGNITION", version: "1.0.0",
     precision: 0.956, recall: 0.941, f1Score: 0.948, accuracy: 95.2,
     falsePositives: 38, falseNegatives: 22, avgLatency: 155, p95Latency: 220,
     robustnessScore: 0.82, testSampleCount: 2000, datasetVersion: "1.0.0",
@@ -62,7 +62,7 @@ const MOCK_EVALUATIONS: ModelEvaluation[] = [
     createdAt: new Date("2025-05-20"),
   },
   {
-    id: "ev-5", modelId: "m-2", modelName: "YOLO Behavior v1.0", modelType: "BEHAVIOR", version: "1.0.0",
+    id: "ev-5", modelId: "m-2", modelName: "Classroom Behavior Engine v1.0", modelType: "BEHAVIOR", version: "1.0.0",
     precision: 0.891, recall: 0.872, f1Score: 0.881, accuracy: 88.7,
     falsePositives: 95, falseNegatives: 68, avgLatency: 110, p95Latency: 175,
     robustnessScore: 0.72, testSampleCount: 3000, datasetVersion: "0.5.0",

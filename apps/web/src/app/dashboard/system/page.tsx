@@ -28,11 +28,11 @@ interface SystemMetric {
 }
 
 const DEFAULT_SERVICES: ServiceStatus[] = [
-  { name: "Database", status: "ONLINE", latency: "18ms", uptime: "99.95%", version: "PostgreSQL 16" },
-  { name: "AI Service", status: "ONLINE", latency: "8ms", uptime: "99.7%", version: "PyTorch Core" },
-  { name: "Recognition Service", status: "ONLINE", latency: "120ms", uptime: "99.5%", version: "FAISS Vector Index" },
-  { name: "Camera Service", status: "ONLINE", latency: "25ms", uptime: "98.2%", version: "CCTV Agent v2" },
-  { name: "Storage Service", status: "ONLINE", latency: "10ms", uptime: "99.9%", version: "Local NFS/S3" },
+  { name: "Database Service", status: "ONLINE", latency: "18ms", uptime: "99.95%", version: "Primary Cluster" },
+  { name: "Core Processing Engine", status: "ONLINE", latency: "8ms", uptime: "99.7%", version: "Production v2.4" },
+  { name: "Identity Verification Service", status: "ONLINE", latency: "120ms", uptime: "99.5%", version: "Active Directory" },
+  { name: "Camera Gateway Service", status: "ONLINE", latency: "25ms", uptime: "98.2%", version: "Stream Router v2" },
+  { name: "Storage Service", status: "ONLINE", latency: "10ms", uptime: "99.9%", version: "Encrypted Volume" },
 ];
 
 export default function SystemPage() {
@@ -62,9 +62,9 @@ export default function SystemPage() {
   const [aiMetrics, setAiMetrics] = useState({
     embeddingGenTime: "42ms",
     recognitionTime: "74ms",
-    faissSearchTime: "4ms",
-    optimizerStatus: "IDLE (Next run Scheduled)",
-    modelStatus: "LOADED (ArcFace ResNet50)",
+    directorySearchTime: "4ms",
+    optimizerStatus: "ACTIVE (Automated Routine)",
+    modelStatus: "READY (High Precision Engine)",
     vectorCount: 130,
   });
 
@@ -155,7 +155,7 @@ export default function SystemPage() {
             {isDemoMode() && <span className="ml-2 px-1.5 py-0.5 rounded bg-warning/20 text-warning text-[9px] font-bold">DEMO ACTIVE</span>}
           </p>
         </div>
-        <Button size="sm" onClick={triggerRefresh} disabled={refreshing} className="flex items-center gap-1.5">
+        <Button size="sm" onClick={triggerRefresh} disabled={refreshing} className="flex items-center gap-1.5 self-start sm:self-auto min-h-[40px]">
           <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
           {refreshing ? "Refreshing..." : "Refresh Diagnostics"}
         </Button>
@@ -243,13 +243,13 @@ export default function SystemPage() {
           <h3 className="text-xs font-bold uppercase tracking-wider text-text-primary font-mono">Core Gateway Services Status</h3>
           <div className="space-y-2">
             {services.map((service) => (
-              <div key={service.name} className="flex items-center justify-between p-2.5 rounded-lg bg-glass-light border border-glass-border text-xs">
+              <div key={service.name} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2.5 rounded-lg bg-glass-light border border-glass-border text-xs">
                 <div className="flex items-center gap-2.5">
                   {getServiceIcon(service.name)}
                   <span className="font-medium text-text-primary">{service.name}</span>
                 </div>
-                <div className="flex items-center gap-4 text-text-muted">
-                  <span>Latency: {service.latency}</span>
+                <div className="flex items-center justify-between sm:justify-end gap-3 text-text-muted">
+                  <span className="text-[11px]">Latency: {service.latency}</span>
                   <span className={cn(
                     "text-[10px] font-mono px-2 py-0.5 rounded border",
                     service.status === "ONLINE" ? "bg-success/10 text-success border-success/20" : "bg-warning/10 text-warning border-warning/20"
@@ -262,32 +262,32 @@ export default function SystemPage() {
           </div>
         </GlassCard>
 
-        {/* AI Service Diagnostics */}
+        {/* System Diagnostics */}
         <GlassCard className="space-y-4">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-text-primary font-mono">AI Model & Embeddings Engine Diagnostics</h3>
+          <h3 className="text-xs font-bold uppercase tracking-wider text-text-primary font-mono">Identity Verification Subsystem</h3>
           <div className="space-y-3 text-xs">
             <div className="flex justify-between border-b border-glass-border pb-1.5">
-              <span className="text-text-secondary">Face Embedding Time:</span>
+              <span className="text-text-secondary">Face Template Processing:</span>
               <span className="font-semibold text-text-primary font-mono">{aiMetrics.embeddingGenTime}</span>
             </div>
             <div className="flex justify-between border-b border-glass-border pb-1.5">
-              <span className="text-text-secondary">Face Recognition Latency:</span>
+              <span className="text-text-secondary">Identity Verification Latency:</span>
               <span className="font-semibold text-text-primary font-mono">{aiMetrics.recognitionTime}</span>
             </div>
             <div className="flex justify-between border-b border-glass-border pb-1.5">
-              <span className="text-text-secondary">FAISS Search Latency:</span>
-              <span className="font-semibold text-ai-cyan font-mono">{aiMetrics.faissSearchTime}</span>
+              <span className="text-text-secondary">Directory Match Latency:</span>
+              <span className="font-semibold text-ai-cyan font-mono">{aiMetrics.directorySearchTime}</span>
             </div>
             <div className="flex justify-between border-b border-glass-border pb-1.5">
-              <span className="text-text-secondary">Active Vector Count:</span>
-              <span className="font-semibold text-text-primary font-mono">{aiMetrics.vectorCount.toLocaleString()} vectors</span>
+              <span className="text-text-secondary">Enrolled Identity Templates:</span>
+              <span className="font-semibold text-text-primary font-mono">{aiMetrics.vectorCount.toLocaleString()} profiles</span>
             </div>
             <div className="flex justify-between border-b border-glass-border pb-1.5">
-              <span className="text-text-secondary">Weekly Optimizer Status:</span>
-              <span className="font-semibold text-warning">{aiMetrics.optimizerStatus}</span>
+              <span className="text-text-secondary">Index Optimization Status:</span>
+              <span className="font-semibold text-success">{aiMetrics.optimizerStatus}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-text-secondary">Active Model Engine:</span>
+              <span className="text-text-secondary">Verification Engine:</span>
               <span className="font-semibold text-ai-purple">{aiMetrics.modelStatus}</span>
             </div>
           </div>

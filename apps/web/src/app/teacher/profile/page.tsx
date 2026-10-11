@@ -130,7 +130,7 @@ export default function TeacherProfilePage() {
               <h3 className="text-sm font-semibold text-text-primary">Professional Information</h3>
             </div>
             
-            <div className="grid grid-cols-2 gap-4 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
               <div>
                 <p className="text-text-muted mb-0.5">Faculty Title</p>
                 <p className="font-semibold text-text-primary">{teacher.title}</p>

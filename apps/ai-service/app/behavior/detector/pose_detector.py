@@ -145,30 +145,53 @@ class ObjectDetector:
     def model(self):
         if self._model is None:
             try:
-                import torch
-                self._model = torch.hub.load("ultralytics/yolov5", "yolov5s", pretrained=True, verbose=False)
+                from ultralytics import YOLO
+                self._model = YOLO("yolov8n.pt")
             except Exception:
-                self._model = None
+                try:
+                    import torch
+                    self._model = torch.hub.load("ultralytics/yolov5", "yolov5s", pretrained=True, verbose=False)
+                except Exception:
+                    self._model = None
         return self._model
 
     def detect_phones(self, frame: np.ndarray) -> List[DetectedObject]:
         """Detect mobile phones in the frame."""
-        if self.model is None:
+        if self.model is None or frame is None or frame.size == 0:
             return self._fallback_detect(frame)
 
-        results = self.model(frame)
-        detections = results.xyxy[0].cpu().numpy()
-
         phones = []
-        for det in detections:
-            x1, y1, x2, y2, conf, cls_id = det
-            if int(cls_id) == 67 and conf > 0.5:  # cell phone
-                phones.append(DetectedObject(
-                    class_id=67,
-                    label="cell phone",
-                    confidence=float(conf),
-                    bounding_box=(float(x1), float(y1), float(x2), float(y2)),
-                ))
+        try:
+            # Check if ultralytics YOLO model
+            if hasattr(self.model, "predict") or type(self.model).__name__ == "YOLO":
+                results = self.model(frame, classes=[67], conf=0.45, verbose=False, imgsz=320)
+                if results and len(results) > 0 and results[0].boxes is not None:
+                    for box in results[0].boxes:
+                        coords = box.xyxy[0].cpu().numpy()
+                        conf = float(box.conf[0].cpu().numpy())
+                        phones.append(DetectedObject(
+                            class_id=67,
+                            label="cell phone",
+                            confidence=conf,
+                            bounding_box=(float(coords[0]), float(coords[1]), float(coords[2]), float(coords[3])),
+                        ))
+                return phones
+
+            # Fallback to PyTorch hub format if applicable
+            results = self.model(frame)
+            detections = results.xyxy[0].cpu().numpy()
+            for det in detections:
+                x1, y1, x2, y2, conf, cls_id = det
+                if int(cls_id) == 67 and conf > 0.45:  # cell phone
+                    phones.append(DetectedObject(
+                        class_id=67,
+                        label="cell phone",
+                        confidence=float(conf),
+                        bounding_box=(float(x1), float(y1), float(x2), float(y2)),
+                    ))
+        except Exception:
+            return self._fallback_detect(frame)
+
         return phones
 
     def _fallback_detect(self, frame: np.ndarray) -> List[DetectedObject]:

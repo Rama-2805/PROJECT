@@ -342,6 +342,150 @@ export class AttendanceService {
     }
   }
 
+  async assignUnknownFace(id: string, dto: { studentId: string; studentUsn?: string }, userId?: string) {
+    // 1. Verify student exists in PostgreSQL
+    const student = await this.prisma.student.findFirst({
+      where: {
+        OR: [
+          { id: dto.studentId },
+          { usn: dto.studentUsn || dto.studentId },
+          { rollNumber: dto.studentUsn || dto.studentId },
+          { studentId: dto.studentUsn || dto.studentId },
+        ],
+      },
+    });
+    if (!student) {
+      throw new NotFoundException(`Student ${dto.studentId} not found in roster`);
+    }
+
+    const studentUsn = student.usn || student.rollNumber || student.studentId;
+
+    // 2. Call AI service to update FAISS recognition index and mark observation resolved
+    const aiServiceUrl = process.env.AI_SERVICE_URL || "http://localhost:8000";
+    const res = await fetch(`${aiServiceUrl}/api/v1/unknown-faces/assign`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.INTERNAL_API_KEY || process.env.ENCRYPTION_KEY || "dev-encryption-key-32-bytes-long!!",
+      },
+      body: JSON.stringify({
+        id,
+        student_usn: studentUsn,
+        student_id: student.id,
+      }),
+    });
+
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`AI service assign failed: ${errText}`);
+    }
+
+    const aiResult = await res.json();
+
+    // 3. Durably persist embedding in PostgreSQL FaceEmbedding table
+    if (aiResult.embedding && Array.isArray(aiResult.embedding)) {
+      await this.prisma.faceEmbedding.create({
+        data: {
+          studentId: student.id,
+          embeddingVector: JSON.stringify(aiResult.embedding),
+          confidence: aiResult.quality_score || 0.85,
+          thumbnailPath: aiResult.image_path || null,
+          metadata: JSON.stringify({
+            source: "LIVE_MONITORING_UNKNOWN_ASSIGNMENT",
+            assignedAt: new Date().toISOString(),
+            assignedBy: userId || "teacher",
+            unknownFaceId: id,
+            clusterId: aiResult.cluster_id,
+            imagePath: aiResult.image_path,
+          }),
+        },
+      });
+    }
+
+    // 4. Update student profile and face enrollment counter
+    await this.prisma.student.update({
+      where: { id: student.id },
+      data: {
+        faceEnrolled: true,
+        faceSamples: { increment: 1 },
+        ...(aiResult.image_path
+          ? {
+              primaryFaceImagePath: student.primaryFaceImagePath || aiResult.image_path,
+              profilePhoto: student.profilePhoto || aiResult.image_path,
+            }
+          : {}),
+      },
+    });
+
+    // 5. Create audit record in EnrollmentHistory
+    await this.prisma.enrollmentHistory.create({
+      data: {
+        studentId: student.id,
+        performedById: userId || "system",
+        action: "LIVE_MONITORING_UNKNOWN_ASSIGNMENT",
+        metadata: JSON.stringify({
+          unknownFaceId: id,
+          clusterId: aiResult.cluster_id,
+          quality: aiResult.quality_score,
+          assignedAt: new Date().toISOString(),
+        }),
+      },
+    });
+
+    // 6. If matching record exists in Prisma UnknownFace table, mark resolved
+    try {
+      await this.prisma.unknownFace.updateMany({
+        where: { id },
+        data: {
+          isResolved: true,
+          resolvedAt: new Date(),
+          resolvedById: userId || "teacher",
+        },
+      });
+    } catch {
+      // Non-fatal if ID format differs
+    }
+
+    return {
+      success: true,
+      message: `Assigned observation to ${student.fullName} (${studentUsn})`,
+      student: {
+        id: student.id,
+        fullName: student.fullName,
+        usn: studentUsn,
+      },
+      aiResult,
+    };
+  }
+
+  async keepUnknownFace(id: string) {
+    const aiServiceUrl = process.env.AI_SERVICE_URL || "http://localhost:8000";
+    const res = await fetch(`${aiServiceUrl}/api/v1/unknown-faces/${id}/keep-unknown`, {
+      method: "POST",
+      headers: {
+        "x-api-key": process.env.INTERNAL_API_KEY || process.env.ENCRYPTION_KEY || "dev-encryption-key-32-bytes-long!!",
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`AI service keep-unknown failed: ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async dismissUnknownFace(id: string) {
+    const aiServiceUrl = process.env.AI_SERVICE_URL || "http://localhost:8000";
+    const res = await fetch(`${aiServiceUrl}/api/v1/unknown-faces/${id}/dismiss`, {
+      method: "POST",
+      headers: {
+        "x-api-key": process.env.INTERNAL_API_KEY || process.env.ENCRYPTION_KEY || "dev-encryption-key-32-bytes-long!!",
+      },
+    });
+    if (!res.ok) {
+      throw new Error(`AI service dismiss failed: ${res.status}`);
+    }
+    return res.json();
+  }
+
   async enrollUnknown(dto: any) {
     const aiServiceUrl = process.env.AI_SERVICE_URL || "http://localhost:8000";
     try {

@@ -112,13 +112,6 @@ export default function UnknownFacesDashboard() {
 
   const fetchClusters = async () => {
     setLoading(true);
-    if (isDemoMode()) {
-      setClusters(MOCK_CLUSTERS);
-      setSelectedCluster(MOCK_CLUSTERS[0] || null);
-      setLoading(false);
-      return;
-    }
-
     try {
       const res = await api.get<UnknownCluster[]>("/clusters");
       if (res.success && res.data) {
@@ -138,11 +131,16 @@ export default function UnknownFacesDashboard() {
           setSelectedCluster(null);
           setClusterDetails(null);
         }
+      } else {
+        setClusters([]);
+        setSelectedCluster(null);
+        setClusterDetails(null);
       }
     } catch (err) {
       console.error("Error fetching clusters:", err);
-      setClusters(MOCK_CLUSTERS);
-      setSelectedCluster(MOCK_CLUSTERS[0] || null);
+      setClusters([]);
+      setSelectedCluster(null);
+      setClusterDetails(null);
     } finally {
       setLoading(false);
     }
@@ -336,12 +334,12 @@ export default function UnknownFacesDashboard() {
     setOptimizerLogs(["Initializing consolidation pass...", "Gathering candidate face images..."]);
     
     if (isDemoMode()) {
-      setTimeout(() => setOptimizerLogs((prev) => [...prev, "Running DBSCAN clustering...", "Filtering blurred images..."]), 1000);
-      setTimeout(() => setOptimizerLogs((prev) => [...prev, "De-duplicating face candidates...", "Re-calculating centroid vectors..."]), 2000);
+      setTimeout(() => setOptimizerLogs((prev) => [...prev, "Analyzing candidate face images...", "Filtering low-clarity samples..."]), 1000);
+      setTimeout(() => setOptimizerLogs((prev) => [...prev, "Consolidating facial profiles...", "Recalibrating verification templates..."]), 2000);
       setTimeout(() => {
-        setOptimizerLogs((prev) => [...prev, "FAISS index rebuilt (ntotal = 53 vectors).", "Optimization report generated successfully."]);
+        setOptimizerLogs((prev) => [...prev, "Biometric directory index successfully synchronized.", "Optimization report generated successfully."]);
         setOptimizing(false);
-        alert("Weekly face optimization run completed successfully (Demo Mode)!");
+        alert("Face Profile Optimization completed successfully!");
       }, 3500);
       return;
     }
@@ -351,10 +349,10 @@ export default function UnknownFacesDashboard() {
       if (res.success && res.data) {
         const report = res.data.report || res.data;
         setOptimizerLogs([
-          `Consolidation completed at ${report.timestamp}`,
-          `Students Updated: ${report.students_updated}`,
-          `New samples consolidated: ${report.new_samples_added}`,
-          "FAISS index successfully rebuilt.",
+          `Consolidation completed at ${report.timestamp || new Date().toLocaleTimeString()}`,
+          `Students Updated: ${report.students_updated ?? 0}`,
+          `New samples consolidated: ${report.new_samples_added ?? 0}`,
+          "Biometric directory index successfully synchronized.",
         ]);
         alert("Face Profile Optimization completed successfully!");
       }

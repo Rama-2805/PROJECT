@@ -55,12 +55,17 @@ class Settings(BaseSettings):
     initial_embeddings_per_student: int = 5  # Target initial embeddings per student profile
 
     # Face Detection & Safety Filtering
-    detection_model: str = "scrfd"                 # Options: "scrfd", "yolo11", "combined"
+    detection_model: str = "yolo26"                # Options: "yolo26", "scrfd", "combined"
     person_detector: str = "disabled"              # Options: "disabled", "yolo11"
-    yolo_model_path: str = "yolo11n-face.pt"       # Default YOLO11 face model weight
+    yolo_model_path: str = "yolo11n-face.pt"       # Default legacy YOLO11 face model weight
     yolo_confidence_threshold: float = 0.35        # YOLO11 confidence threshold for back-row faces
     yolo_iou_threshold: float = 0.45               # YOLO11 NMS IoU threshold
     yolo_imgsz: int = 1024                         # YOLO11 input resolution for high pixel detail
+    yolo26_model_path: str = "models/yolo26s-face.pt" # Verified YOLO26-S-Face checkpoint
+    yolo26_confidence_threshold: float = 0.30      # YOLO26 confidence threshold (optimized for classroom recall)
+    yolo26_iou_threshold: float = 0.45             # YOLO26 NMS IoU threshold
+    yolo26_imgsz: int = 1280                       # YOLO26 input resolution for distant faces
+    yolo26_enable_tiling: bool = True              # Enable targeted ROI tiling for back-row small faces
     detection_confidence_threshold: float = 0.70  # Reject false positive detections < 0.70
     # MediaPipe Face Landmarker & Pose Quality Stage
     enable_mediapipe_quality: bool = True
@@ -80,7 +85,7 @@ class Settings(BaseSettings):
     max_faces_per_frame: int = 40
 
     # Face Recognition
-    recognition_confidence_threshold: float = 0.58
+    recognition_confidence_threshold: float = 0.60
     embedding_size: int = 512  # ArcFace embedding dimension
 
     # Track-Centric Clustering

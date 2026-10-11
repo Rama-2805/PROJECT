@@ -72,6 +72,12 @@ const webProcess = spawn(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run
   env: { ...process.env, FORCE_COLOR: 'true' }
 });
 
+const aiProcess = spawn(process.platform === 'win32' ? 'powershell' : 'bash', [path.join(rootDir, 'apps', 'ai-service', 'start.sh')], {
+  cwd: path.join(rootDir, 'apps', 'ai-service'),
+  stdio: 'inherit',
+  env: { ...process.env, FORCE_COLOR: 'true' }
+});
+
 // Handle graceful shutdown
 let isCleaningUp = false;
 function cleanup() {
@@ -83,6 +89,9 @@ function cleanup() {
   } catch (e) {}
   try {
     webProcess.kill();
+  } catch (e) {}
+  try {
+    aiProcess.kill();
   } catch (e) {}
   console.log("👋 Goodbye!");
   process.exit();
@@ -102,6 +111,13 @@ apiProcess.on('exit', (code) => {
 webProcess.on('exit', (code) => {
   if (!isCleaningUp) {
     console.log(`Web process exited with code ${code}`);
+    cleanup();
+  }
+});
+
+aiProcess.on('exit', (code) => {
+  if (!isCleaningUp) {
+    console.log(`AI process exited with code ${code}`);
     cleanup();
   }
 });

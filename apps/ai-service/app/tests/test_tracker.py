@@ -38,7 +38,13 @@ def test_tracker_non_matching_and_cleanup():
     tracker.update([{"bbox": [200, 200, 250, 250], "confidence": 0.88}])
     assert len(tracker.tracks) == 2  # Old track is marked lost but kept, new track created
     
-    # Frame 3: Empty detection
+    # Frame 3: Empty detection (lost_frames becomes 2, track.state becomes LOST)
     tracker.update([])
-    # Track 1 has now been lost for 2 consecutive frames -> should be removed (cleaned up)
+    assert t1_id in tracker.tracks
+
+    # Frame 4: Empty detection (lost_frames becomes 3 > max_lost_frames=2)
+    tracker.update([])
+
+    # Frame 5: Pruned from active tracks
+    tracker.update([])
     assert t1_id not in tracker.tracks

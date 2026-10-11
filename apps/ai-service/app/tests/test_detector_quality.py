@@ -9,27 +9,35 @@ from app.services.face_quality_service import face_quality_service
 
 def test_face_detector_filtering(monkeypatch):
     """Test that face detector filters out low-confidence faces."""
-    dummy_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    dummy_frame = np.full((480, 640, 3), 128, dtype=np.uint8)
+
+    from app.services.yolo26_detector import yolo26_detector
 
     # 1. High confidence face should be detected
-    mock_face_high = MagicMock()
-    mock_face_high.det_score = 0.92
-    mock_face_high.bbox = np.array([20.0, 20.0, 100.0, 100.0])
-    mock_face_high.landmark = np.zeros((5, 2))
+    mock_box_high = MagicMock()
+    mock_box_high.conf = [MagicMock(cpu=lambda: MagicMock(item=lambda: 0.92))]
+    mock_box_high.xyxy = [MagicMock(cpu=lambda: MagicMock(numpy=lambda: np.array([20, 20, 100, 100])))]
 
-    monkeypatch.setattr(face_detector.model, "get", lambda *args: [mock_face_high])
+    mock_res_high = MagicMock()
+    mock_res_high.boxes = [mock_box_high]
+    mock_res_high.keypoints = None
+
+    monkeypatch.setattr(yolo26_detector.model, "predict", lambda *args, **kwargs: [mock_res_high])
     results = face_detector.detect_faces(dummy_frame)
     assert len(results) == 1
     assert results[0]["confidence"] == 0.92
     assert results[0]["bbox"] == [20, 20, 100, 100]
 
-    # 2. Low confidence face (< 0.8) should be skipped
-    mock_face_low = MagicMock()
-    mock_face_low.det_score = 0.75
-    mock_face_low.bbox = np.array([20.0, 20.0, 100.0, 100.0])
-    mock_face_low.landmark = np.zeros((5, 2))
+    # 2. Low confidence face (< threshold) should be skipped
+    mock_box_low = MagicMock()
+    mock_box_low.conf = [MagicMock(cpu=lambda: MagicMock(item=lambda: 0.15))]
+    mock_box_low.xyxy = [MagicMock(cpu=lambda: MagicMock(numpy=lambda: np.array([20, 20, 100, 100])))]
 
-    monkeypatch.setattr(face_detector.model, "get", lambda *args: [mock_face_low])
+    mock_res_low = MagicMock()
+    mock_res_low.boxes = [mock_box_low]
+    mock_res_low.keypoints = None
+
+    monkeypatch.setattr(yolo26_detector.model, "predict", lambda *args, **kwargs: [mock_res_low])
     results = face_detector.detect_faces(dummy_frame)
     assert len(results) == 0
 

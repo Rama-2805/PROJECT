@@ -1,9 +1,11 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable, NotFoundException, Logger } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateStudentDto, UpdateStudentDto, StudentQueryDto } from "./students.dto";
 
 @Injectable()
 export class StudentsService {
+  private readonly logger = new Logger(StudentsService.name);
+
   constructor(private prisma: PrismaService) {}
 
   async findAll(query: StudentQueryDto) {
@@ -431,6 +433,128 @@ export class StudentsService {
     };
   }
 
+  async updateStudentPhoto(dto: {
+    studentId?: string;
+    usn?: string;
+    userId?: string;
+    email?: string;
+    photoData: string;
+  }) {
+    const rawUsn = (dto.usn || dto.studentId || "").trim();
+    const upperUsn = rawUsn.toUpperCase();
+    const usnVariants = Array.from(new Set([
+      rawUsn,
+      upperUsn,
+      rawUsn.toLowerCase(),
+      upperUsn.replace(/^1V1/, "1VI"),
+      upperUsn.replace(/^1VI/, "1V1"),
+      upperUsn.replace(/1V1/g, "1VI"),
+      upperUsn.replace(/1VI/g, "1V1"),
+      upperUsn.replace(/CSO/g, "CS0"),
+      upperUsn.replace(/CS0/g, "CSO"),
+    ])).filter(Boolean);
+
+    const orClauses: any[] = [];
+    if (dto.studentId) orClauses.push({ id: dto.studentId });
+    if (dto.userId) orClauses.push({ userId: dto.userId });
+    if (dto.email) orClauses.push({ email: dto.email });
+    if (usnVariants.length > 0) {
+      orClauses.push(
+        { rollNumber: { in: usnVariants } },
+        { studentId: { in: usnVariants } },
+        { usn: { in: usnVariants } },
+      );
+      if (rawUsn.length >= 3) {
+        orClauses.push(
+          { rollNumber: { contains: rawUsn.slice(-6), mode: "insensitive" } },
+          { studentId: { contains: rawUsn.slice(-6), mode: "insensitive" } },
+          { fullName: { contains: rawUsn, mode: "insensitive" } },
+        );
+      }
+    }
+
+    let student = await this.prisma.student.findFirst({
+      where: orClauses.length > 0 ? { OR: orClauses } : {},
+    });
+
+    if (!student && rawUsn.length >= 3) {
+      const digits = rawUsn.replace(/\D/g, "");
+      if (digits.length >= 3) {
+        student = await this.prisma.student.findFirst({
+          where: {
+            OR: [
+              { rollNumber: { contains: digits } },
+              { studentId: { contains: digits } },
+            ],
+          },
+        });
+      }
+    }
+
+    if (!student) {
+      throw new NotFoundException("Student not found for photo update.");
+    }
+
+    const effectiveUsn = student.rollNumber || student.studentId || student.usn || "STUDENT";
+
+    // 1. Update Student in Postgres
+    const updated = await this.prisma.student.update({
+      where: { id: student.id },
+      data: {
+        profilePhoto: dto.photoData,
+        primaryFaceImagePath: dto.photoData,
+        faceEnrolled: true,
+        faceSamples: (student.faceSamples || 0) + 1,
+      },
+    });
+
+    // 2. Also update associated User profileImage if linked
+    if (student.userId) {
+      try {
+        await this.prisma.user.update({
+          where: { id: student.userId },
+          data: { profileImage: dto.photoData },
+        });
+      } catch {}
+    }
+
+    // 3. Sync with AI service for FAISS embedding extraction
+    let aiResult: any = null;
+    try {
+      const aiUrl = "http://127.0.0.1:8000/api/v1/sessions/direct-photo-enroll";
+      const res = await fetch(aiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          usn: effectiveUsn,
+          name: updated.fullName,
+          photoBase64: dto.photoData,
+        }),
+        signal: AbortSignal.timeout(6000),
+      });
+      if (res.ok) {
+        aiResult = await res.json();
+      }
+    } catch (err: any) {
+      this.logger.warn(`AI direct-photo-enroll failed (will use stored image): ${err?.message}`);
+    }
+
+    return {
+      success: true,
+      message: "Student photo updated successfully.",
+      student: {
+        id: updated.id,
+        fullName: updated.fullName,
+        usn: effectiveUsn,
+        profilePhoto: updated.profilePhoto,
+        primaryFaceImagePath: updated.primaryFaceImagePath,
+        faceEnrolled: updated.faceEnrolled,
+        faceSamples: updated.faceSamples,
+      },
+      aiSync: aiResult,
+    };
+  }
+
   async resetAllEnrolledStudents() {
     // 1. Reset all student biometric fields in Postgres
     const updated = await this.prisma.student.updateMany({
@@ -467,6 +591,66 @@ export class StudentsService {
       success: true,
       resetCount: updated.count,
       message: `Successfully reset biometric face enrollment for all ${updated.count} students.`,
+    };
+  }
+
+  async clearStudentFaceEnrollment(id: string) {
+    const student = await this.prisma.student.findUnique({
+      where: { id },
+    });
+    if (!student) throw new NotFoundException("Student not found");
+
+    const usn = student.rollNumber || student.studentId || student.usn || "";
+
+    // 1. Reset student biometric face enrollment state in Postgres
+    await this.prisma.student.update({
+      where: { id },
+      data: {
+        faceEnrolled: false,
+        faceSamples: 0,
+        enrollmentConfidence: 0,
+        profilePhoto: null,
+        primaryFaceImagePath: null,
+      },
+    });
+
+    // 2. Remove biometric FaceImage and FaceEmbedding records
+    try {
+      await this.prisma.faceImage.deleteMany({ where: { studentId: id } });
+      await this.prisma.faceEmbedding.deleteMany({ where: { studentId: id } });
+    } catch {}
+
+    // 3. Remove cluster assignments and reset cluster statuses in Postgres
+    try {
+      await this.prisma.clusterAssignment.deleteMany({ where: { studentId: id } });
+      await this.prisma.studentCluster.updateMany({
+        where: { assignedStudentId: id },
+        data: {
+          assignedStudentId: null,
+          status: "UNASSIGNED",
+        },
+      });
+    } catch {}
+
+    // 4. Purge vectors from FAISS index in AI service and unassign session clusters
+    if (usn) {
+      try {
+        await fetch("http://127.0.0.1:8000/api/v1/sessions/reset-student-enrollment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ usn, studentId: id }),
+          signal: AbortSignal.timeout(4000),
+        });
+      } catch {}
+    }
+
+    return {
+      success: true,
+      studentId: id,
+      fullName: student.fullName,
+      usn,
+      faceEnrolled: false,
+      message: `Biometric face enrollment cleared for ${student.fullName}.`,
     };
   }
 }

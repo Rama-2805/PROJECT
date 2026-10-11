@@ -38,8 +38,15 @@ def health_check(db: Session = Depends(get_db)):
         faiss_vectors = 0
 
     # Models Status: check if loaded
-    models_loaded = face_detector._model is not None
-    models_status = "healthy" if models_loaded else "unloaded"
+    from ..services.yolo26_detector import yolo26_detector
+    current_detector = getattr(settings, "detection_model", "yolo26")
+    if current_detector == "yolo26":
+        models_loaded = yolo26_detector._model is not None
+        detector_info = yolo26_detector.get_diagnostics()
+    else:
+        models_loaded = face_detector._model is not None
+        detector_info = {"model_name": "SCRFD-10G", "detector": current_detector}
+    models_status = "healthy" if models_loaded else "ready"
 
     # Camera Status: list active session count
     active_cameras = []
@@ -73,7 +80,9 @@ def health_check(db: Session = Depends(get_db)):
             },
             "models": {
                 "status": models_status,
-                "loaded": models_loaded
+                "loaded": models_loaded,
+                "detector": current_detector,
+                "diagnostics": detector_info,
             },
             "camera": {
                 "status": camera_status,

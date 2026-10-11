@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Video, Upload, Users, CheckCircle2, XCircle,
-  Play, Eye, UserPlus, GitMerge, Trash2, Star,
+  Play, Pause, Eye, UserPlus, GitMerge, Trash2, Star,
   ScanFace, Loader2, Search, ChevronRight,
   Plus, BarChart3, Zap, Shield,
   X, Image as ImageIcon, RotateCcw, AlertTriangle,
@@ -16,11 +16,18 @@ import { Button } from "@/components/ui/Button";
 import { apiRequest, getAccessToken } from "@/lib/api/client";
 
 /* ═══════════════════════════════════════════════════════════════════
-   CONSTANTS
+   CONSTANTS & HELPERS
 ═══════════════════════════════════════════════════════════════════ */
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
 // All /storage/* paths are proxied through Next.js rewrites — use relative URLs
 const AI_BASE  = "";
+
+function formatVideoTime(sec?: number): string {
+  if (!sec || isNaN(sec) || sec < 0) return "00:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
 
 function resolveCropUrl(item: any): string | null {
   if (!item) return null;
@@ -38,7 +45,7 @@ function resolveCropUrl(item: any): string | null {
 /* ═══════════════════════════════════════════════════════════════════
    TYPES
 ═══════════════════════════════════════════════════════════════════ */
-type SessionStatus = "PENDING" | "PROCESSING" | "REVIEW_REQUIRED" | "COMPLETED" | "FAILED" | "STOPPED" | "CANCELLED";
+type SessionStatus = "PENDING" | "PROCESSING" | "PAUSED" | "REVIEW_REQUIRED" | "COMPLETED" | "FAILED" | "STOPPED" | "CANCELLED";
 type ClusterStatus = "UNASSIGNED" | "ASSIGNED" | "REJECTED" | "CANDIDATE";
 type IdentityStatus = "UNKNOWN" | "CANDIDATE" | "CONFIRMED" | "REJECTED";
 
@@ -58,6 +65,19 @@ interface Session {
   arcfaceEmbeddings?: number;
   processingFps?: number;
   generatedClusters: number; createdAt: string;
+  currentSegment?: number;
+  totalSegments?: number;
+  segmentDurationSec?: number;
+  currentTimestampSec?: number;
+  totalDurationSec?: number;
+  usableFaces?: number;
+  knownIdentitiesMatched?: number;
+  unresolvedRevisited?: number;
+  newCandidatesDiscovered?: number;
+  candidatesAwaitingAssignment?: number;
+  lowQualitySkipped?: number;
+  profileUpdatesAccepted?: number;
+  isPaused?: boolean;
   departmentId?: string; programId?: string; semesterId?: string;
   sectionId?: string; subjectId?: string; teacherId?: string;
   institutionId?: string; errorMessage?: string;
@@ -244,6 +264,19 @@ function mapSession(s: any): Session {
     arcfaceEmbeddings: ai.arcfaceEmbeddings ?? diag.arcface_embeddings ?? s.arcfaceEmbeddings ?? 0,
     processingFps: ai.processingFps ?? diag.processing_fps ?? s.processingFps ?? 0.0,
     generatedClusters: ai.generatedClusters ?? s.generatedClusters ?? s._count?.studentClusters ?? 0,
+    currentSegment: ai.currentSegment ?? diag.current_segment_idx ?? s.currentSegment ?? 1,
+    totalSegments: ai.totalSegments ?? diag.total_segments ?? s.totalSegments ?? 1,
+    segmentDurationSec: ai.segmentDurationSec ?? diag.segment_duration_sec ?? s.segmentDurationSec ?? 150.0,
+    currentTimestampSec: ai.currentTimestampSec ?? diag.current_video_timestamp_sec ?? s.currentTimestampSec ?? 0.0,
+    totalDurationSec: ai.totalDurationSec ?? diag.total_duration_sec ?? s.totalDurationSec ?? 0.0,
+    usableFaces: ai.usableFaces ?? diag.usable_face_observations ?? s.usableFaces ?? 0,
+    knownIdentitiesMatched: ai.knownIdentitiesMatched ?? diag.known_identities_matched ?? s.knownIdentitiesMatched ?? 0,
+    unresolvedRevisited: ai.unresolvedRevisited ?? diag.unresolved_revisited ?? s.unresolvedRevisited ?? 0,
+    newCandidatesDiscovered: ai.newCandidatesDiscovered ?? diag.new_candidates_discovered ?? s.newCandidatesDiscovered ?? 0,
+    candidatesAwaitingAssignment: ai.candidatesAwaitingAssignment ?? diag.candidates_awaiting_assignment ?? s.candidatesAwaitingAssignment ?? 0,
+    lowQualitySkipped: ai.lowQualitySkipped ?? diag.low_quality_skipped ?? s.lowQualitySkipped ?? 0,
+    profileUpdatesAccepted: ai.profileUpdatesAccepted ?? diag.profile_updates_accepted ?? s.profileUpdatesAccepted ?? 0,
+    isPaused: ai.isPaused ?? diag.is_paused ?? s.isPaused ?? false,
     createdAt: s.createdAt || new Date().toISOString(),
     institutionId: s.institutionId,
     departmentId: s.departmentId,
@@ -294,24 +327,21 @@ function mapCluster(c: any, sessionId: string): Cluster {
 
   const bestImg = resolveCropUrl(c.bestImageUrl || c.bestImagePath || (images.length > 0 ? images[0].imageUrl : null));
 
-  const assignedStudent = c.assignedStudent ? {
-    usn: c.assignedStudent.usn || c.usn || "",
-    name: c.assignedStudent.name || c.name || c.assignedStudentName || c.usn || "",
-    studentId: c.assignedStudent.studentId || c.student_id,
-    confidence: c.assignedStudent.confidence || c.confidence,
-    status: c.assignedStudent.status || identityStatus,
-    source: c.assignedStudent.source || c.assignment_source || "AUTO",
-  } : (c.assignedStudentName || c.usn ? {
-    usn: c.usn || c.assignedUsn || "",
-    name: c.assignedStudentName || c.name || c.usn || "",
-    confidence: c.confidence || 0.85,
-    status: identityStatus,
-    source: c.assignment_source || "MANUAL",
-  } : null);
+  const resolvedUsn = c.assignedStudent?.usn || c.assignedStudent?.rollNumber || c.assignedStudent?.studentId || c.assignedUsn || c.usn || c.rollNumber || c.studentId || "";
+  const resolvedName = c.assignedStudent?.name || c.assignedStudent?.fullName || c.name || c.assignedStudentName || "";
+
+  const assignedStudent = (c.assignedStudent || resolvedName || resolvedUsn) ? {
+    usn: resolvedUsn,
+    name: resolvedName || resolvedUsn || "Student",
+    studentId: c.assignedStudent?.studentId || c.assignedStudent?.rollNumber || c.student_id,
+    confidence: c.assignedStudent?.confidence || c.confidence || 0.85,
+    status: c.assignedStudent?.status || identityStatus,
+    source: c.assignedStudent?.source || c.assignment_source || (c.assignedStudentName ? "MANUAL" : "AUTO"),
+  } : null;
 
   const candidateMatch = identityStatus === "CANDIDATE" ? {
-    usn: c.assignedStudent?.usn || c.usn || "",
-    name: c.assignedStudent?.name || c.name || c.usn || "Candidate",
+    usn: c.assignedStudent?.usn || resolvedUsn || "",
+    name: c.assignedStudent?.name || resolvedName || "Candidate",
     similarity: c.identity_mean_similarity || c.confidence || 0.65,
     votes: c.identity_vote_count || 2,
   } : null;
@@ -337,8 +367,8 @@ function mapCluster(c: any, sessionId: string): Cluster {
     status,
     assignment_source: c.assignment_source || (assignedStudent?.source),
     assignedStudent,
-    assignedStudentName: assignedStudent?.name || c.assignedStudentName,
-    assignedUsn: assignedStudent?.usn || c.usn,
+    assignedStudentName: assignedStudent?.name || c.assignedStudentName || resolvedName,
+    assignedUsn: assignedStudent?.usn || resolvedUsn || c.usn,
     candidateMatch,
     embeddingCount: c.embedding_count || c.sampleCount || images.length,
     purity: c.purity ?? c.internalPurity ?? 95,
@@ -365,6 +395,7 @@ function mapCluster(c: any, sessionId: string): Cluster {
 const STATUS_META: Record<string, { label: string; dot: string; badge: string }> = {
   PENDING:          { label: "Pending",          dot: "bg-slate-400",               badge: "text-slate-400 bg-slate-500/10 border-slate-500/30" },
   PROCESSING:       { label: "Processing",       dot: "bg-blue-400 animate-pulse",  badge: "text-blue-400 bg-blue-500/10 border-blue-500/30" },
+  PAUSED:           { label: "Paused",           dot: "bg-amber-400",               badge: "text-amber-400 bg-amber-500/10 border-amber-500/30" },
   REVIEW_REQUIRED:  { label: "Review Required",  dot: "bg-amber-400 animate-pulse", badge: "text-amber-400 bg-amber-500/10 border-amber-500/30" },
   COMPLETED:        { label: "Completed",        dot: "bg-emerald-400",             badge: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30" },
   FAILED:           { label: "Failed",           dot: "bg-red-400",                 badge: "text-red-400 bg-red-500/10 border-red-500/30" },
@@ -1178,7 +1209,7 @@ function EnrollModal({ cluster, activeSessionId, onClose, onEnrolled }: { cluste
   const [error, setError] = useState<string | null>(null);
 
   const studentName = cluster.assignedStudentName || cluster.assignedStudent?.name || cluster.assignedStudent?.studentId || "Student";
-  const studentUsn = cluster.assignedUsn || cluster.assignedStudent?.usn || (cluster as any).usn || (cluster.assignedStudent as any)?.studentId || "";
+  const studentUsn = cluster.assignedUsn || cluster.assignedStudent?.usn || (cluster as any).usn || (cluster.assignedStudent as any)?.rollNumber || (cluster.assignedStudent as any)?.studentId || "";
   const sId = cluster.sessionId || (cluster as any).enrollmentSessionId || activeSessionId || "408";
 
   const handleEnroll = async () => {
@@ -1187,22 +1218,62 @@ function EnrollModal({ cluster, activeSessionId, onClose, onEnrolled }: { cluste
     try {
       const targetSid = sId || cluster.sessionId || (cluster as any).enrollmentSessionId || activeSessionId || "408";
       const clusterKey = cluster.clusterId || cluster.id;
-      const targetUsn = (studentUsn && studentUsn !== "USN") ? studentUsn : (cluster.assignedUsn || cluster.assignedStudent?.usn || (cluster as any).usn || studentName);
+      const targetUsn = (studentUsn && studentUsn !== "USN")
+        ? studentUsn
+        : (cluster.assignedUsn || cluster.assignedStudent?.usn || (cluster as any).usn || (cluster.assignedStudent as any)?.rollNumber || (cluster.assignedStudent as any)?.studentId || studentName);
 
       if (!targetUsn || targetUsn === "USN") {
         throw new Error("Cannot enroll: Student identity must be assigned to this cluster first.");
       }
 
       // 1. Register 512D ArcFace vectors into FAISS via AI service
-      const res = await fetch(`${AI_BASE}/api/v1/sessions/${targetSid}/enroll-cluster`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          usn: targetUsn,
-          clusterId: clusterKey,
-        }),
-      });
-      const data = await res.json();
+      let res: Response;
+      try {
+        res = await fetch(`${AI_BASE}/api/v1/sessions/${targetSid}/enroll-cluster`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            usn: targetUsn,
+            clusterId: clusterKey,
+          }),
+        });
+      } catch (networkErr: any) {
+        // Fallback directly to AI service port if Next.js proxy rewrite fails
+        res = await fetch(`http://127.0.0.1:8000/api/v1/sessions/${targetSid}/enroll-cluster`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            usn: targetUsn,
+            clusterId: clusterKey,
+          }),
+        });
+      }
+
+      // If Next.js proxy returned 500/502, also attempt direct fallback
+      if (!res.ok && res.status >= 500) {
+        try {
+          const directRes = await fetch(`http://127.0.0.1:8000/api/v1/sessions/${targetSid}/enroll-cluster`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              usn: targetUsn,
+              clusterId: clusterKey,
+            }),
+          });
+          if (directRes.ok) {
+            res = directRes;
+          }
+        } catch {}
+      }
+
+      let data: any = {};
+      const resText = await res.text();
+      try {
+        data = JSON.parse(resText);
+      } catch {
+        data = { message: resText || `HTTP ${res.status} Internal Error` };
+      }
+
       if (!res.ok) throw new Error(data.detail || data.message || "Biometric registration failed");
 
       const count = data.addedVectors || cluster.sampleCount || 1;
@@ -2070,7 +2141,7 @@ export default function FaceEnrollmentPage() {
       ws.onmessage = (ev) => {
         try {
           const msg = JSON.parse(ev.data);
-          if (msg.event === "PROCESSING_PROGRESS") {
+          if (msg.event === "PROCESSING_PROGRESS" || msg.event === "SEGMENT_COMPLETED") {
             setSessions(prev => prev.map(s => s.id === sessionId ? {
               ...s,
               progressPercentage: msg.progressPercentage ?? s.progressPercentage,
@@ -2085,6 +2156,20 @@ export default function FaceEnrollmentPage() {
               totalTracks: msg.totalTracks ?? msg.diagnostics?.total_tracks ?? s.totalTracks,
               processingFps: msg.processingFps ?? msg.diagnostics?.processing_fps ?? s.processingFps,
               generatedClusters: msg.generatedClusters ?? msg.clusters?.length ?? s.generatedClusters,
+              currentSegment: msg.currentSegment ?? s.currentSegment,
+              totalSegments: msg.totalSegments ?? s.totalSegments,
+              segmentDurationSec: msg.segmentDurationSec ?? s.segmentDurationSec,
+              currentTimestampSec: msg.currentTimestampSec ?? s.currentTimestampSec,
+              totalDurationSec: msg.totalDurationSec ?? s.totalDurationSec,
+              usableFaces: msg.usableFaces ?? s.usableFaces,
+              knownIdentitiesMatched: msg.knownIdentitiesMatched ?? s.knownIdentitiesMatched,
+              unresolvedRevisited: msg.unresolvedRevisited ?? s.unresolvedRevisited,
+              newCandidatesDiscovered: msg.newCandidatesDiscovered ?? s.newCandidatesDiscovered,
+              candidatesAwaitingAssignment: msg.candidatesAwaitingAssignment ?? s.candidatesAwaitingAssignment,
+              lowQualitySkipped: msg.lowQualitySkipped ?? s.lowQualitySkipped,
+              profileUpdatesAccepted: msg.profileUpdatesAccepted ?? s.profileUpdatesAccepted,
+              isPaused: msg.isPaused ?? s.isPaused,
+              status: msg.isPaused ? "PAUSED" : (s.status === "PAUSED" && !msg.isPaused ? "PROCESSING" : s.status),
             } : s));
 
             if (msg.clusters && Array.isArray(msg.clusters) && msg.clusters.length > 0) {
@@ -2095,6 +2180,14 @@ export default function FaceEnrollmentPage() {
                 return Array.from(new Map(combined.map(c => [c.id, c])).values());
               });
             }
+          }
+          if (msg.event === "SESSION_PAUSED") {
+            setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, status: "PAUSED", isPaused: true } : s));
+            pushToast("⏸️ AI video processing paused at segment boundary.");
+          }
+          if (msg.event === "SESSION_RESUMED") {
+            setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, status: "PROCESSING", isPaused: false } : s));
+            pushToast("▶️ AI video processing resumed.");
           }
           if (msg.event === "ENROLLMENT_COMPLETED") {
             authFetch(`${API_BASE}/enrollment/sessions/${sessionId}/sync-clusters`, { method: "POST" })
@@ -2169,6 +2262,32 @@ export default function FaceEnrollmentPage() {
       setProcessingSessionId(null);
     }
   }, [activeId, connectWs, selectedDetector]);
+
+  const handlePauseProcessing = useCallback(async (sessionId: string) => {
+    try {
+      pushToast("⏸️ Pausing AI video processing...");
+      const res = await authFetch(`${API_BASE}/enrollment/sessions/${sessionId}/pause`, { method: "POST" });
+      if (res.ok) {
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, status: "PAUSED", isPaused: true } : s));
+        pushToast("⏸️ Video processing paused at segment boundary.");
+      }
+    } catch (err: any) {
+      pushToast(`❌ Failed to pause: ${err.message}`);
+    }
+  }, []);
+
+  const handleResumeProcessing = useCallback(async (sessionId: string) => {
+    try {
+      pushToast("▶️ Resuming AI video processing...");
+      const res = await authFetch(`${API_BASE}/enrollment/sessions/${sessionId}/resume`, { method: "POST" });
+      if (res.ok) {
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, status: "PROCESSING", isPaused: false } : s));
+        pushToast("▶️ Video processing resumed.");
+      }
+    } catch (err: any) {
+      pushToast(`❌ Failed to resume: ${err.message}`);
+    }
+  }, []);
 
   const handleStopProcessing = useCallback(async (sessionId: string) => {
     try {
@@ -2520,7 +2639,7 @@ export default function FaceEnrollmentPage() {
                       <Shield className="w-4 h-4" /> Finalize Session
                     </button>
                   )}
-                  {active.status !== "PROCESSING" && active.status !== "PENDING" && active.status !== "FAILED" && (
+                  {active.status !== "PROCESSING" && active.status !== "PAUSED" && active.status !== "PENDING" && active.status !== "FAILED" && (
                     <button onClick={() => handleReclusterSession(active.id)}
                       title="Re-process facial feature grouping on session tracks"
                       className="flex items-center gap-1.5 px-3 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-xl text-xs font-semibold transition-all">
@@ -2529,6 +2648,26 @@ export default function FaceEnrollmentPage() {
                   )}
                   {active.status === "PROCESSING" && (
                     <div className="flex items-center gap-2">
+                      <button onClick={() => handlePauseProcessing(active.id)}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-400 rounded-xl text-xs font-semibold transition-all">
+                        <Pause className="w-3.5 h-3.5" /> Pause Video
+                      </button>
+                      <button onClick={() => handleStopProcessing(active.id)}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 rounded-xl text-xs font-semibold transition-all">
+                        <XCircle className="w-3.5 h-3.5" /> Stop & Cluster
+                      </button>
+                      <button onClick={() => loadClusters(active.id)}
+                        className="flex items-center gap-2 px-3 py-2 bg-glass-light hover:bg-glass-medium border border-glass-border text-text-muted rounded-xl text-xs transition-all">
+                        <RefreshCw className="w-3.5 h-3.5" /> Refresh
+                      </button>
+                    </div>
+                  )}
+                  {active.status === "PAUSED" && (
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => handleResumeProcessing(active.id)}
+                        className="flex items-center gap-1.5 px-3 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 rounded-xl text-xs font-semibold transition-all">
+                        <Play className="w-3.5 h-3.5" /> Resume Video
+                      </button>
                       <button onClick={() => handleStopProcessing(active.id)}
                         className="flex items-center gap-1.5 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 rounded-xl text-xs font-semibold transition-all">
                         <XCircle className="w-3.5 h-3.5" /> Stop & Cluster
@@ -2556,6 +2695,15 @@ export default function FaceEnrollmentPage() {
                 <StatChip icon={Sparkles} label="Samples" value={(active.qualitySamples ?? 0).toLocaleString()} color="text-pink-400" />
                 <StatChip icon={Users} label="Identity Candidates" value={counts.all} color="text-amber-400" />
                 <StatChip icon={CheckCircle2} label="Confirmed Students" value={counts.confirmed} color="text-emerald-400" />
+                {(active.status === "PROCESSING" || active.status === "PAUSED") && (
+                  <>
+                    <StatChip icon={UserCheck} label="Matched Known" value={active.knownIdentitiesMatched ?? 0} color="text-emerald-400" />
+                    <StatChip icon={UserPlus} label="New Candidates" value={active.newCandidatesDiscovered ?? 0} color="text-cyan-400" />
+                    <StatChip icon={RefreshCw} label="Revisited Tracks" value={active.unresolvedRevisited ?? 0} color="text-amber-400" />
+                    <StatChip icon={Shield} label="Profile Updates" value={active.profileUpdatesAccepted ?? 0} color="text-teal-400" />
+                    <StatChip icon={AlertTriangle} label="Low-Quality Skipped" value={active.lowQualitySkipped ?? 0} color="text-slate-400" />
+                  </>
+                )}
               </div>
 
               {/* Failure Banner (when status === "FAILED") */}
@@ -2579,22 +2727,36 @@ export default function FaceEnrollmentPage() {
                 </div>
               )}
 
-              {/* Live Tracking Feed Panel (during processing) */}
-              {active.status === "PROCESSING" && (
+              {/* Live Tracking Feed Panel (during processing or paused) */}
+              {(active.status === "PROCESSING" || active.status === "PAUSED") && (
                 <div className="mt-4 space-y-3">
                   <div className="p-3 bg-glass-medium border border-blue-500/30 rounded-2xl">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                        <span className="text-xs font-bold text-blue-400 uppercase tracking-wider">AI Live Face Tracking Feed</span>
+                        <div className={cn("w-2 h-2 rounded-full", active.status === "PAUSED" ? "bg-amber-400" : "bg-emerald-400 animate-ping")} />
+                        <span className="text-xs font-bold text-blue-400 uppercase tracking-wider">
+                          {active.status === "PAUSED" ? "AI Face Tracking Feed (Paused)" : "AI Live Face Tracking Feed"}
+                        </span>
                       </div>
-                      <span className="text-[10px] font-mono text-text-muted">
-                        Face Detection Active · Biometric Verification Engine
-                      </span>
+                      <div className="flex items-center gap-2 text-[10px] font-mono text-text-muted">
+                        <span className="px-2 py-0.5 rounded bg-blue-500/10 border border-blue-500/30 text-blue-300 font-semibold">
+                          Segment {active.currentSegment || 1} of {active.totalSegments || 1} · {active.segmentDurationSec || 150}s Intervals
+                        </span>
+                        <span>
+                          {formatVideoTime(active.currentTimestampSec)} / {formatVideoTime(active.totalDurationSec)}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="relative aspect-video max-h-64 rounded-xl overflow-hidden bg-black/60 border border-glass-border flex items-center justify-center">
                       <LiveTrackingImage sessionId={active.id} />
+                      {active.status === "PAUSED" && (
+                        <div className="absolute inset-0 bg-black/40 backdrop-blur-[2px] flex items-center justify-center pointer-events-none">
+                          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-semibold shadow-lg">
+                            <Pause className="w-4 h-4" /> Pipeline Paused at Segment Checkpoint
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex justify-between items-center text-[10px] font-mono text-text-muted mt-2 flex-wrap gap-2">
@@ -2607,11 +2769,46 @@ export default function FaceEnrollmentPage() {
                       <span>FPS: {active.processingFps ? active.processingFps.toFixed(1) : "0.0"}</span>
                       <span>Progress: {Math.round(active.progressPercentage)}%</span>
                     </div>
+
+                    {/* Real-time Incremental Enrollment Segment Telemetry */}
+                    <div className="mt-2 pt-2 border-t border-glass-border/40 grid grid-cols-2 sm:grid-cols-5 gap-2 text-[10px] font-mono">
+                      <div className="flex items-center justify-between p-1.5 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300">
+                        <span>Matched Known:</span>
+                        <span className="font-bold">{active.knownIdentitiesMatched ?? 0}</span>
+                      </div>
+                      <div className="flex items-center justify-between p-1.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300">
+                        <span>New Candidates:</span>
+                        <span className="font-bold">{active.newCandidatesDiscovered ?? 0}</span>
+                      </div>
+                      <div className="flex items-center justify-between p-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300">
+                        <span>Revisited Tracks:</span>
+                        <span className="font-bold">{active.unresolvedRevisited ?? 0}</span>
+                      </div>
+                      <div className="flex items-center justify-between p-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20 text-purple-300">
+                        <span>Profile Updates:</span>
+                        <span className="font-bold">{active.profileUpdatesAccepted ?? 0}</span>
+                      </div>
+                      <div className="flex items-center justify-between p-1.5 rounded-lg bg-slate-500/10 border border-slate-500/20 text-slate-300">
+                        <span>Low-Quality Skipped:</span>
+                        <span className="font-bold">{active.lowQualitySkipped ?? 0}</span>
+                      </div>
+                    </div>
                   </div>
 
                   <div>
                     <div className="flex justify-between text-[10px] text-text-muted mb-1.5">
-                      <span className="flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin text-blue-400" /><span>AI pipeline evaluating video frames...</span></span>
+                      <span className="flex items-center gap-1.5">
+                        {active.status === "PAUSED" ? (
+                          <Pause className="w-3 h-3 text-amber-400" />
+                        ) : (
+                          <Loader2 className="w-3 h-3 animate-spin text-blue-400" />
+                        )}
+                        <span>
+                          {active.status === "PAUSED"
+                            ? `Pipeline paused at Segment ${active.currentSegment || 1} (${formatVideoTime(active.currentTimestampSec)})`
+                            : `AI pipeline evaluating Segment ${active.currentSegment || 1} of ${active.totalSegments || 1} (${formatVideoTime(active.currentTimestampSec)} / ${formatVideoTime(active.totalDurationSec)})...`}
+                        </span>
+                      </span>
                       <span className="font-mono">{Math.round(active.progressPercentage)}%</span>
                     </div>
                     <div className="h-1.5 bg-glass-light rounded-full overflow-hidden">

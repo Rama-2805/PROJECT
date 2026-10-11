@@ -35,27 +35,21 @@ export default function StudentDashboardPage() {
     faceEnrolled: true,
   });
 
-  const [attendanceRate, setAttendanceRate] = useState("94.2%");
+  const [attendanceRate, setAttendanceRate] = useState("N/A");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [lastVerifiedTime, setLastVerifiedTime] = useState("10:02 AM");
-  const [liveStreamMsg, setLiveStreamMsg] = useState("CAM-023-A stream: Face biometric verified (99.4% confidence)");
-  const [recentScans, setRecentScans] = useState([
-    { date: getFormattedDate(0), time: "10:02 AM", course: "Advanced Data Structures", device: "CAM-023-A", confidence: "99.4%", status: "Present" },
-    { date: getFormattedDate(1), time: "02:05 PM", course: "Artificial Intelligence & ML", device: "CAM-SEM-1", confidence: "98.7%", status: "Present" },
-    { date: getFormattedDate(2), time: "10:03 AM", course: "Advanced Data Structures", device: "CAM-023-A", confidence: "99.1%", status: "Present" },
-    { date: getFormattedDate(3), time: "09:05 AM", course: "Introduction to Programming", device: "CAM-LAB-3", confidence: "98.9%", status: "Present" }
-  ]);
+  const [lastVerifiedTime, setLastVerifiedTime] = useState("—");
+  const [liveStreamMsg, setLiveStreamMsg] = useState("Classroom Feed: Automated roll call active");
+  const [recentScans, setRecentScans] = useState<any[]>([]);
 
   useEffect(() => {
     let isCancelled = false;
     let tick = 0;
 
     const streamEvents = [
-      "CAM-023-A stream: Face biometric verified (99.4% confidence)",
-      "Edge Node CSE-02: 14ms ArcFace vector latency • Frame matched",
-      "Section A Classroom: 61/64 students present • Telemetry synced",
-      "YuNet Detector: 0 dropped frames • Optimal facial alignment",
-      "Biometric FAISS Centroid: Match secured for 1VI23CS058",
+      "Classroom Feed: Automated roll call active",
+      "Lecture Hall Session: Attendance synchronized",
+      "Classroom Camera Feed: Attendance recorded (Verified)",
+      "Campus Attendance System: Live record confirmed",
     ];
 
     async function loadStudentData(silent = false) {
@@ -152,11 +146,6 @@ export default function StudentDashboardPage() {
         const timeNow = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
         setLastVerifiedTime(timeNow);
         setLastUpdated(new Date());
-
-        // Dynamic slight attendance variation (+/- 0.1%)
-        const baseRate = 94.2;
-        const offset = ((tick % 3) - 1) * 0.1;
-        setAttendanceRate(`${(baseRate + offset).toFixed(1)}%`);
       }
     }
 
@@ -308,7 +297,7 @@ export default function StudentDashboardPage() {
             </div>
             
             <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
+              <table className="w-full text-left text-xs min-w-[460px]">
                 <thead>
                   <tr className="border-b border-glass-border text-text-muted font-mono uppercase tracking-wider">
                     <th className="pb-2 font-medium">Date / Time</th>
@@ -319,22 +308,30 @@ export default function StudentDashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-glass-border/30">
-                  {recentScans.map((scan, i) => (
-                    <tr key={i} className="hover:bg-glass-light/10 transition-colors">
-                      <td className="py-2.5 font-mono text-text-primary">
-                        <div>{scan.date}</div>
-                        <div className="text-[10px] text-text-muted">{scan.time}</div>
-                      </td>
-                      <td className="py-2.5 font-medium text-text-primary">{scan.course}</td>
-                      <td className="py-2.5 font-mono text-text-muted">{scan.device}</td>
-                      <td className="py-2.5 text-right font-mono text-emerald-400 font-semibold">{scan.confidence}</td>
-                      <td className="py-2.5 text-right">
-                        <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase font-mono">
-                          {scan.status}
-                        </span>
+                  {recentScans.length > 0 ? (
+                    recentScans.map((scan, i) => (
+                      <tr key={i} className="hover:bg-glass-light/10 transition-colors">
+                        <td className="py-2.5 font-mono text-text-primary">
+                          <div>{scan.date}</div>
+                          <div className="text-[10px] text-text-muted">{scan.time}</div>
+                        </td>
+                        <td className="py-2.5 font-medium text-text-primary">{scan.course}</td>
+                        <td className="py-2.5 font-mono text-text-muted">{scan.device}</td>
+                        <td className="py-2.5 text-right font-mono text-emerald-400 font-semibold">{scan.confidence}</td>
+                        <td className="py-2.5 text-right">
+                          <span className="inline-flex px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 uppercase font-mono">
+                            {scan.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="py-8 text-center text-text-muted text-xs font-mono">
+                        No recent attendance verification records found.
                       </td>
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>
@@ -351,21 +348,21 @@ export default function StudentDashboardPage() {
               </div>
             </div>
 
-            <h4 className="text-sm font-semibold text-text-primary font-mono uppercase tracking-wider">AI Biometric Identity</h4>
-            <p className="text-[10px] text-text-muted mt-1">Enrollment active. Verified via campus neural net templates.</p>
+            <h4 className="text-sm font-semibold text-text-primary font-mono uppercase tracking-wider">Biometric Identity</h4>
+            <p className="text-[10px] text-text-muted mt-1">Enrollment active. Verified via campus biometric directory.</p>
             
             <div className="w-full border-t border-glass-border/50 mt-4 pt-4 space-y-2 text-left font-mono text-[10px]">
               <div className="flex justify-between">
-                <span className="text-text-muted">Template ID:</span>
-                <span className="text-text-secondary">FACE-STU-{studentInfo.id !== "—" ? studentInfo.id : "1VI23CS058"}</span>
+                <span className="text-text-muted">Student ID:</span>
+                <span className="text-text-secondary">{studentInfo.id !== "—" ? studentInfo.id : "—"}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-text-muted">Verification Status:</span>
-                <span className="text-emerald-400 font-bold">MATCH SECURED</span>
+                <span className="text-text-muted">Status:</span>
+                <span className="text-emerald-400 font-bold">{studentInfo.faceEnrolled ? "ENROLLED & ACTIVE" : "PENDING"}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-text-muted">Last Verified:</span>
-                <span className="text-text-secondary">Today, {lastVerifiedTime}</span>
+                <span className="text-text-secondary">{lastVerifiedTime}</span>
               </div>
             </div>
           </GlassCard>

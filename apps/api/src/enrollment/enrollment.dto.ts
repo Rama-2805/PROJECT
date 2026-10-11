@@ -91,7 +91,9 @@ export class AssignClusterStudentDto {
   @IsOptional() @IsString() departmentId?: string;
   @IsOptional() @IsString() programId?: string;
   @IsOptional() @IsString() semesterId?: string;
+  @IsOptional() @IsString() semester?: string;
   @IsOptional() @IsString() sectionId?: string;
+  @IsOptional() @IsString() section?: string;
   @IsOptional() @IsString() email?: string;
   @IsOptional() @IsString() phone?: string;
 }

@@ -65,19 +65,19 @@ export default function DashboardPage() {
   const [currentRole, setCurrentRole] = useState<"admin" | "hod" | "teacher" | "student">("admin");
 
   const { isDemoMode, simulateEvent, activeSimulations, toggleSimulation } = useDemoMode();
-  const [rebuildingFaiss, setRebuildingFaiss] = useState(false);
-  const [faissProgress, setFaissProgress] = useState(0);
+  const [syncingDirectory, setSyncingDirectory] = useState(false);
+  const [syncProgress, setSyncProgress] = useState(0);
 
-  const triggerFaissRebuild = () => {
-    setRebuildingFaiss(true);
-    setFaissProgress(0);
+  const triggerDirectorySync = () => {
+    setSyncingDirectory(true);
+    setSyncProgress(0);
     const interval = setInterval(() => {
-      setFaissProgress((p) => {
+      setSyncProgress((p) => {
         if (p >= 100) {
           clearInterval(interval);
-          setTimeout(() => setRebuildingFaiss(false), 800);
+          setTimeout(() => setSyncingDirectory(false), 800);
           simulateEvent("SYSTEM_OPTIMIZED", {
-            description: "Centroid calculations complete. Vector spaces aligned (+1.4% hit-rate)",
+            description: "Directory index synchronization complete. Verification templates aligned.",
           });
           return 100;
         }
@@ -92,13 +92,13 @@ export default function DashboardPage() {
     let tickCount = 0;
 
     const liveTelemetryFeed = [
-      { title: "1VI23CS058 Manjunatha R recognized", desc: "Room 023 (Section A) • 99.4% biometric confidence", type: "attendance" as const, severity: "info" as const },
-      { title: "Edge Camera CAM-023-A stream synced", desc: "CSE Classroom 023 • 25.1 FPS • 14ms ArcFace latency", type: "device" as const, severity: "info" as const },
-      { title: "1VI23CS012 Ananya K recognized", desc: "Room 023 (Section A) • 98.8% match verified", type: "attendance" as const, severity: "info" as const },
+      { title: "Manjunatha R recognized", desc: "Room 023 (Section A) • 99.4% biometric confidence", type: "attendance" as const, severity: "info" as const },
+      { title: "Classroom Camera stream synced", desc: "CSE Classroom 023 • 25.1 FPS • Stream synced", type: "device" as const, severity: "info" as const },
+      { title: "Ananya K recognized", desc: "Room 023 (Section A) • 98.8% match verified", type: "attendance" as const, severity: "info" as const },
       { title: "Section A Attendance Session Active", desc: "Room 023 • 60/64 present • 93.8% presence rate", type: "attendance" as const, severity: "info" as const },
-      { title: "Biometric FAISS Index Synchronized", desc: "128 student vector centroids aligned in memory", type: "system" as const, severity: "info" as const },
-      { title: "1VI23CS045 Rahul S recognized", desc: "Room 023 (Section A) • 99.1% match verified", type: "attendance" as const, severity: "info" as const },
-      { title: "Classroom 023 Ambient Engagement High", desc: "Lecture engagement index 94.2% • All students focused", type: "alert" as const, severity: "info" as const },
+      { title: "Biometric Directory Synchronized", desc: "Student directory records verified and active", type: "system" as const, severity: "info" as const },
+      { title: "Rahul S recognized", desc: "Room 023 (Section A) • 99.1% match verified", type: "attendance" as const, severity: "info" as const },
+      { title: "Classroom 023 Ambient Engagement High", desc: "Lecture engagement index 94.2% • Session active", type: "alert" as const, severity: "info" as const },
     ];
 
     function getPersonalizedInfo() {
@@ -120,7 +120,7 @@ export default function DashboardPage() {
           accuracy: 99.4,
           telemetryFeed: [
             { title: "1VI23CS058 Manjunatha R verified in Room 023", desc: "CSE Section A • 99.4% biometric confidence", type: "attendance" as const, severity: "info" as const },
-            { title: "Edge Camera CAM-023-A stream synced", desc: "CSE Classroom 023 • 25.1 FPS • 14ms ArcFace latency", type: "device" as const, severity: "info" as const },
+            { title: "Edge Camera CAM-023-A stream synced", desc: "CSE Classroom 023 • 25.1 FPS • 14ms match latency", type: "device" as const, severity: "info" as const },
             { title: "IoT & Embedded Systems Lab (Lab 3) active", desc: "CSE 6th Sem • 32/32 students verified", type: "attendance" as const, severity: "info" as const },
             { title: "1VI23CS012 Ananya K verified in Room 023", desc: "CSE Section A • 98.8% match verified", type: "attendance" as const, severity: "info" as const },
             { title: "CSE Biometric Node 04 heartbeat OK", desc: "Bandwidth: 1.2 MB/s • 0 dropped frames", type: "system" as const, severity: "info" as const },
@@ -142,12 +142,12 @@ export default function DashboardPage() {
           growth: 5.1,
           accuracy: 99.2,
           telemetryFeed: [
-            { title: "1VI23CS058 Manjunatha R marked PRESENT", desc: "Room 023 • 99.4% biometric confidence match", type: "attendance" as const, severity: "info" as const },
-            { title: "CAM-023-A Lecture Capture stream active", desc: "25.1 FPS • 14ms ArcFace latency • 0 packet drop", type: "device" as const, severity: "info" as const },
-            { title: "1VI23CS012 Ananya K marked PRESENT", desc: "Room 023 • 98.8% match verified", type: "attendance" as const, severity: "info" as const },
+            { title: "Manjunatha R marked PRESENT", desc: "Room 023 • 99.4% biometric confidence match", type: "attendance" as const, severity: "info" as const },
+            { title: "Lecture Capture stream active", desc: "25.1 FPS • Stream synced • 0 packet drop", type: "device" as const, severity: "info" as const },
+            { title: "Ananya K marked PRESENT", desc: "Room 023 • 98.8% match verified", type: "attendance" as const, severity: "info" as const },
             { title: "Classroom 023 Session: 60/64 Present", desc: "Advanced Data Structures • Attendance rate 93.8%", type: "attendance" as const, severity: "info" as const },
-            { title: "1VI23CS045 Rahul S marked PRESENT", desc: "Room 023 • 99.1% match verified", type: "attendance" as const, severity: "info" as const },
-            { title: "Live Face Verification: 100% on-time", desc: "ArcFace inference time 14ms • No unknown visitors", type: "system" as const, severity: "info" as const },
+            { title: "Rahul S marked PRESENT", desc: "Room 023 • 99.1% match verified", type: "attendance" as const, severity: "info" as const },
+            { title: "Live Face Verification: 100% on-time", desc: "Real-time recognition verified", type: "system" as const, severity: "info" as const },
             { title: "Student Engagement Index High (94%)", desc: "All active students present in lecture hall", type: "alert" as const, severity: "info" as const },
           ],
         };
@@ -165,16 +165,16 @@ export default function DashboardPage() {
           growth: 3.5,
           accuracy: 99.4,
           telemetryFeed: [
-            { title: "Biometric Verification Confirmed", desc: "Room 023 • CAM-023-A • 99.4% confidence score", type: "attendance" as const, severity: "info" as const },
+            { title: "Biometric Verification Confirmed", desc: "Room 023 • 99.4% confidence score", type: "attendance" as const, severity: "info" as const },
             { title: "Class Attendance Logged: CS-301", desc: "Advanced Data Structures • Marked Present", type: "attendance" as const, severity: "info" as const },
-            { title: "Biometric Identity Secured", desc: "YuNet + ArcFace 512D Vector match validated", type: "system" as const, severity: "info" as const },
+            { title: "Biometric Identity Secured", desc: "Identity match validated and synced", type: "system" as const, severity: "info" as const },
           ],
         };
       }
       return {
         role: "admin",
         greeting: name ? `Welcome back, ${name}` : "Welcome back, System Admin",
-        summary: "Vemana IT Autonomous Campus Operating System · All 6 biometric edge devices connected",
+        summary: "Campus Operating System · All biometric devices operational and connected",
         roleTag: "CAMPUS COMMAND CENTER",
         totalStudents: 130,
         attendanceToday: 93.1,
@@ -183,13 +183,13 @@ export default function DashboardPage() {
         growth: 4.8,
         accuracy: 99.2,
         telemetryFeed: [
-          { title: "1VI23CS058 Manjunatha R recognized", desc: "Room 023 (Section A) • 99.4% biometric confidence", type: "attendance" as const, severity: "info" as const },
-          { title: "Edge Camera CAM-023-A stream synced", desc: "CSE Classroom 023 • 25.1 FPS • 14ms ArcFace latency", type: "device" as const, severity: "info" as const },
-          { title: "1VI23CS027 EKTA PRIYA V recognized", desc: "Room 023 (Section A) • 99.1% match verified", type: "attendance" as const, severity: "info" as const },
+          { title: "Manjunatha R recognized", desc: "Room 023 (Section A) • 99.4% biometric confidence", type: "attendance" as const, severity: "info" as const },
+          { title: "Classroom Camera stream synced", desc: "CSE Classroom 023 • 25.1 FPS • Active", type: "device" as const, severity: "info" as const },
+          { title: "EKTA PRIYA V recognized", desc: "Room 023 (Section A) • 99.1% match verified", type: "attendance" as const, severity: "info" as const },
           { title: "Section A Attendance Session Active", desc: "Room 023 • 60/64 present • 93.8% presence rate", type: "attendance" as const, severity: "info" as const },
-          { title: "Biometric FAISS Index Synchronized", desc: "130 student vector centroids aligned in memory", type: "system" as const, severity: "info" as const },
-          { title: "1VI24CS400 BHAVANA BHARAT PATIL recognized", desc: "Room 023 (Section A) • 99.4% match verified", type: "attendance" as const, severity: "info" as const },
-          { title: "Classroom 023 Ambient Engagement High", desc: "Lecture engagement index 93.8% • All students focused", type: "alert" as const, severity: "info" as const },
+          { title: "Biometric Directory Synchronized", desc: "Student directory records verified and active", type: "system" as const, severity: "info" as const },
+          { title: "BHAVANA BHARAT PATIL recognized", desc: "Room 023 (Section A) • 99.4% match verified", type: "attendance" as const, severity: "info" as const },
+          { title: "Classroom 023 Ambient Engagement High", desc: "Lecture engagement index 93.8% • Session active", type: "alert" as const, severity: "info" as const },
         ],
       };
     }
@@ -212,10 +212,10 @@ export default function DashboardPage() {
       };
 
       let baseModels: AIModelStatus[] = [
-        { name: "ArcFace Embedding", status: "online", accuracy: userMeta.accuracy },
-        { name: "YuNet Face Detection", status: "online", accuracy: 99.1 },
-        { name: "YOLOv11 Person Tracker", status: "online", accuracy: 98.7 },
-        { name: "FAISS Vector Search", status: "online", accuracy: 99.8 },
+        { name: "Face Recognition Engine", status: "online", accuracy: userMeta.accuracy },
+        { name: "Face Detection Pipeline", status: "online", accuracy: 99.1 },
+        { name: "Classroom Person Tracker", status: "online", accuracy: 98.7 },
+        { name: "Biometric Verification Index", status: "online", accuracy: 99.8 },
       ];
 
       let recentApiEvents: ActivityEvent[] | null = null;
@@ -376,7 +376,7 @@ export default function DashboardPage() {
           <motion.div variants={fadeInUp}>
             <GlassCard className="p-4 border-warning/20 bg-warning/5" subtle>
               <h3 className="text-xs font-bold uppercase tracking-wider text-warning mb-3 font-mono">Viva Demonstration Simulation Control Panel</h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                 <Button
                   size="sm"
                   onClick={() => {
@@ -416,10 +416,10 @@ export default function DashboardPage() {
                 </Button>
                 <Button
                   size="sm"
-                  onClick={triggerFaissRebuild}
-                  disabled={rebuildingFaiss}
+                  onClick={triggerDirectorySync}
+                  disabled={syncingDirectory}
                 >
-                  {rebuildingFaiss ? `Optimizing FAISS ${faissProgress}%` : "Trigger FAISS Index Rebuild"}
+                  {syncingDirectory ? `Synchronizing ${syncProgress}%` : "Synchronize Directory Index"}
                 </Button>
               </div>
             </GlassCard>
@@ -501,7 +501,7 @@ export default function DashboardPage() {
             {/* Cyber Grid Overlay inside chart container */}
             <div className="absolute inset-0 bg-[linear-gradient(to_right,var(--color-glass-border)_1px,transparent_1px),linear-gradient(to_bottom,var(--color-glass-border)_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none opacity-40" />
 
-            <div className="flex items-center justify-between mb-6 border-b border-glass-border pb-4 relative z-10">
+            <div className="flex flex-wrap items-center justify-between gap-2 mb-6 border-b border-glass-border pb-4 relative z-10">
               <div className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-pulse" style={{ filter: "drop-shadow(0 0 3px #3B82F6)" }} />
                 <h3 className="text-[10px] font-bold uppercase tracking-wider text-text-primary font-mono">ATTENDANCE TELEMETRY OVERVIEW</h3>

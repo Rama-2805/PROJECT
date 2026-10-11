@@ -236,14 +236,43 @@ class ClassroomPipeline:
         self.session_dir = Path(base_storage_dir) / "enrollment" / session_id
         self.session_dir.mkdir(parents=True, exist_ok=True)
         self.detector_type = detector_type or settings.detection_model
-        self.detector_name = "SCRFD 10G"
+        if (self.detector_type or "").lower() in ("yolo26", "yolo26-face"):
+            self.detector_name = "YOLO26-S-Face"
+        elif (self.detector_type or "").lower() == "combined":
+            self.detector_name = "SCRFD 10G + YOLO26-Face"
+        elif (self.detector_type or "").lower() in ("yolo11", "yolo"):
+            self.detector_name = "YOLO11"
+        else:
+            self.detector_name = "SCRFD 10G"
 
         self.clusters: List[IdentityCluster] = []
         self._next_cluster_num = 1
 
-        # Face Tracker
+        # Face Tracker (LOCKED: face_tracker.py is untouched)
         from .face_tracker import IoUTracker
         self.tracker = IoUTracker(iou_threshold=0.22, max_lost_frames=240)
+
+        # Automatic Video Advancement in Segments (default: 150 seconds = 2.5 min)
+        self.segment_duration_sec: float = 150.0
+        self.current_segment_idx: int = 0
+        self.total_segments: int = 0
+        self.current_video_timestamp_sec: float = 0.0
+        self.is_paused: bool = False
+        self.pause_requested: bool = False
+        self.stop_requested: bool = False
+
+        # Real Progressive Metrics Tracking
+        self.usable_faces: int = 0
+        self.unresolved_revisited: int = 0
+        self.low_quality_skipped: int = 0
+        self.profile_updates_accepted: int = 0
+
+        # Persistent Enrolled Profiles & Discovery Identity State
+        self.enrolled_profiles: Dict[str, dict] = {}
+        self.allowed_usns: Optional[Set[str]] = None
+        self.unresolved_tracks: Dict[str, dict] = {}      # track_id -> metadata (PENDING_REVIEW)
+        self.candidate_identities: Dict[str, Any] = {}    # track_id -> track (UNKNOWN_CANDIDATE)
+        self.matched_identities: Dict[str, int] = {}      # usn -> sample count (KNOWN_IDENTITY)
 
         # Diagnostics & Detection Tracking
         self.total_video_frames: int = 0
@@ -287,6 +316,364 @@ class ClassroomPipeline:
         # Tracks directory
         self.tracks_dir = self.session_dir / "tracks"
         self.tracks_dir.mkdir(parents=True, exist_ok=True)
+
+    def pause(self) -> None:
+        """Pause video processing gracefully at the current segment."""
+        self.pause_requested = True
+        self.is_paused = True
+        logger.info(f"[{self.session_id}] ClassroomPipeline paused at current video position.")
+
+    def resume(self) -> None:
+        """Resume video processing from the current video position."""
+        self.pause_requested = False
+        self.is_paused = False
+        logger.info(f"[{self.session_id}] ClassroomPipeline resumed.")
+
+    def _load_enrolled_profiles(self) -> None:
+        """Load durable confirmed student identities from PostgreSQL and populate memory profiles."""
+        try:
+            import psycopg2
+            import json
+            conn = psycopg2.connect(settings.database_url)
+            cur = conn.cursor()
+
+            # 1. Fetch session details if available (e.g. sectionId, institutionId)
+            cur.execute('SELECT "sectionId", "institutionId" FROM "EnrollmentSession" WHERE id = %s', (self.session_id,))
+            sess_row = cur.fetchone()
+            session_section_id = sess_row[0] if sess_row else None
+
+            # 2. Fetch all confirmed students with faceEnrolled = True
+            cur.execute('''
+                SELECT s.id, s."rollNumber", s."studentId", s."usn", s."fullName", s.section, s."sectionId",
+                       fe.id as emb_id, fe."embeddingVector", fe.confidence, fe."thumbnailPath"
+                FROM "Student" s
+                LEFT JOIN "FaceEmbedding" fe ON fe."studentId" = s.id
+                WHERE s."faceEnrolled" = TRUE
+                ORDER BY fe."createdAt" ASC
+            ''')
+            rows = cur.fetchall()
+            cur.close()
+            conn.close()
+
+            profiles: Dict[str, dict] = {}
+            allowed_usns: Set[str] = set()
+
+            for sid, roll, stid, usn_val, name, sec_val, sec_id, emb_id, vec_str, conf, thumb in rows:
+                primary_usn = (roll or stid or usn_val or "").strip().upper()
+                if not primary_usn:
+                    continue
+
+                if session_section_id and sec_id == session_section_id:
+                    allowed_usns.add(primary_usn)
+
+                if primary_usn not in profiles:
+                    profiles[primary_usn] = {
+                        "student_id": sid,
+                        "usn": primary_usn,
+                        "name": name or primary_usn,
+                        "section": sec_val,
+                        "sectionId": sec_id,
+                        "embeddings": [],
+                        "thumbnail": thumb,
+                        "profile_updates_count": 0,
+                    }
+
+                if vec_str:
+                    try:
+                        v = json.loads(vec_str) if isinstance(vec_str, str) else vec_str
+                        if isinstance(v, list) and len(v) == 512:
+                            arr = np.array(v, dtype=np.float32)
+                            norm = float(np.linalg.norm(arr))
+                            if norm > 1e-6:
+                                profiles[primary_usn]["embeddings"].append(arr / norm)
+                    except Exception:
+                        pass
+
+            self.enrolled_profiles = profiles
+            self.allowed_usns = allowed_usns if (session_section_id and allowed_usns) else None
+            logger.info(f"[{self.session_id}] Loaded {len(profiles)} enrolled student profiles from Postgres (Allowed Section USNs: {len(self.allowed_usns) if self.allowed_usns else 'ALL'}).")
+        except Exception as e:
+            logger.warning(f"[{self.session_id}] Notice: Postgres profile load fallback: {e}")
+            self.enrolled_profiles = {}
+            self.allowed_usns = None
+
+    def _persist_student_embedding(
+        self,
+        student_id: str,
+        usn: str,
+        emb: np.ndarray,
+        thumbnail_path: Optional[str],
+        quality_score: float,
+        confidence: float
+    ) -> bool:
+        """Durably persist new accepted FaceEmbedding record into PostgreSQL and update Student.faceSamples."""
+        try:
+            import psycopg2
+            import json
+            import uuid
+            conn = psycopg2.connect(settings.database_url)
+            cur = conn.cursor()
+
+            vec_json = json.dumps(emb.tolist())
+            rec_id = f"emb_{uuid.uuid4().hex[:20]}"
+            meta = json.dumps({
+                "sessionId": self.session_id,
+                "usn": usn,
+                "qualityScore": float(quality_score),
+                "confidence": float(confidence),
+                "source": "ADAPTIVE_PROFILE_IMPROVEMENT",
+                "timestamp": time.time(),
+            })
+
+            cur.execute('''
+                INSERT INTO "FaceEmbedding" ("id", "studentId", "embeddingVector", "confidence", "thumbnailPath", "metadata", "createdAt")
+                VALUES (%s, %s, %s, %s, %s, %s, NOW())
+            ''', (rec_id, student_id, vec_json, float(confidence), thumbnail_path, meta))
+
+            cur.execute('''
+                UPDATE "Student"
+                SET "faceSamples" = "faceSamples" + 1,
+                    "updatedAt" = NOW()
+                WHERE id = %s
+            ''', (student_id,))
+
+            hist_id = f"eh_{uuid.uuid4().hex[:20]}"
+            cur.execute('''
+                INSERT INTO "EnrollmentHistory" ("id", "studentId", "performedById", "action", "metadata", "createdAt")
+                VALUES (%s, %s, 'ai_adaptive_engine', 'UPDATED', %s, NOW())
+            ''', (hist_id, student_id, meta))
+
+            conn.commit()
+            cur.close()
+            conn.close()
+            logger.info(f"[{self.session_id}] Durably persisted new FaceEmbedding for student {usn} ({student_id}).")
+            return True
+        except Exception as e:
+            logger.error(f"[{self.session_id}] Failed to persist FaceEmbedding to Postgres: {e}")
+            return False
+
+    def _save_segment_state(
+        self,
+        segment_idx: int,
+        total_segments: int,
+        current_timestamp_sec: float,
+        duration_sec: float,
+    ) -> None:
+        """Persist atomic segment checkpoint to segment_state.json."""
+        try:
+            import json
+            state_data = {
+                "sessionId": self.session_id,
+                "currentSegment": segment_idx + 1,
+                "totalSegments": total_segments,
+                "segmentDurationSec": self.segment_duration_sec,
+                "currentTimestampSec": round(current_timestamp_sec, 2),
+                "totalDurationSec": round(duration_sec, 2),
+                "framesProcessed": self.frames_processed,
+                "faceDetections": self.face_detections,
+                "usableFaces": self.usable_faces,
+                "knownIdentitiesMatched": len(self.matched_identities),
+                "unresolvedRevisited": self.unresolved_revisited,
+                "newCandidatesDiscovered": len(self.candidate_identities),
+                "candidatesAwaitingAssignment": len(self.candidate_identities),
+                "lowQualitySkipped": self.low_quality_skipped,
+                "profileUpdatesAccepted": self.profile_updates_accepted,
+                "unresolvedTracksCount": len(self.unresolved_tracks),
+                "isPaused": self.is_paused,
+                "updatedAt": time.time(),
+            }
+            tmp_path = self.session_dir / "segment_state.json.tmp"
+            target_path = self.session_dir / "segment_state.json"
+            with open(tmp_path, "w") as f:
+                json.dump(state_data, f, indent=2)
+            os.replace(str(tmp_path), str(target_path))
+        except Exception as ex:
+            logger.warning(f"[{self.session_id}] Could not save segment_state.json: {ex}")
+
+    async def _process_segment_checkpoint(
+        self,
+        vid_idx: int,
+        num_videos: int,
+        segment_idx: int,
+        total_segments: int,
+        segment_start_sec: float,
+        segment_end_sec: float,
+        duration_sec: float,
+        video_name: str,
+        embedding_service,
+        progress_callback: Optional[Callable[[dict], None]] = None,
+    ) -> None:
+        """Evaluate segment checkpoint:
+        1. Extract ArcFace embeddings for new quality face crops.
+        2. Match observations against enrolled student identities with section whitelist.
+        3. For confident matches: evaluate diversity and update profile (FAISS + DB).
+        4. For uncertain matches: register in unresolved tracks (PENDING_REVIEW).
+        5. For unknowns: register candidate tracks (UNKNOWN_CANDIDATE).
+        6. Revisit previously unresolved tracks against updated student profiles.
+        7. Persist segment state to disk.
+        8. Broadcast WebSocket progress.
+        """
+        self.current_segment_idx = segment_idx + 1
+        self.total_segments = total_segments
+        self.current_video_timestamp_sec = segment_end_sec
+
+        from .faiss_service import faiss_service
+
+        for track in list(self.tracker.tracks.values()):
+            if not track.selected_samples:
+                continue
+
+            track_last_seen = getattr(track, "last_seen", 0.0)
+            track_first_seen = getattr(track, "first_seen", 0.0)
+            if track_last_seen < segment_start_sec or track_first_seen > segment_end_sec:
+                continue
+
+            self.usable_faces += len(track.selected_samples)
+
+            best_sample = max(track.selected_samples, key=lambda s: s.get("quality_score", 0.0))
+            best_crop = best_sample.get("crop")
+            best_q = float(best_sample.get("quality_score", 0.0))
+
+            if not track.embeddings and best_crop is not None:
+                try:
+                    emb = embedding_service.generate_embedding(best_crop)
+                    if emb is not None and isinstance(emb, np.ndarray) and emb.shape == (512,):
+                        norm = float(np.linalg.norm(emb))
+                        if norm > 0.1:
+                            emb = (emb / norm).astype(np.float32)
+                            track.add_embedding(
+                                sample_id=best_sample.get("sample_id", f"s_{track.track_id}_0"),
+                                embedding=emb,
+                                quality_score=best_q,
+                                timestamp=track_last_seen,
+                                source_video=video_name,
+                            )
+                            self.embeddings_generated += 1
+                except Exception as ex:
+                    logger.debug(f"Segment checkpoint embedding extraction error: {ex}")
+
+            if not track.embeddings:
+                if best_q < 45.0:
+                    self.low_quality_skipped += 1
+                continue
+
+            embs = [e["embedding"] for e in track.embeddings if "embedding" in e]
+            if not embs:
+                continue
+            rep_emb = embs[0]
+            if len(embs) > 1:
+                mean_vec = np.mean(embs, axis=0)
+                n = float(np.linalg.norm(mean_vec))
+                if n > 0.1:
+                    rep_emb = (mean_vec / n).astype(np.float32)
+
+            match = faiss_service.search_face(
+                rep_emb,
+                threshold=0.45,
+                allowed_usns=self.allowed_usns
+            )
+
+            if match:
+                matched_usn, sim = match
+                if sim >= 0.65:
+                    track.state = "KNOWN_IDENTITY"
+                    track.assigned_name = matched_usn
+                    track.assigned_usn = matched_usn
+                    track.identity_status = "CONFIRMED"
+                    self.matched_identities[matched_usn] = self.matched_identities.get(matched_usn, 0) + 1
+                    self.known_matches += 1
+                    self.unresolved_tracks.pop(track.track_id, None)
+
+                    profile = self.enrolled_profiles.get(matched_usn)
+                    if profile and best_q >= 70.0 and best_crop is not None:
+                        existing_embs = profile.get("embeddings", [])
+                        max_sim_to_existing = 0.0
+                        if existing_embs:
+                            max_sim_to_existing = max(float(np.dot(rep_emb, e)) for e in existing_embs)
+
+                        if 0.70 <= max_sim_to_existing <= 0.95 or not existing_embs:
+                            added = faiss_service.add_profile_sample(matched_usn, rep_emb, max_samples=12, dup_threshold=0.95)
+                            if added:
+                                self.profile_updates_accepted += 1
+                                profile["embeddings"].append(rep_emb)
+                                profile["profile_updates_count"] = profile.get("profile_updates_count", 0) + 1
+                                self._persist_student_embedding(
+                                    student_id=profile["student_id"],
+                                    usn=matched_usn,
+                                    emb=rep_emb,
+                                    thumbnail_path=best_sample.get("image_path"),
+                                    quality_score=best_q,
+                                    confidence=sim,
+                                )
+                                logger.info(f"[{self.session_id}] Continuous Profile Improvement: Accepted sample for {matched_usn} (sim={sim:.3f}, quality={best_q:.1f}).")
+                elif sim >= 0.45:
+                    track.state = "PENDING_REVIEW"
+                    track.identity_status = "CANDIDATE"
+                    self.unresolved_tracks[track.track_id] = {
+                        "track_id": track.track_id,
+                        "timestamp_sec": track_last_seen,
+                        "candidate_usn": matched_usn,
+                        "similarity": sim,
+                        "quality_score": best_q,
+                        "crop_path": best_sample.get("image_path"),
+                        "rep_emb": rep_emb,
+                    }
+                else:
+                    track.state = "UNKNOWN_CANDIDATE"
+                    track.identity_status = "UNKNOWN"
+                    self.candidate_identities[track.track_id] = track
+            else:
+                track.state = "UNKNOWN_CANDIDATE"
+                track.identity_status = "UNKNOWN"
+                self.candidate_identities[track.track_id] = track
+
+        for unres_id, unres in list(self.unresolved_tracks.items()):
+            unres_emb = unres.get("rep_emb")
+            if unres_emb is None:
+                continue
+            re_match = faiss_service.search_face(unres_emb, threshold=0.65, allowed_usns=self.allowed_usns)
+            if re_match:
+                res_usn, res_sim = re_match
+                self.unresolved_revisited += 1
+                self.unresolved_tracks.pop(unres_id, None)
+                self.matched_identities[res_usn] = self.matched_identities.get(res_usn, 0) + 1
+                if unres_id in self.tracker.tracks:
+                    tr_obj = self.tracker.tracks[unres_id]
+                    tr_obj.state = "KNOWN_IDENTITY"
+                    tr_obj.assigned_name = res_usn
+                    tr_obj.assigned_usn = res_usn
+                    tr_obj.identity_status = "CONFIRMED"
+                logger.info(f"[{self.session_id}] Revisit Success: Resolved track {unres_id} to {res_usn} (sim={res_sim:.3f}).")
+
+        self._save_segment_state(segment_idx, total_segments, segment_end_sec, duration_sec)
+
+        if progress_callback:
+            progress_pct = ((segment_idx + 1) / float(total_segments)) * 100.0
+            await progress_callback({
+                "event": "SEGMENT_COMPLETED",
+                "sessionId": self.session_id,
+                "currentSegment": segment_idx + 1,
+                "totalSegments": total_segments,
+                "segmentDurationSec": self.segment_duration_sec,
+                "currentTimestampSec": round(segment_end_sec, 2),
+                "totalDurationSec": round(duration_sec, 2),
+                "progressPercentage": round(min(progress_pct, 99.0), 1),
+                "evaluatedFrames": self.frames_processed,
+                "faceDetections": self.face_detections,
+                "usableFaces": self.usable_faces,
+                "knownIdentitiesMatched": len(self.matched_identities),
+                "unresolvedRevisited": self.unresolved_revisited,
+                "newCandidatesDiscovered": len(self.candidate_identities),
+                "candidatesAwaitingAssignment": len(self.candidate_identities),
+                "lowQualitySkipped": self.low_quality_skipped,
+                "profileUpdatesAccepted": self.profile_updates_accepted,
+                "activeTracks": len(self.tracker.active_tracks_list),
+                "isPaused": self.is_paused,
+                "diagnostics": self.get_diagnostics(),
+            })
+
+        while self.is_paused and not getattr(self, "stop_requested", False):
+            await asyncio.sleep(0.5)
 
     async def process_video(
         self,
@@ -645,23 +1032,40 @@ class ClassroomPipeline:
         video_paths: List[str],
         progress_callback: Optional[Callable[[dict], None]] = None,
         max_frames: Optional[int] = None,
+        segment_duration_sec: Optional[float] = None,
+        resume: bool = False,
     ) -> List[dict]:
-        """Run the full multi-stage pipeline over all video inputs."""
+        """Run the automatic segmented enrollment pipeline over classroom videos.
+
+        Advances through the video in configured intervals (default: 150 seconds = 2.5 min),
+        discovering new people, evaluating candidates, continuously updating existing
+        profiles, and checking for pause/resume signals.
+        """
         dtype = (self.detector_type or settings.detection_model).lower()
-        if dtype in ("yolo11", "yolo"):
+        if dtype in ("yolo26", "yolo26-face"):
+            from .yolo26_detector import yolo26_detector
+            face_detector = yolo26_detector
+            self.detector_name = "YOLO26-S-Face"
+        elif dtype in ("yolo11", "yolo"):
             from .yolo_detector import yolo_detector
             face_detector = yolo_detector
             self.detector_name = "YOLO11"
         elif dtype == "combined":
             from .combined_detector import combined_detector
             face_detector = combined_detector
-            self.detector_name = "SCRFD 10G + YOLO11"
+            self.detector_name = "SCRFD 10G + YOLO26-Face"
         else:
             from .face_detector import face_detector
             face_detector = face_detector
             self.detector_name = "SCRFD 10G"
 
         from .embedding_service import embedding_service
+
+        # 1. Load existing confirmed student profiles from PostgreSQL
+        self._load_enrolled_profiles()
+
+        if segment_duration_sec and segment_duration_sec > 0:
+            self.segment_duration_sec = float(segment_duration_sec)
 
         num_videos = len(video_paths)
         if self.start_time == 0.0:
@@ -688,100 +1092,162 @@ class ClassroomPipeline:
                 continue
 
             self.total_video_frames += total_frames
-            # Dynamic AI Frame Sampler: Process at TARGET_PROCESSING_FPS (default 3.0 FPS) regardless of video FPS
             target_ai_fps = getattr(settings, "target_processing_fps", 3.0)
             frame_skip = max(1, round(fps / max(0.1, target_ai_fps)))
             logger.info(f"[DYNAMIC-SAMPLER] Video Source FPS={fps:.1f} → AI Processing at {target_ai_fps:.1f} FPS (evaluating every {frame_skip} frames)")
 
-            frame_idx = 0
+            # Compute segments for this video
+            total_segments = max(1, int(np.ceil(duration_sec / max(1.0, self.segment_duration_sec))))
+            self.total_segments = total_segments
+
+            start_seg_idx = 0
+            if resume:
+                state_file = self.session_dir / "segment_state.json"
+                if state_file.exists():
+                    try:
+                        import json
+                        with open(state_file, "r") as f:
+                            saved_state = json.load(f)
+                        saved_seg = saved_state.get("currentSegment", 0)
+                        if 0 < saved_seg < total_segments:
+                            start_seg_idx = saved_seg
+                            logger.info(f"[{self.session_id}] Resuming video from segment #{start_seg_idx + 1}/{total_segments}")
+                    except Exception as s_err:
+                        logger.warning(f"[{self.session_id}] Error reading resume state: {s_err}")
+
+            frame_idx = int(start_seg_idx * self.segment_duration_sec * fps)
+            if frame_idx > 0 and frame_idx < total_frames:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+
             video_frames_processed = 0
             consecutive_empty_frames = 0
 
             try:
-                while True:
-                    # Ultra-fast grab for skipped non-AI frames (0.05ms vs 30ms decode)
-                    skipped = False
-                    for _ in range(frame_skip - 1):
-                        if not cap.grab():
-                            skipped = True
+                for seg_idx in range(start_seg_idx, total_segments):
+                    seg_start_sec = seg_idx * self.segment_duration_sec
+                    seg_end_sec = min(duration_sec, (seg_idx + 1) * self.segment_duration_sec)
+                    seg_end_frame = min(total_frames, int(seg_end_sec * fps))
+
+                    logger.info(
+                        f"[{self.session_id}] Automatic Advancement -> Processing Segment {seg_idx + 1}/{total_segments} "
+                        f"({int(seg_start_sec // 60):02d}:{int(seg_start_sec % 60):02d} - {int(seg_end_sec // 60):02d}:{int(seg_end_sec % 60):02d}) "
+                        f"[target frames {frame_idx} -> {seg_end_frame}]"
+                    )
+
+                    while frame_idx < seg_end_frame:
+                        skipped = False
+                        for _ in range(frame_skip - 1):
+                            if not cap.grab():
+                                skipped = True
+                                break
+                            frame_idx += 1
+
+                        if skipped:
+                            break
+
+                        ret, frame = cap.read()
+                        if not ret:
                             break
                         frame_idx += 1
 
-                    if skipped:
-                        break
+                        timestamp_sec = frame_idx / fps if fps > 0 else 0.0
+                        self.current_video_timestamp_sec = timestamp_sec
 
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    frame_idx += 1
+                        updated = await asyncio.to_thread(
+                            self._process_frame,
+                            frame, frame_idx, video_name, timestamp_sec,
+                            face_detector, embedding_service,
+                        )
 
-                    timestamp_sec = frame_idx / fps if fps > 0 else 0.0
-                    logger.info(f"[FRAME-SAMPLER] Processed sampled frame #{frame_idx} ({timestamp_sec:.2f}s)")
-                    updated = await asyncio.to_thread(
-                        self._process_frame,
-                        frame, frame_idx, video_name, timestamp_sec,
-                        face_detector, embedding_service,
+                        if not updated:
+                            consecutive_empty_frames += 1
+                        else:
+                            consecutive_empty_frames = 0
+
+                        if consecutive_empty_frames >= EMPTY_FRAME_SKIP_AFTER:
+                            consecutive_empty_frames = 0
+                            jump_frames = int(EMPTY_FRAME_JUMP_SEC * fps)
+                            new_frame_idx = min(seg_end_frame - 1, frame_idx + jump_frames)
+                            if new_frame_idx > frame_idx and new_frame_idx < total_frames:
+                                cap.set(cv2.CAP_PROP_POS_FRAMES, new_frame_idx)
+                                frame_idx = new_frame_idx
+                                logger.info(f"[{self.session_id}] Fast-forwarding empty segment: jumped {EMPTY_FRAME_JUMP_SEC}s to frame {frame_idx}/{total_frames}")
+
+                        if getattr(self, "stop_requested", False):
+                            logger.info(f"[{self.session_id}] Stop requested. Gracefully breaking frame loop to run ArcFace & HDBSCAN.")
+                            break
+
+                        try:
+                            from ..api.session_enrollment import state
+                            if state.sessions.get(self.session_id, {}).get("status") == "STOPPED":
+                                logger.info(f"[{self.session_id}] Session marked STOPPED in state. Breaking frame loop.")
+                                self.stop_requested = True
+                                break
+                        except Exception:
+                            pass
+
+                        video_frames_processed += 1
+                        if max_frames is not None and (self.frames_processed >= max_frames or frame_idx >= max_frames):
+                            logger.info(f"[{self.session_id}] Reached max_frames target ({max_frames} frames). Halting frame scan.")
+                            break
+
+                        await asyncio.sleep(0.005)
+
+                        if progress_callback and (video_frames_processed % 5 == 0 or video_frames_processed == 1):
+                            progress_pct = (
+                                (vid_idx / num_videos)
+                                + (video_frames_processed / max(total_frames / frame_skip, 1)) / num_videos
+                            ) * 100
+                            await progress_callback({
+                                "event": "PROCESSING_PROGRESS",
+                                "sessionId": self.session_id,
+                                "currentSegment": seg_idx + 1,
+                                "totalSegments": total_segments,
+                                "segmentDurationSec": self.segment_duration_sec,
+                                "currentTimestampSec": round(timestamp_sec, 2),
+                                "totalDurationSec": round(duration_sec, 2),
+                                "progressPercentage": round(min(max(progress_pct, 1.0), 90.0), 1),
+                                "processedFrames": self.frames_processed,
+                                "evaluated_frames": self.frames_processed,
+                                "frames_with_faces": self.frames_with_faces,
+                                "detectedFacesCount": self.face_detections,
+                                "face_detections": self.face_detections,
+                                "current_frame_faces": getattr(self, "current_frame_faces", 0),
+                                "qualitySamples": self.quality_accepted,
+                                "arcfaceEmbeddings": self.embeddings_generated,
+                                "usableFaces": self.usable_faces,
+                                "knownIdentitiesMatched": len(self.matched_identities),
+                                "unresolvedRevisited": self.unresolved_revisited,
+                                "newCandidatesDiscovered": len(self.candidate_identities),
+                                "candidatesAwaitingAssignment": len(self.candidate_identities),
+                                "lowQualitySkipped": self.low_quality_skipped,
+                                "profileUpdatesAccepted": self.profile_updates_accepted,
+                                "activeTracks": len(self.tracker.active_tracks_list),
+                                "totalTracks": getattr(self.tracker, "total_tracks_created", len(self.tracker.tracks)),
+                                "generatedClusters": len(getattr(self, "hdbscan_clusters", [])) or sum(1 for t in self.tracker.tracks.values() if t.selected_samples),
+                                "currentVideo": video_name,
+                                "videoIndex": vid_idx + 1,
+                                "totalVideos": num_videos,
+                                "isPaused": self.is_paused,
+                                "diagnostics": self.get_diagnostics(),
+                            })
+
+                    # ── Segment Checkpoint Evaluation ──
+                    await self._process_segment_checkpoint(
+                        vid_idx=vid_idx,
+                        num_videos=num_videos,
+                        segment_idx=seg_idx,
+                        total_segments=total_segments,
+                        segment_start_sec=seg_start_sec,
+                        segment_end_sec=seg_end_sec,
+                        duration_sec=duration_sec,
+                        video_name=video_name,
+                        embedding_service=embedding_service,
+                        progress_callback=progress_callback,
                     )
 
-                    if not updated:
-                        consecutive_empty_frames += 1
-                    else:
-                        consecutive_empty_frames = 0
-
-                    if consecutive_empty_frames >= EMPTY_FRAME_SKIP_AFTER:
-                        consecutive_empty_frames = 0
-                        jump_frames = int(EMPTY_FRAME_JUMP_SEC * fps)
-                        new_frame_idx = frame_idx + jump_frames
-                        if new_frame_idx < total_frames:
-                            cap.set(cv2.CAP_PROP_POS_FRAMES, new_frame_idx)
-                            frame_idx = new_frame_idx
-                            logger.info(f"[{self.session_id}] Fast-forwarding empty segment: jumped {EMPTY_FRAME_JUMP_SEC}s to frame {frame_idx}/{total_frames}")
-
                     if getattr(self, "stop_requested", False):
-                        logger.info(f"[{self.session_id}] Stop requested. Gracefully breaking frame loop to run ArcFace & HDBSCAN.")
                         break
-
-                    try:
-                        from ..api.session_enrollment import state
-                        if state.sessions.get(self.session_id, {}).get("status") == "STOPPED":
-                            logger.info(f"[{self.session_id}] Session marked STOPPED in state. Breaking frame loop to run ArcFace & HDBSCAN.")
-                            break
-                    except Exception:
-                        pass
-
-                    video_frames_processed += 1
-                    if max_frames is not None and (self.frames_processed >= max_frames or frame_idx >= max_frames):
-                        logger.info(f"[{self.session_id}] Reached max_frames target ({max_frames} frames). Halting frame scan.")
-                        break
-
-                    await asyncio.sleep(0.01)
-                    frame_idx += 1
-
-                    if progress_callback and (video_frames_processed % 5 == 0 or video_frames_processed == 1):
-                        progress_pct = (
-                            (vid_idx / num_videos)
-                            + (video_frames_processed / max(total_frames / frame_skip, 1)) / num_videos
-                        ) * 100
-                        await progress_callback({
-                            "event": "PROCESSING_PROGRESS",
-                            "sessionId": self.session_id,
-                            "progressPercentage": round(min(max(progress_pct, 1.0), 90.0), 1),
-                            "processedFrames": self.frames_processed,
-                            "evaluated_frames": self.frames_processed,
-                            "frames_with_faces": self.frames_with_faces,
-                            "detectedFacesCount": self.face_detections,
-                            "face_detections": self.face_detections,
-                            "current_frame_faces": getattr(self, "current_frame_faces", 0),
-                            "qualitySamples": self.quality_accepted,
-                            "arcfaceEmbeddings": self.embeddings_generated,
-                            "activeTracks": len(self.tracker.active_tracks_list),
-                            "totalTracks": getattr(self.tracker, "total_tracks_created", len(self.tracker.tracks)),
-                            "generatedClusters": len(getattr(self, "hdbscan_clusters", [])) or sum(1 for t in self.tracker.tracks.values() if t.selected_samples),
-                            "currentVideo": video_name,
-                            "videoIndex": vid_idx + 1,
-                            "totalVideos": num_videos,
-                            "diagnostics": self.get_diagnostics(),
-                        })
 
             finally:
                 cap.release()
@@ -2088,7 +2554,7 @@ class ClassroomPipeline:
         ext_diag = tr.get_extended_diagnostics() if hasattr(tr, "get_extended_diagnostics") else {}
 
         res_dict = {
-            "active_detector": getattr(self, "detector_name", "SCRFD 10G"),
+            "active_detector": getattr(self, "detector_name", "YOLO26-S-Face"),
             # Detection Statistics
             "total_video_frames": total_vid_frames,
             "evaluated_frames": self.frames_processed,
@@ -2154,6 +2620,19 @@ class ClassroomPipeline:
             "noise_count": len(noise_samples),
             "duplicate_candidates_count": len(dup_candidates),
             "duplicate_candidates": dup_candidates,
+            # Segment & Adaptive Discovery Metrics
+            "segment_duration_sec": getattr(self, "segment_duration_sec", 150.0),
+            "current_segment_idx": getattr(self, "current_segment_idx", 0),
+            "total_segments": getattr(self, "total_segments", 0),
+            "current_video_timestamp_sec": round(getattr(self, "current_video_timestamp_sec", 0.0), 2),
+            "usable_face_observations": getattr(self, "usable_faces", 0),
+            "known_identities_matched": len(getattr(self, "matched_identities", {})),
+            "unresolved_revisited": getattr(self, "unresolved_revisited", 0),
+            "new_candidates_discovered": len(getattr(self, "candidate_identities", {})),
+            "candidates_awaiting_assignment": len(getattr(self, "candidate_identities", {})),
+            "low_quality_skipped": getattr(self, "low_quality_skipped", 0),
+            "profile_updates_accepted": getattr(self, "profile_updates_accepted", 0),
+            "is_paused": getattr(self, "is_paused", False),
             # Extended Small-Face Diagnostic Metrics
             "primary_detections": getattr(self, "primary_detections", self.face_detections),
             "roi_detections": getattr(self, "roi_detections", 0),

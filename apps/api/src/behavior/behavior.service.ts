@@ -20,9 +20,11 @@ export class BehaviorService {
       });
     }
 
+    const resolvedStudentId = student?.id || null;
+
     const event = await this.prisma.behaviorEvent.create({
       data: {
-        studentId: student?.id || dto.studentId,
+        studentId: resolvedStudentId,
         sessionId: dto.sessionId,
         behaviorType: dto.behaviorType,
         confidence: dto.confidence,
@@ -32,11 +34,27 @@ export class BehaviorService {
       },
     });
 
-    const alertableTypes = ["PHONE_USAGE", "SLEEPING", "INACTIVE", "DISTRACTED", "ABSENT_FROM_SEAT"];
+    const alertableTypes = ["PHONE_USAGE", "SLEEPING", "POSSIBLE_SLEEPING_POSTURE", "INACTIVE", "DISTRACTED", "ABSENT_FROM_SEAT"];
     if (alertableTypes.includes(dto.behaviorType)) {
       const studentName = student?.fullName || dto.metadata?.studentName || "Student";
-      const studentUsn = student?.rollNumber || student?.usn || dto.studentId || "Unknown USN";
+      const studentUsn = student?.rollNumber || student?.usn || (dto.studentId && !dto.studentId.startsWith("TRK-") ? dto.studentId : "Unidentified Person");
       const section = student?.section || dto.metadata?.section || "A";
+
+      // Deduplicate: check if an active alert for the same student or event was created within the last 60s
+      if (resolvedStudentId) {
+        const sixtySecondsAgo = new Date(Date.now() - 60000);
+        const recentAlert = await this.prisma.behaviorAlert.findFirst({
+          where: {
+            studentId: resolvedStudentId,
+            status: "ACTIVE",
+            createdAt: { gte: sixtySecondsAgo },
+          },
+        });
+
+        if (recentAlert) {
+          return { event, alert: recentAlert, duplicatePrevented: true };
+        }
+      }
 
       let severity = "WARNING";
       let title = "";
@@ -44,12 +62,12 @@ export class BehaviorService {
 
       if (dto.behaviorType === "PHONE_USAGE") {
         severity = "WARNING";
-        title = `[Section ${section}] 📱 Phone Detected: ${studentName} (${studentUsn})`;
-        description = `Student ${studentName} (${studentUsn}) in Section ${section} was detected using a mobile phone.`;
-      } else if (dto.behaviorType === "SLEEPING" || dto.behaviorType === "INACTIVE") {
+        title = dto.metadata?.title || `[Section ${section}] 📱 Mobile Phone Usage: ${studentName} (${studentUsn})`;
+        description = dto.metadata?.description || `Sustained mobile phone usage observed (${dto.duration || 5}s) with head tilted toward device.`;
+      } else if (dto.behaviorType === "SLEEPING" || dto.behaviorType === "POSSIBLE_SLEEPING_POSTURE" || dto.behaviorType === "INACTIVE") {
         severity = "CRITICAL";
-        title = `[Section ${section}] 💤 Student Inactive / Sleeping: ${studentName} (${studentUsn})`;
-        description = `Student ${studentName} (${studentUsn}) in Section ${section} is not active (head down / sleeping detected).`;
+        title = dto.metadata?.title || `[Section ${section}] 💤 Possible sleeping posture: ${studentName} (${studentUsn})`;
+        description = dto.metadata?.description || `Sustained forward-slumped / lowered-head posture observed (${dto.duration || 10}s) in Section ${section}.`;
       } else if (dto.behaviorType === "DISTRACTED") {
         severity = "INFO";
         title = `[Section ${section}] 👀 Inattentive: ${studentName} (${studentUsn})`;
@@ -63,7 +81,7 @@ export class BehaviorService {
       const alert = await this.prisma.behaviorAlert.create({
         data: {
           behaviorEventId: event.id,
-          studentId: student?.id || dto.studentId,
+          studentId: resolvedStudentId,
           severity,
           title,
           description,
@@ -76,6 +94,22 @@ export class BehaviorService {
     }
 
     return event;
+  }
+
+  async getLiveBehavior(cameraId?: string) {
+    const aiUrl = process.env.AI_SERVICE_URL || "http://localhost:8000";
+    try {
+      const url = cameraId
+        ? `${aiUrl}/api/v1/behavior/live?camera_id=${encodeURIComponent(cameraId)}`
+        : `${aiUrl}/api/v1/behavior/live`;
+      const res = await fetch(url, { headers: { "Content-Type": "application/json" } });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (err) {
+      // AI service might be offline or starting
+    }
+    return { active_sessions: [], students: {}, total_analyzed: 0, timestamp: Date.now() / 1000 };
   }
 
   async queryEvents(query: BehaviorQueryDto) {

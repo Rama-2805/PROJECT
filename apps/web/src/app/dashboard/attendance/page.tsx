@@ -111,12 +111,12 @@ export default function AttendancePage() {
           <h2 className="text-lg font-semibold text-text-primary">Attendance Analytics</h2>
           <p className="text-xs text-text-muted">Track and analyze student attendance across all departments</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={handleExportCSV}>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={handleExportCSV} className="min-h-[40px]">
             <Download className="w-3.5 h-3.5 mr-1" />
             Export CSV
           </Button>
-          <Button size="sm" onClick={() => setIsReportModalOpen(true)}>
+          <Button size="sm" onClick={() => setIsReportModalOpen(true)} className="min-h-[40px]">
             <Calendar className="w-3.5 h-3.5 mr-1" />
             Generate Report
           </Button>
@@ -192,7 +192,7 @@ export default function AttendancePage() {
         {/* Distribution Doughnut */}
         <GlassCard>
           <h3 className="text-sm font-semibold text-text-primary mb-4">Attendance Distribution</h3>
-          <div className="flex items-center justify-center gap-8">
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-8">
             <div className="relative h-40 w-40">
               <svg viewBox="0 0 100 100" className="transform -rotate-90">
                 {(() => {
@@ -333,7 +333,7 @@ export default function AttendancePage() {
                   </select>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="flex flex-col gap-1.5">
                     <label className="font-semibold text-text-secondary uppercase tracking-wider text-[10px]">Department</label>
                     <select

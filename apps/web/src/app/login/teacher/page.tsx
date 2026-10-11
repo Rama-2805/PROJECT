@@ -394,7 +394,7 @@ function LoginContent() {
 
 export default function TeacherLoginPage() {
   return (
-    <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center relative overflow-hidden px-4">
+    <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center relative overflow-hidden px-4 py-8">
       <React.Suspense fallback={<div className="text-white">Loading...</div>}>
         <LoginContent />
       </React.Suspense>

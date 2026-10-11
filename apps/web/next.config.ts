@@ -4,12 +4,12 @@ const AI_SERVICE_URL =
   process.env.AI_SERVICE_URL ||
   process.env.NEXT_PUBLIC_AI_URL ||
   process.env.NEXT_PUBLIC_AI_SERVICE_URL ||
-  "http://localhost:8000";
+  "http://127.0.0.1:8000";
 
 const NESTJS_API_URL =
   process.env.NESTJS_API_URL ||
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/api\/?$/, "") ||
-  "http://localhost:4000";
+  "http://127.0.0.1:4000";
 
 const nextConfig: NextConfig = {
 
@@ -24,10 +24,10 @@ const nextConfig: NextConfig = {
   // Rewrites to proxy AI service storage images & backend API camera/video endpoints
   async rewrites() {
     return [
-      // Camera stream & frame proxied through NestJS API backend
+      // Camera stream & frame proxied to AI service
       {
         source: "/api/camera/:path*",
-        destination: `${NESTJS_API_URL}/api/camera/:path*`,
+        destination: `${AI_SERVICE_URL}/api/v1/camera/:path*`,
       },
       // Video streaming (HTTP 206 Range) proxied through NestJS API backend
       {

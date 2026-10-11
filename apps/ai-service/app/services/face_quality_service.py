@@ -39,7 +39,16 @@ class FaceQualityService:
             [70.7299, 92.2041]
         ], dtype=np.float32)
 
-        src = np.array(landmarks, dtype=np.float32)
+        src = np.array(landmarks, dtype=np.float32).copy()
+        # If landmarks are in global frame coordinates while image is a local face crop,
+        # adjust landmarks so they are relative to image coordinates.
+        h, w = image.shape[:2]
+        if np.any(src[:, 0] > w) or np.any(src[:, 1] > h):
+            min_x = float(np.min(src[:, 0]))
+            min_y = float(np.min(src[:, 1]))
+            src[:, 0] -= max(0.0, min_x - 5.0)
+            src[:, 1] -= max(0.0, min_y - 5.0)
+
         M, _ = cv2.estimateAffinePartial2D(src, arcface_dst, method=cv2.LMEDS)
         if M is None:
             return cv2.resize(image, (112, 112))
@@ -95,8 +104,9 @@ class FaceQualityService:
         if total_height > 0:
             nose_relative_y = nt[1] - eye_center_y
             # Nose usually lies at around 55% of the distance from eyes to mouth.
+            # Head-down tilting pushes nose closer to mouth (ratio > 0.55) -> negative pitch (< 0)
             ratio_pitch = nose_relative_y / total_height
-            pitch = (ratio_pitch - 0.55) * 90.0
+            pitch = -(ratio_pitch - 0.55) * 90.0
         else:
             pitch = 0.0
 

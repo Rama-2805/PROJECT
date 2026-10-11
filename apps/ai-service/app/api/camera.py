@@ -126,18 +126,25 @@ def get_camera_status(camera_id: str = "webcam"):
 
 import asyncio
 
-async def generate_mjpeg_stream(camera_id: str):
-    """Generator for live MJPEG stream with detection/tracking overlays."""
-    logger.info(f"Started MJPEG stream generator for camera {camera_id}")
+async def generate_mjpeg_stream(camera_id: str, mode: str = "attendance"):
+    """Generator for live MJPEG stream with mode-specific overlays (attendance vs behavior)."""
+    logger.info(f"Started MJPEG stream generator for camera {camera_id} (mode: {mode})")
     while True:
-        # Fetch annotated frame from attendance engine
+        # Fetch annotated frame from attendance engine matching the requested mode
         from ..services.attendance_engine import attendance_engine
         frame = None
         with attendance_engine._lock:
-            frame = attendance_engine.annotated_frames.get(camera_id)
+            if mode == "behavior":
+                frame = attendance_engine.annotated_frames_behavior.get(camera_id)
+                if frame is None and attendance_engine.annotated_frames_behavior:
+                    frame = next(iter(attendance_engine.annotated_frames_behavior.values()), None)
+            else:
+                frame = attendance_engine.annotated_frames_attendance.get(camera_id)
+                if frame is None and attendance_engine.annotated_frames_attendance:
+                    frame = next(iter(attendance_engine.annotated_frames_attendance.values()), None)
+
             if frame is None and attendance_engine.annotated_frames:
-                # Fallback to the first active annotated stream
-                frame = next(iter(attendance_engine.annotated_frames.values()), None)
+                frame = attendance_engine.annotated_frames.get(camera_id) or next(iter(attendance_engine.annotated_frames.values()), None)
             
         # Fallback to raw frame from camera service if no session is running
         if frame is None:
@@ -163,15 +170,15 @@ async def generate_mjpeg_stream(camera_id: str):
         await asyncio.sleep(0.04)  # ~25 FPS update rate
 
 @router.get("/stream")
-async def get_camera_stream(camera_id: str = "webcam"):
-    """MJPEG stream endpoint for live monitoring."""
+async def get_camera_stream(camera_id: str = "webcam", mode: str = "attendance"):
+    """MJPEG stream endpoint for live monitoring with separated mode overlays."""
     state = camera_service.get_camera_state(camera_id)
     if state == CameraState.OFFLINE:
         # Try starting camera automatically if offline with footage sequence
         camera_service.start_camera(camera_id, "footage")
         
     return StreamingResponse(
-        generate_mjpeg_stream(camera_id),
+        generate_mjpeg_stream(camera_id, mode),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "Cache-Control": "no-cache, private, max-age=0, must-revalidate",
@@ -182,8 +189,8 @@ async def get_camera_stream(camera_id: str = "webcam"):
     )
 
 @router.get("/frame")
-def get_single_frame(camera_id: str = "webcam"):
-    """Single JPEG snapshot endpoint for polling fallback."""
+def get_single_frame(camera_id: str = "webcam", mode: str = "attendance"):
+    """Single JPEG snapshot endpoint with mode-separated overlays."""
     state = camera_service.get_camera_state(camera_id)
     if state == CameraState.OFFLINE:
         camera_service.start_camera(camera_id, "footage")
@@ -191,9 +198,17 @@ def get_single_frame(camera_id: str = "webcam"):
     from ..services.attendance_engine import attendance_engine
     frame = None
     with attendance_engine._lock:
-        frame = attendance_engine.annotated_frames.get(camera_id)
+        if mode == "behavior":
+            frame = attendance_engine.annotated_frames_behavior.get(camera_id)
+            if frame is None and attendance_engine.annotated_frames_behavior:
+                frame = next(iter(attendance_engine.annotated_frames_behavior.values()), None)
+        else:
+            frame = attendance_engine.annotated_frames_attendance.get(camera_id)
+            if frame is None and attendance_engine.annotated_frames_attendance:
+                frame = next(iter(attendance_engine.annotated_frames_attendance.values()), None)
+
         if frame is None and attendance_engine.annotated_frames:
-            frame = next(iter(attendance_engine.annotated_frames.values()), None)
+            frame = attendance_engine.annotated_frames.get(camera_id) or next(iter(attendance_engine.annotated_frames.values()), None)
         
     if frame is None:
         latest = camera_service.get_latest_frame(camera_id)
@@ -245,7 +260,7 @@ def control_playback(payload: dict):
     
     return {"status": "unknown_action", "action": action}
 
-@router.get("/status")
+@router.get("/playback-status")
 def get_playback_status(camera_id: str = "room-023"):
     """Get active footage metadata, playlist position, and speed."""
     return camera_service.get_playback_status(camera_id)

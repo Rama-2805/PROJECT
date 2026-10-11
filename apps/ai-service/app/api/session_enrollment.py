@@ -25,7 +25,10 @@ router = APIRouter(prefix=f"{settings.api_prefix}/sessions", tags=["Session Enro
 class ProcessSessionRequest(BaseModel):
     videoPaths: List[str]
     storageDir: Optional[str] = None  # Override default storage base dir
-    detector: Optional[str] = None    # "scrfd", "yolo11", "combined"
+    detector: Optional[str] = "yolo26" # "yolo26", "combined", "scrfd"
+    segmentDurationSec: Optional[float] = 150.0  # Configurable segment interval (default 150s = 2.5 min)
+    targetFps: Optional[float] = None
+    resume: Optional[bool] = False
 
 
 class ClusterSyncRequest(BaseModel):
@@ -90,6 +93,9 @@ async def process_session_videos(
         "clusters": [],
         "processedFrames": 0,
         "detectedFaces": 0,
+        "currentSegment": 1,
+        "totalSegments": 1,
+        "segmentDurationSec": body.segmentDurationSec or 150.0,
     }
 
     # Broadcast start event
@@ -97,6 +103,7 @@ async def process_session_videos(
         "sessionId": session_id,
         "totalVideos": len(body.videoPaths),
         "status": "PROCESSING",
+        "segmentDurationSec": body.segmentDurationSec or 150.0,
     })
 
     # Launch background task
@@ -106,12 +113,15 @@ async def process_session_videos(
         body.videoPaths,
         storage_base,
         body.detector,
+        body.segmentDurationSec or 150.0,
+        bool(body.resume),
     )
 
     return {
         "status": "started",
         "sessionId": session_id,
         "totalVideos": len(body.videoPaths),
+        "segmentDurationSec": body.segmentDurationSec or 150.0,
         "message": "AI pipeline started. Connect to WebSocket for live updates.",
         "websocketUrl": "/api/v1/ws",
     }
@@ -351,7 +361,70 @@ async def reset_all_enrollments():
         except Exception:
             pass
 
-    return {"success": True, "message": "All biometric embeddings in FAISS and session assignments have been completely reset."}
+    try:
+        from ..config.database import get_db
+        from sqlalchemy import text
+        db = next(get_db())
+        db.execute(text('UPDATE "Student" SET "faceEnrolled" = false, "enrollmentConfidence" = NULL, "faceSamples" = 0'))
+        db.commit()
+    except Exception as e:
+        logger.warning(f"Could not reset Student DB records: {e}")
+
+    return {"success": True, "message": "All biometric embeddings in FAISS, session assignments, and student enrollment records have been completely reset."}
+
+
+class ResetStudentEnrollmentRequest(BaseModel):
+    usn: str
+    studentId: Optional[str] = None
+
+
+@router.post("/reset-student-enrollment")
+async def reset_student_enrollment(req: ResetStudentEnrollmentRequest):
+    """Purge student vectors from FAISS index and unassign associated clusters across all sessions."""
+    from ..services.faiss_service import faiss_service
+    purged = faiss_service.remove_student_vectors(req.usn)
+    try:
+        faiss_service.save_index()
+    except Exception as e:
+        logger.warning(f"Failed saving FAISS index: {e}")
+
+    req_usn_clean = req.usn.strip().upper()
+    unassigned_clusters = 0
+
+    for s_id, sess in state.sessions.items():
+        dirty = False
+        for c in sess.get("clusters", []):
+            c_usn = str(c.get("usn") or c.get("assignedUsn") or (c.get("assignedStudent") or {}).get("usn") or "").strip().upper()
+            c_sid = str(c.get("student_id") or (c.get("assignedStudent") or {}).get("studentId") or "")
+            if (c_usn and c_usn == req_usn_clean) or (req.studentId and c_sid == req.studentId):
+                c["isEnrolled"] = False
+                c["enrolled"] = False
+                c["identity_status"] = "UNKNOWN"
+                c["status"] = "UNASSIGNED"
+                c["assignedStudent"] = None
+                c["assignedStudentName"] = None
+                c["assignedUsn"] = None
+                c["usn"] = None
+                c["name"] = None
+                c["student_id"] = None
+                unassigned_clusters += 1
+                dirty = True
+        if dirty:
+            try:
+                sess_dir = _get_session_dir(s_id)
+                if sess_dir and (sess_dir / "clusters.json").exists():
+                    with open(sess_dir / "clusters.json", "w") as f:
+                        json.dump(sess["clusters"], f, indent=2)
+            except Exception:
+                pass
+
+    return {
+        "success": True,
+        "usn": req.usn,
+        "purgedVectors": purged,
+        "unassignedClusters": unassigned_clusters,
+        "message": f"Successfully removed biometric data for {req.usn} from FAISS and unassigned {unassigned_clusters} clusters."
+    }
 
 
 @router.get("/{session_id}/status")
@@ -376,7 +449,7 @@ async def get_session_status(session_id: str):
         "detectedFacesCount": sess.get("detectedFaces", 0),
         "face_detections": sess.get("face_detections", sess.get("detectedFaces", 0)),
         "current_frame_faces": sess.get("current_frame_faces", 0),
-        "activeDetector": diag.get("active_detector", sess.get("detector", "SCRFD 10G")),
+        "activeDetector": diag.get("active_detector", sess.get("detector", "YOLO26-S-Face")),
         "activeTracks": diag.get("active_tracks", 0),
         "totalTracks": diag.get("total_tracks", 0),
         "qualitySamples": diag.get("quality_samples", 0),
@@ -455,6 +528,60 @@ async def get_session_live_frame(session_id: str):
     if session_dir and (session_dir / "live_preview.jpg").exists():
         return FileResponse(str(session_dir / "live_preview.jpg"), media_type="image/jpeg")
     return Response(status_code=204)
+
+
+@router.post("/{session_id}/pause")
+async def pause_session_processing(session_id: str):
+    """Pause active video processing at the current segment."""
+    sess = state.sessions.get(session_id, {})
+    sess["status"] = "PAUSED"
+    state.sessions[session_id] = sess
+
+    if session_id in state.active_pipelines:
+        state.active_pipelines[session_id].pause()
+        logger.info(f"[{session_id}] Paused active pipeline instance.")
+
+    await websocket_manager.broadcast("SESSION_PAUSED", {
+        "sessionId": session_id,
+        "status": "PAUSED",
+        "message": "AI video processing paused.",
+    })
+    return {"sessionId": session_id, "status": "PAUSED", "message": "Video processing paused at current segment."}
+
+
+@router.post("/{session_id}/resume")
+async def resume_session_processing(session_id: str, background_tasks: BackgroundTasks):
+    """Resume video processing from the current segment position."""
+    sess = state.sessions.get(session_id, {})
+    sess["status"] = "PROCESSING"
+    state.sessions[session_id] = sess
+
+    if session_id in state.active_pipelines:
+        state.active_pipelines[session_id].resume()
+        logger.info(f"[{session_id}] Resumed active pipeline instance.")
+    else:
+        # Re-launch from segment checkpoint
+        session_dir = _get_session_dir(session_id)
+        video_files = list(session_dir.glob("*.mp4")) if session_dir else []
+        if video_files:
+            vpaths = [str(f) for f in video_files]
+            storage_base = str(session_dir.parent.parent)
+            background_tasks.add_task(
+                _run_pipeline_background,
+                session_id,
+                vpaths,
+                storage_base,
+                "yolo26",
+                150.0,
+                True,
+            )
+
+    await websocket_manager.broadcast("SESSION_RESUMED", {
+        "sessionId": session_id,
+        "status": "PROCESSING",
+        "message": "AI video processing resumed.",
+    })
+    return {"sessionId": session_id, "status": "PROCESSING", "message": "Video processing resumed."}
 
 
 @router.post("/{session_id}/stop")
@@ -588,6 +715,21 @@ class MergeClustersRequest(BaseModel):
     targetClusterId: str
 
 
+def _find_cluster(clusters: list, cluster_id: str):
+    cid_str = str(cluster_id)
+    digits = "".join(filter(str.isdigit, cid_str))
+    padded_cid = f"cluster_{digits.zfill(3)}" if digits else ""
+    for c in clusters:
+        c_cid = c.get("clusterId") or c.get("cluster_id") or ""
+        if c_cid == cid_str or c.get("id") == cid_str:
+            return c
+        if padded_cid and (c_cid == padded_cid or c_cid.lower() == padded_cid.lower()):
+            return c
+        if digits and str(c.get("clusterNumber")) == digits:
+            return c
+    return None
+
+
 @router.post("/{session_id}/clusters/{cluster_id}/assign")
 async def assign_cluster_identity(session_id: str, cluster_id: str, req: AssignStudentRequest):
     """Manually assign a verified student identity to a cluster with duplicate assignment protection."""
@@ -598,7 +740,7 @@ async def assign_cluster_identity(session_id: str, cluster_id: str, req: AssignS
 
     sess = state.sessions[session_id]
     clusters = sess.get("clusters", [])
-    matched = next((c for c in clusters if c.get("clusterId") == cluster_id or c.get("cluster_id") == cluster_id), None)
+    matched = _find_cluster(clusters, cluster_id)
     if not matched:
         raise HTTPException(status_code=404, detail=f"Cluster '{cluster_id}' not found in session")
 
@@ -666,7 +808,7 @@ async def confirm_cluster_identity(session_id: str, cluster_id: str):
 
     sess = state.sessions[session_id]
     clusters = sess.get("clusters", [])
-    matched = next((c for c in clusters if c.get("clusterId") == cluster_id or c.get("cluster_id") == cluster_id), None)
+    matched = _find_cluster(clusters, cluster_id)
     if not matched:
         raise HTTPException(status_code=404, detail=f"Cluster '{cluster_id}' not found")
 
@@ -762,6 +904,78 @@ class EnrollClusterRequest(BaseModel):
     embedding: Optional[List[float]] = None
 
 
+@router.post("/{session_id}/finalize-faiss")
+async def finalize_session_in_faiss(session_id: str):
+    """Batch enroll all confirmed clusters for this session into FAISS and persist index."""
+    if session_id not in state.sessions:
+        _load_session_disk_fallback(session_id)
+        
+    sess = state.sessions.get(session_id, {})
+    clusters = sess.get("clusters", [])
+    
+    from ..services.faiss_service import faiss_service
+    import numpy as np
+    
+    enrolled_count = 0
+    for c in clusters:
+        usn = c.get("assignedUsn") or c.get("usn") or (c.get("assignedStudent", {}).get("usn") if isinstance(c.get("assignedStudent"), dict) else None)
+        is_confirmed = (
+            c.get("identity_status") == "CONFIRMED" or
+            c.get("status") == "ASSIGNED" or
+            c.get("isEnrolled") is True or
+            c.get("enrolled") is True or
+            bool(usn)
+        )
+        if not is_confirmed or not usn:
+            continue
+            
+        vectors = []
+        for key in ("representative_embedding", "centroid_embedding", "centroid", "medoid_embedding"):
+            emb = c.get(key)
+            if isinstance(emb, list) and len(emb) == 512:
+                vec = np.array(emb, dtype=np.float32)
+                norm = np.linalg.norm(vec)
+                if norm > 0:
+                    vec = vec / norm
+                vectors.append(vec)
+                
+        if vectors:
+            faiss_service.remove_student_vectors(usn)
+            for v in vectors:
+                faiss_service.add_student(usn, v)
+            c["isEnrolled"] = True
+            c["enrolled"] = True
+            c["status"] = "ASSIGNED"
+            c["identity_status"] = "CONFIRMED"
+            enrolled_count += 1
+            
+    faiss_service.save_index()
+    return {
+        "success": True,
+        "sessionId": session_id,
+        "enrolled_clusters": enrolled_count,
+        "total_faiss_vectors": faiss_service.index.ntotal if faiss_service.index else 0
+    }
+
+
+@router.post("/{session_id}/finalize-session")
+async def finalize_session_direct(session_id: str):
+    """Batch enroll all confirmed clusters for this session into FAISS and persist durable index."""
+    return await finalize_session_in_faiss(session_id)
+
+
+@router.post("/rebuild-faiss-from-db")
+async def rebuild_faiss_from_db():
+    """Recover and reconstruct FAISS vector index directly from PostgreSQL FaceEmbedding records."""
+    from ..services.faiss_service import faiss_service
+    count = faiss_service.rebuild_from_postgres()
+    return {
+        "success": True,
+        "reconstructed_vectors": count,
+        "total_faiss_vectors": faiss_service.index.ntotal if faiss_service.index else 0
+    }
+
+
 @router.post("/{session_id}/enroll-cluster")
 async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
     """Register all high-quality 512D ArcFace embeddings for a cluster into the FAISS vector index."""
@@ -790,7 +1004,7 @@ async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
     else:
         sess = state.sessions.get(session_id, {})
         clusters = sess.get("clusters", [])
-        matched = next((c for c in clusters if c.get("clusterId") == cluster_id or c.get("cluster_id") == cluster_id), None)
+        matched = _find_cluster(clusters, cluster_id)
         if matched:
             if "representative_embedding" in matched and matched["representative_embedding"] and len(matched["representative_embedding"]) == 512:
                 vec = np.array(matched["representative_embedding"], dtype=np.float32)
@@ -882,11 +1096,11 @@ async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
     except Exception as p_err:
         logger.warning(f"Could not persist enrolled status to clusters.json: {p_err}")
 
-    # Synchronize student faceEnrolled state in NestJS backend
+    # Synchronize student faceEnrolled state in NestJS backend (non-blocking)
     try:
         import httpx
-        with httpx.Client(timeout=4.0) as client:
-            client.post(
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post(
                 "http://localhost:4000/api/students/sync-enrollment",
                 json={
                     "usn": usn,
@@ -894,8 +1108,6 @@ async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
                     "profilePhoto": best_img_path,
                 }
             )
-            # Also trigger NestJS session cluster sync to persist cluster status into Postgres
-            client.post(f"http://localhost:4000/api/enrollment/sessions/{session_id}/sync-clusters")
     except Exception as n_err:
         logger.warning(f"Could not sync student enrollment status to NestJS API: {n_err}")
 
@@ -908,6 +1120,98 @@ async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
         "addedVectors": added_count,
         "totalFaissVectors": faiss_service.index.ntotal if faiss_service.index else 0,
         "message": f"Successfully enrolled {added_count} real ArcFace vectors for USN {usn} into FAISS index.",
+    }
+
+
+class DirectPhotoEnrollRequest(BaseModel):
+    usn: str
+    name: Optional[str] = None
+    photoBase64: str
+
+
+@router.post("/direct-photo-enroll")
+async def direct_photo_enroll(req: DirectPhotoEnrollRequest):
+    """
+    Directly enroll a student from a photo (uploaded file or webcam capture).
+    Extracts face, generates 512D ArcFace embedding, registers with FAISS,
+    and saves the image to student profile directory.
+    """
+    import base64
+    import cv2
+    from ..services.faiss_service import faiss_service
+    from ..services.face_detector import face_detector
+    from ..services.embedding_service import embedding_service
+
+    usn = req.usn.strip().upper()
+    if not usn:
+        raise HTTPException(status_code=400, detail="USN is required")
+
+    photo_str = req.photoBase64
+    if not photo_str:
+        raise HTTPException(status_code=400, detail="Photo data is required")
+
+    try:
+        if "," in photo_str:
+            photo_str = photo_str.split(",", 1)[1]
+        img_bytes = base64.b64decode(photo_str)
+        nparr = np.frombuffer(img_bytes, np.uint8)
+        img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img_bgr is None or img_bgr.size == 0:
+            raise ValueError("Failed to decode image data")
+    except Exception as e:
+        logger.error(f"Image decode error for USN {usn}: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid image format: {e}")
+
+    # Ensure storage folder exists
+    student_dir = Path("storage/enrollment/students") / usn
+    student_dir.mkdir(parents=True, exist_ok=True)
+    full_photo_path = student_dir / "profile.jpg"
+    cv2.imwrite(str(full_photo_path), img_bgr)
+
+    # Face detection & ArcFace embedding extraction
+    emb = None
+    faces = []
+    try:
+        faces = face_detector.detect_faces(img_bgr)
+    except Exception as d_err:
+        logger.warning(f"SCRFD face detection error on direct photo for USN {usn}: {d_err}")
+
+    if faces:
+        best_face = max(faces, key=lambda f: f.get("confidence", 0.0))
+        crop = best_face.get("crop")
+        landmarks = best_face.get("landmarks")
+        if crop is not None and crop.size > 0:
+            crop_path = student_dir / "face_crop.jpg"
+            cv2.imwrite(str(crop_path), crop)
+            emb = embedding_service.generate_embedding(crop, landmarks)
+
+    if emb is None:
+        # Fallback: attempt direct embedding on the image
+        try:
+            emb = embedding_service.generate_embedding(img_bgr)
+        except Exception as e_err:
+            logger.warning(f"Fallback embedding generation failed: {e_err}")
+
+    added_to_faiss = False
+    if emb is not None and len(emb) == 512:
+        vec = np.array(emb, dtype=np.float32)
+        norm = np.linalg.norm(vec)
+        if norm > 0:
+            vec = vec / norm
+            # Remove older vectors for this USN to prevent staleness
+            faiss_service.remove_student_vectors(usn)
+            faiss_service.add_student(usn, vec)
+            added_to_faiss = True
+            logger.info(f"Direct photo enrolled: Added 512D ArcFace vector to FAISS for USN {usn}")
+
+    rel_path = f"storage/enrollment/students/{usn}/profile.jpg"
+    return {
+        "success": True,
+        "usn": usn,
+        "imagePath": rel_path,
+        "vectorEnrolled": added_to_faiss,
+        "totalFaissVectors": faiss_service.index.ntotal if faiss_service.index else 0,
+        "message": f"Photo registered and {'FAISS vector enrolled' if added_to_faiss else 'saved'} for {usn}."
     }
 
 
@@ -959,8 +1263,15 @@ async def delete_session_ai(session_id: str):
 
 # ── Background pipeline runner ─────────────────────────────────────────
 
-async def _run_pipeline_background(session_id: str, video_paths: List[str], storage_base: str, detector: Optional[str] = None):
-    """Run classroom pipeline and update in-memory state + broadcast WS events."""
+async def _run_pipeline_background(
+    session_id: str,
+    video_paths: List[str],
+    storage_base: str,
+    detector: Optional[str] = None,
+    segment_duration_sec: float = 150.0,
+    resume: bool = False,
+):
+    """Run classroom pipeline with automatic segment advancement, state tracking, and WebSocket broadcasts."""
     from ..services.classroom_pipeline import ClassroomPipeline
 
     async def on_progress(event: dict):
@@ -990,6 +1301,17 @@ async def _run_pipeline_background(session_id: str, video_paths: List[str], stor
             sess["totalTracks"] = event["totalTracks"]
         if "generatedClusters" in event:
             sess["generatedClusters"] = event["generatedClusters"]
+
+        for k in (
+            "currentSegment", "totalSegments", "segmentDurationSec",
+            "currentTimestampSec", "totalDurationSec", "usableFaces",
+            "knownIdentitiesMatched", "unresolvedRevisited",
+            "newCandidatesDiscovered", "candidatesAwaitingAssignment",
+            "lowQualitySkipped", "profileUpdatesAccepted", "isPaused"
+        ):
+            if k in event:
+                sess[k] = event[k]
+
         if "diagnostics" in event:
             d = event["diagnostics"]
             sess["diagnostics"] = d
@@ -1017,7 +1339,12 @@ async def _run_pipeline_background(session_id: str, video_paths: List[str], stor
     try:
         pipeline = ClassroomPipeline(session_id, storage_base, detector_type=detector)
         state.active_pipelines[session_id] = pipeline
-        clusters = await pipeline.run(video_paths, on_progress)
+        clusters = await pipeline.run(
+            video_paths,
+            on_progress,
+            segment_duration_sec=segment_duration_sec,
+            resume=resume,
+        )
 
         # Store results & diagnostics
         diag = pipeline.get_diagnostics()

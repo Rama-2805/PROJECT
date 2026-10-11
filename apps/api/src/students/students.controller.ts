@@ -14,6 +14,7 @@ import { CreateStudentDto, UpdateStudentDto, StudentQueryDto } from "./students.
 import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
 import { RolesGuard } from "../common/guards/roles.guard";
 import { Roles } from "../common/decorators/roles.decorator";
+import { CurrentUser } from "../common/decorators/current-user.decorator";
 import { RoleName } from "../_shared/enums/roles";
 
 @Controller("students")
@@ -46,9 +47,22 @@ export class StudentsController {
   }
 
   @Post("sync-enrollment")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.STUDENT)
   syncEnrollment(@Body() dto: { usn: string; faceSamples?: number; profilePhoto?: string }) {
     return this.students.markStudentEnrolled(dto);
+  }
+
+  @Post("update-photo")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT, RoleName.RESEARCH_ANALYST)
+  updatePhoto(
+    @Body() dto: { studentId?: string; usn?: string; photoData: string },
+    @CurrentUser() user: any,
+  ) {
+    return this.students.updateStudentPhoto({
+      ...dto,
+      userId: user?.sub || user?.id,
+      email: user?.email,
+    });
   }
 
   @Post()
@@ -79,5 +93,17 @@ export class StudentsController {
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
   resetPassword(@Param("id") id: string, @Body("password") password?: string) {
     return this.students.resetStudentPassword(id, password);
+  }
+
+  @Delete(":id/face-enrollment")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD)
+  clearFaceEnrollment(@Param("id") id: string) {
+    return this.students.clearStudentFaceEnrollment(id);
+  }
+
+  @Post(":id/clear-enrollment")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD)
+  clearFaceEnrollmentPost(@Param("id") id: string) {
+    return this.students.clearStudentFaceEnrollment(id);
   }
 }

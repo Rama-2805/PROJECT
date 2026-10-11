@@ -1,7 +1,7 @@
 "use client";
 
 import { useUIStore } from "@/store/uiStore";
-import { Search, Bell, Sparkles, Moon, Sun, User, Command } from "lucide-react";
+import { Search, Bell, Sparkles, Moon, Sun, User, Command, Menu } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { cn } from "@/lib/utils/cn";
@@ -9,6 +9,8 @@ import Link from "next/link";
 import { useBehaviorAlerts } from "@/lib/hooks/useBehaviorAlerts";
 
 export function TopNavbar() {
+  const sidebarOpen = useUIStore((s) => s.sidebarOpen);
+  const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const toggleCommandPalette = useUIStore((s) => s.toggleCommandPalette);
   const toggleAssistant = useUIStore((s) => s.toggleAssistant);
   const theme = useUIStore((s) => s.theme);
@@ -66,17 +68,25 @@ export function TopNavbar() {
   }, []);
 
   return (
-    <header className="sticky top-0 z-40 flex h-20 shrink-0 items-center gap-x-6 border-b border-glass-border bg-bg-secondary/55 px-4 shadow-glass sm:px-6 lg:px-8 backdrop-blur-[20px] transition-colors duration-300">
+    <header className="sticky top-0 z-40 flex h-20 shrink-0 items-center gap-x-3 sm:gap-x-6 border-b border-glass-border bg-bg-secondary/55 px-3 sm:px-6 lg:px-8 backdrop-blur-[20px] transition-colors duration-300">
       
-      {/* Left: Breadcrumbs */}
-      <div className="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
-        <div className="flex items-center gap-2 text-xs font-semibold text-text-muted tracking-wider uppercase">
+      {/* Left: Mobile Menu Button & Breadcrumbs */}
+      <div className="flex flex-1 items-center gap-x-3 min-w-0">
+        <button
+          onClick={toggleSidebar}
+          className="lg:hidden flex items-center justify-center h-10 w-10 min-h-[44px] min-w-[44px] rounded-xl text-text-primary hover:bg-glass-medium border border-glass-border shadow-glass transition-colors shrink-0 cursor-pointer"
+          aria-label="Toggle navigation menu"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+
+        <div className="flex items-center gap-1.5 sm:gap-2 text-xs font-semibold text-text-muted tracking-wider uppercase overflow-x-auto no-scrollbar">
           {segments.map((segment, index) => (
-            <div key={segment} className="flex items-center gap-2">
+            <div key={segment} className="flex items-center gap-1.5 sm:gap-2 shrink-0">
               <span className={cn(
                 "transition-all duration-300",
                 index === segments.length - 1 
-                  ? "text-text-primary font-bold bg-glass-heavy border border-glass-border px-2.5 py-1 rounded-lg shadow-glass" 
+                  ? "text-text-primary font-bold bg-glass-heavy border border-glass-border px-2 sm:px-2.5 py-1 rounded-lg shadow-glass" 
                   : "text-text-muted hover:text-text-primary"
               )}>
                 {segment.replace(/-/g, " ")}
@@ -102,13 +112,13 @@ export function TopNavbar() {
       </div>
 
       {/* Right: Actions */}
-      <div className="flex flex-1 items-center justify-end gap-x-4 lg:gap-x-5">
+      <div className="flex items-center justify-end gap-x-2 sm:gap-x-4 lg:gap-x-5 shrink-0">
         
         {/* Notification Bell */}
         <div className="relative" ref={notificationRef}>
           <button 
             onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
-            className="relative rounded-xl border border-glass-border bg-glass-light p-2.5 text-text-secondary hover:bg-glass-medium hover:border-glass-border/30 hover:text-text-primary transition-all shadow-glass group"
+            className="relative rounded-xl border border-glass-border bg-glass-light p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center text-text-secondary hover:bg-glass-medium hover:border-glass-border/30 hover:text-text-primary transition-all shadow-glass group cursor-pointer"
             title="Real-time Behavioral & System Notifications"
           >
             {unreadCount > 0 ? (
@@ -116,13 +126,13 @@ export function TopNavbar() {
                 {unreadCount}
               </span>
             ) : (
-              <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-green-500 border border-bg-primary"></span>
+              <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-green-500 border border-bg-primary"></span>
             )}
             <Bell className="h-4 w-4 group-hover:scale-110 transition-transform" />
           </button>
           
           {isNotificationsOpen && (
-            <div className="absolute right-0 top-full mt-2 w-88 sm:w-96 rounded-xl bg-bg-secondary/95 backdrop-blur-[45px] border border-glass-border p-3 shadow-2xl z-[100] text-xs transition-colors duration-300">
+            <div className="fixed sm:absolute right-4 sm:right-0 top-20 sm:top-full mt-2 w-[calc(100vw-2rem)] sm:w-96 max-w-sm rounded-xl bg-bg-secondary/95 backdrop-blur-[45px] border border-glass-border p-3 shadow-2xl z-[100] text-xs transition-colors duration-300">
               <div className="flex justify-between items-center pb-2 mb-2 border-b border-glass-border">
                 <div className="flex items-center gap-1.5">
                   <span className="font-bold text-text-primary">Behavioral & Class Alerts</span>
