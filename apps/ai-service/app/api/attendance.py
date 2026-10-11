@@ -27,6 +27,7 @@ class StopAttendanceRequest(BaseModel):
 
 
 @router.post("/start")
+@router.post("/session/start")
 def start_attendance_loop(request: StartAttendanceRequest):
     """Start the real-time CCTV attendance marking pipeline on a camera feed."""
     success = attendance_engine.start_attendance_session(
@@ -47,6 +48,7 @@ def start_attendance_loop(request: StartAttendanceRequest):
 
 
 @router.post("/stop")
+@router.post("/session/stop")
 def stop_attendance_loop(request: StopAttendanceRequest):
     """Stop the attendance loop on a camera feed."""
     stopped = attendance_engine.stop_attendance_session(request.camera_id)
@@ -123,3 +125,15 @@ def get_attendance_report(
         "total_present": len(report_list),
         "attendance": report_list
     }
+
+
+@router.get("/live-session-status")
+def get_live_session_status():
+    """Retrieve real-time attendance recognition and behavior status for the running session."""
+    return {
+        "status": "success",
+        "recognized_students": attendance_engine.session_recognized_students,
+        "total_recognized": len(attendance_engine.session_recognized_students),
+        "behavior_states": attendance_engine.student_behavior_states,
+    }
+

@@ -39,6 +39,7 @@ __pycache__/
 *.MOV
 *.mov
 *.mp4
+!apps/web/public/videos/*.mp4
 /videos/
 dataset/
 # Python virtual environment
