@@ -21,6 +21,24 @@ function toImageUrl(absolutePath: string | null | undefined): string | null {
 export class EnrollmentService {
   constructor(private prisma: PrismaService) {}
 
+  private get internalApiKey(): string {
+    return (
+      process.env.INTERNAL_API_KEY ||
+      (process.env.NODE_ENV === "production"
+        ? ""
+        : "sc-internal-service-key-dev-only")
+    );
+  }
+
+  private get internalHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {};
+    const key = this.internalApiKey;
+    if (key) {
+      headers["x-api-key"] = key;
+    }
+    return headers;
+  }
+
   async createJob(dto: CreateEnrollmentJobDto) {
     const job = await this.prisma.enrollmentJob.create({
       data: {
@@ -334,7 +352,7 @@ export class EnrollmentService {
         let aiStatus: any = null;
         try {
           const aiUrl = `${AI_SERVICE_URL}/api/v1/sessions/${s.id}/status`;
-          const res = await fetch(aiUrl, { signal: AbortSignal.timeout(2000) });
+          const res = await fetch(aiUrl, { signal: AbortSignal.timeout(2000), headers: this.internalHeaders });
           if (res.ok) aiStatus = await res.json();
         } catch {}
 
@@ -350,6 +368,7 @@ export class EnrollmentService {
             currentFrameFaces: aiStatus.current_frame_faces ?? 0,
             activeDetector: aiStatus.activeDetector || aiStatus.diagnostics?.active_detector || "YOLO26-S-Face",
             generatedClusters: aiStatus.generatedClusters ?? s.generatedClusters,
+            errorMessage: (aiStatus.status && aiStatus.status !== "FAILED") ? null : s.errorMessage,
             aiStatus,
           };
         }
@@ -440,7 +459,7 @@ export class EnrollmentService {
     let aiStatus: any = null;
     try {
       const aiUrl = `${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/status`;
-      const res = await fetch(aiUrl, { signal: AbortSignal.timeout(3000) });
+      const res = await fetch(aiUrl, { signal: AbortSignal.timeout(3000), headers: this.internalHeaders });
       if (res.ok) aiStatus = await res.json();
     } catch {
       // AI service may not be running — use DB status
@@ -456,6 +475,7 @@ export class EnrollmentService {
       framesWithFaces: aiStatus?.frames_with_faces ?? aiStatus?.diagnostics?.frames_with_faces ?? 0,
       currentFrameFaces: aiStatus?.current_frame_faces ?? 0,
       activeDetector: aiStatus?.activeDetector || aiStatus?.diagnostics?.active_detector || "YOLO26-S-Face",
+      errorMessage: (aiStatus?.status && aiStatus.status !== "FAILED") ? null : session.errorMessage,
       aiStatus,
       clusterCount: session._count.studentClusters,
     };
@@ -591,7 +611,7 @@ export class EnrollmentService {
     let aiStatus: any = null;
     try {
       const aiUrl = `${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/status`;
-      const res = await fetch(aiUrl, { signal: AbortSignal.timeout(3000) });
+      const res = await fetch(aiUrl, { signal: AbortSignal.timeout(3000), headers: this.internalHeaders });
       if (res.ok) aiStatus = await res.json();
     } catch {}
 
@@ -989,7 +1009,7 @@ export class EnrollmentService {
           if (oldUsn) {
             await fetch(`${AI_SERVICE_URL}/api/v1/sessions/purge-student-vectors`, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: { ...this.internalHeaders, "Content-Type": "application/json" },
               body: JSON.stringify({ usn: oldUsn }),
               signal: AbortSignal.timeout(3000),
             }).catch(() => {});
@@ -1040,7 +1060,7 @@ export class EnrollmentService {
           // 1. Assign in AI service
           await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sId}/clusters/${aiCid}/assign`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { ...this.internalHeaders, "Content-Type": "application/json" },
             body: JSON.stringify({ usn, name: studentObj?.fullName || dto.fullName, studentId, force: true }),
             signal: AbortSignal.timeout(3000),
           });
@@ -1048,7 +1068,7 @@ export class EnrollmentService {
           // 2. Enroll in FAISS
           await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sId}/enroll-cluster`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { ...this.internalHeaders, "Content-Type": "application/json" },
             body: JSON.stringify({ usn, clusterId: aiCid }),
             signal: AbortSignal.timeout(3000),
           });
@@ -1059,6 +1079,7 @@ export class EnrollmentService {
         // 3. Persist FaceEmbedding in PostgreSQL
         try {
           const aiRes = await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sId}/clusters`, {
+            headers: this.internalHeaders,
             signal: AbortSignal.timeout(3000),
           });
           if (aiRes.ok) {
@@ -1149,6 +1170,7 @@ export class EnrollmentService {
         `${AI_SERVICE_URL}/api/v1/sessions/${sId}/clusters/${aiCid}/confirm`,
         {
           method: "POST",
+          headers: this.internalHeaders,
           signal: AbortSignal.timeout(3000),
         },
       );
@@ -1223,7 +1245,7 @@ export class EnrollmentService {
     let aiClusters: any[] = [];
     try {
       const aiUrl = `${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/clusters`;
-      const res = await fetch(aiUrl);
+      const res = await fetch(aiUrl, { headers: this.internalHeaders });
       if (res.ok) {
         const body = await res.json();
         aiClusters = body.clusters || [];
@@ -1401,7 +1423,7 @@ export class EnrollmentService {
     // Batch update FAISS vector index in AI service
     try {
       const finalizeFaissUrl = `${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/finalize-faiss`;
-      await fetch(finalizeFaissUrl, { method: "POST" });
+      await fetch(finalizeFaissUrl, { method: "POST", headers: this.internalHeaders });
     } catch (fErr) {
       console.warn(`[Finalize] FAISS batch finalize notification notice: ${fErr}`);
     }
@@ -1503,7 +1525,7 @@ export class EnrollmentService {
     try {
       res = await fetch(aiUrl, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { ...this.internalHeaders, "Content-Type": "application/json" },
         body: JSON.stringify({ videoPaths, detector: activeDetector }),
       });
     } catch (fetchErr: any) {
@@ -1527,6 +1549,14 @@ export class EnrollmentService {
 
     const aiResponse = await res.json();
 
+    await this.prisma.enrollmentSession.update({
+      where: { id: sessionId },
+      data: {
+        status: "PROCESSING",
+        errorMessage: null,
+      },
+    });
+
     await this.prisma.enrollmentAudit.create({
       data: {
         enrollmentSessionId: sessionId,
@@ -1549,7 +1579,7 @@ export class EnrollmentService {
 
     try {
       const aiUrl = `${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/diagnostics`;
-      const res = await fetch(aiUrl, { signal: AbortSignal.timeout(3000) });
+      const res = await fetch(aiUrl, { headers: this.internalHeaders, signal: AbortSignal.timeout(3000) });
       if (res.ok) {
         const data = await res.json();
         return data.diagnostics || data;
@@ -1579,6 +1609,7 @@ export class EnrollmentService {
     try {
       const res = await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/pause`, {
         method: "POST",
+        headers: this.internalHeaders,
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) {
@@ -1605,6 +1636,7 @@ export class EnrollmentService {
     try {
       const res = await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/resume`, {
         method: "POST",
+        headers: this.internalHeaders,
         signal: AbortSignal.timeout(5000),
       });
       if (res.ok) {
@@ -1631,6 +1663,7 @@ export class EnrollmentService {
     try {
       await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/stop`, {
         method: "POST",
+        headers: this.internalHeaders,
         signal: AbortSignal.timeout(10000),
       });
     } catch {}
@@ -1663,6 +1696,7 @@ export class EnrollmentService {
     try {
       await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sessionId}`, {
         method: "DELETE",
+        headers: this.internalHeaders,
         signal: AbortSignal.timeout(3000),
       });
     } catch {}
@@ -1707,7 +1741,7 @@ export class EnrollmentService {
     if (!session) throw new NotFoundException("Enrollment session not found");
 
     const aiUrl = `${AI_SERVICE_URL}/api/v1/sessions/${sessionId}/clusters`;
-    const res = await fetch(aiUrl);
+    const res = await fetch(aiUrl, { headers: this.internalHeaders });
     if (!res.ok) throw new BadRequestException("Could not fetch clusters from AI service");
     const { clusters } = await res.json() as { clusters: any[] };
 

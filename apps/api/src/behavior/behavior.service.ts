@@ -14,6 +14,15 @@ export class BehaviorService {
 
   constructor(private prisma: PrismaService) {}
 
+  private get internalApiKey(): string {
+    return (
+      process.env.INTERNAL_API_KEY ||
+      (process.env.NODE_ENV === 'production'
+        ? ''
+        : 'sc-internal-service-key-dev-only')
+    );
+  }
+
   async ingest(dto: IngestBehaviorDto) {
     let student = null;
     if (dto.studentId) {
@@ -395,9 +404,9 @@ export class BehaviorService {
       const url = cameraId
         ? `${aiUrl}/api/v1/behavior/live?camera_id=${encodeURIComponent(cameraId)}`
         : `${aiUrl}/api/v1/behavior/live`;
-      const res = await fetch(url, {
-        headers: { 'Content-Type': 'application/json' },
-      });
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (this.internalApiKey) headers['x-api-key'] = this.internalApiKey;
+      const res = await fetch(url, { headers });
       if (res.ok) {
         return await res.json();
       }
