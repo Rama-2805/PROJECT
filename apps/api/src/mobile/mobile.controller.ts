@@ -1,9 +1,20 @@
 // ─── SmartCampus AI — Mobile API Controller ─────────────
 
-import { Controller, Get, Post, Patch, Param, Body, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Param,
+  Body,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { MobileService } from './mobile.service';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @Controller('mobile')
+@UseGuards(JwtAuthGuard)
 export class MobileController {
   constructor(private readonly mobile: MobileService) {}
 
@@ -94,6 +105,9 @@ export class MobileController {
 
   @Post('notifications/device')
   registerDeviceToken(@Body() body: { userId: string; token: string }) {
-    return this.mobile.registerDeviceToken(body.userId || 'default', body.token);
+    return this.mobile.registerDeviceToken(
+      body.userId || 'default',
+      body.token,
+    );
   }
 }

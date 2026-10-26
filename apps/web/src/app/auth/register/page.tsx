@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AuthLayout } from "@/components/auth/AuthLayout";
@@ -9,6 +10,7 @@ import { useAuthStore } from "@/lib/store/auth";
 export default function RegisterPage() {
   const router = useRouter();
   const register = useAuthStore((s) => s.register);
+  const [error, setError] = useState<string | undefined>();
 
   const handleRegister = async (data: {
     fullName: string;
@@ -17,13 +19,18 @@ export default function RegisterPage() {
     confirmPassword: string;
     institutionName: string;
   }) => {
-    await register({
-      fullName: data.fullName,
-      email: data.email,
-      password: data.password,
-      institutionName: data.institutionName,
-    });
-    router.push("/dashboard");
+    setError(undefined);
+    try {
+      await register({
+        fullName: data.fullName,
+        email: data.email,
+        password: data.password,
+        institutionName: data.institutionName,
+      });
+      router.push("/dashboard");
+    } catch (err: any) {
+      setError(err?.message || "Registration failed");
+    }
   };
 
   return (
@@ -31,7 +38,7 @@ export default function RegisterPage() {
       title="Create your account"
       subtitle="Get started with SmartCampus AI for your institution"
     >
-      <RegisterForm onSubmit={handleRegister} />
+      <RegisterForm onSubmit={handleRegister} error={error} />
       <p className="mt-6 text-center text-xs text-text-muted">
         Already have an account?{" "}
         <Link href="/auth/login" className="text-ai-blue hover:underline font-medium">

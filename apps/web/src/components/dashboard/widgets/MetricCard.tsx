@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useSyncExternalStore } from "react";
 import { motion, useInView } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
 import { GlassCard } from "@/components/glass/GlassCard";
@@ -115,11 +115,7 @@ export interface MetricCardProps {
 export function MetricCard({ label, value, suffix = "", icon, trend, accent = "from-ai-blue to-ai-purple" }: MetricCardProps) {
   const { display } = useCountUp(value, 1.5, suffix);
   const theme = useUIStore((s) => s.theme);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
 
   const isLight = mounted && theme === "light";
   

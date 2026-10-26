@@ -19,6 +19,17 @@ from pathlib import Path
 
 def check_and_download_models():
     """Verify if buffalo_l exists, otherwise download it showing progress logs."""
+    import os
+    candidate_roots = [
+        os.getenv("INSIGHTFACE_ROOT"),
+        str(Path.home() / ".insightface"),
+        "/root/.insightface",
+        "models",
+    ]
+    for r in candidate_roots:
+        if r and (Path(r) / "models" / "buffalo_l").exists():
+            return
+
     model_dir = Path.home() / ".insightface" / "models" / "buffalo_l"
     if not model_dir.exists():
         print("Downloading InsightFace Models...")
@@ -79,8 +90,19 @@ class FaceDetector:
                 provider_options = [{}] * len(providers)
                 logger.info(f"Initializing InsightFace FaceAnalysis (buffalo_l) with ONNX execution providers: {providers}")
                 
+                import os
+                model_root = os.getenv("INSIGHTFACE_ROOT")
+                if not model_root:
+                    if (Path.home() / ".insightface" / "models" / "buffalo_l").exists():
+                        model_root = str(Path.home() / ".insightface")
+                    elif Path("/root/.insightface/models/buffalo_l").exists():
+                        model_root = "/root/.insightface"
+                    else:
+                        model_root = "~/.insightface"
+
                 self._model = insightface.app.FaceAnalysis(
                     name="buffalo_l",
+                    root=model_root,
                     providers=providers,
                     provider_options=provider_options
                 )
@@ -93,7 +115,7 @@ class FaceDetector:
         return self._model
 
     def _validate_detection(self, bbox: List[int], confidence: float, frame_w: int, frame_h: int, face_crop: np.ndarray) -> Tuple[bool, str]:
-        """Validate face detection confidence, size, geometry, and brightness."""
+        """Validate face detection confidence, size, geometry, brightness, texture, and boundary integrity."""
         if confidence < self.confidence_threshold:
             return False, "low_confidence"
 
@@ -103,23 +125,54 @@ class FaceDetector:
         if cw <= 0 or ch <= 0:
             return False, "invalid_geometry"
 
-        if cw < settings.min_face_width or ch < settings.min_face_height:
+        if x1 < 0 or y1 < 0 or x2 > frame_w or y2 > frame_h:
+            return False, "out_of_bounds"
+
+        min_w = getattr(settings, "min_face_width", 16)
+        min_h = getattr(settings, "min_face_height", 16)
+        if cw < min_w or ch < min_h:
             return False, "too_small"
 
         aspect_ratio = max(cw / float(ch), ch / float(cw))
-        if aspect_ratio > settings.max_face_aspect_ratio:
+        max_ar = getattr(settings, "max_face_aspect_ratio", 2.0)
+        if aspect_ratio > max_ar:
             return False, "invalid_aspect_ratio"
 
         area_ratio = (cw * ch) / float(frame_w * frame_h)
         if area_ratio < settings.min_face_area_ratio:
             return False, "too_small_area"
 
+        # Edge boundary check: reject faces cut off by the camera boundary (half faces)
+        touches_border = (x1 <= 1 or y1 <= 1 or x2 >= frame_w - 1 or y2 >= frame_h - 1)
+        if touches_border:
+            # If the face is on the border and its aspect ratio is narrow (< 0.75 or > 1.3), it's a clipped half-face
+            if cw / float(ch) < 0.75 or ch / float(cw) < 0.75:
+                return False, "half_face_boundary_clipped"
+
         if face_crop is None or face_crop.size == 0:
             return False, "empty_crop"
 
-        mean_val = float(np.mean(face_crop))
-        if mean_val < settings.min_brightness or mean_val > settings.max_brightness:
+        gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY) if len(face_crop.shape) == 3 else face_crop
+
+        # Brightness & extreme lighting check
+        mean_val = float(np.mean(gray))
+        if mean_val < 30.0 or mean_val > 230.0:
             return False, "extreme_lighting"
+
+        # Texture and contrast check: blank white, black, or flat uniform crops have near-zero standard deviation
+        std_val = float(np.std(gray))
+        if std_val < 14.0:
+            return False, "blank_or_uniform_crop"
+
+        # Saturated white glare check (> 35% pure white pixels)
+        sat_white = float(np.mean(gray >= 245))
+        if sat_white > 0.35:
+            return False, "saturated_white_glare"
+
+        # Sharpness check on raw crop
+        blur_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        if blur_var < 20.0:
+            return False, "blurry"
 
         return True, "valid"
 

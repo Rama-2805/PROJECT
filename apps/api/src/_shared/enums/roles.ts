@@ -1,23 +1,23 @@
 export enum RoleName {
-  SUPER_ADMIN = "SUPER_ADMIN",
-  INSTITUTION_ADMIN = "INSTITUTION_ADMIN",
-  HOD = "HOD",
-  TEACHER = "TEACHER",
-  STUDENT = "STUDENT",
-  PARENT = "PARENT",
-  DEVICE_MANAGER = "DEVICE_MANAGER",
-  RESEARCH_ANALYST = "RESEARCH_ANALYST",
+  SUPER_ADMIN = 'SUPER_ADMIN',
+  INSTITUTION_ADMIN = 'INSTITUTION_ADMIN',
+  HOD = 'HOD',
+  TEACHER = 'TEACHER',
+  STUDENT = 'STUDENT',
+  PARENT = 'PARENT',
+  DEVICE_MANAGER = 'DEVICE_MANAGER',
+  RESEARCH_ANALYST = 'RESEARCH_ANALYST',
 }
 
 export const ROLE_LABELS: Record<RoleName, string> = {
-  [RoleName.SUPER_ADMIN]: "Super Admin",
-  [RoleName.INSTITUTION_ADMIN]: "Institution Admin",
-  [RoleName.HOD]: "Head of Department",
-  [RoleName.TEACHER]: "Teacher",
-  [RoleName.STUDENT]: "Student",
-  [RoleName.PARENT]: "Parent",
-  [RoleName.DEVICE_MANAGER]: "Device Manager",
-  [RoleName.RESEARCH_ANALYST]: "Research Analyst",
+  [RoleName.SUPER_ADMIN]: 'Super Admin',
+  [RoleName.INSTITUTION_ADMIN]: 'Institution Admin',
+  [RoleName.HOD]: 'Head of Department',
+  [RoleName.TEACHER]: 'Teacher',
+  [RoleName.STUDENT]: 'Student',
+  [RoleName.PARENT]: 'Parent',
+  [RoleName.DEVICE_MANAGER]: 'Device Manager',
+  [RoleName.RESEARCH_ANALYST]: 'Research Analyst',
 };
 
 export const ROLE_HIERARCHY: Record<RoleName, number> = {

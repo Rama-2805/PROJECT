@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
@@ -56,13 +56,13 @@ export function CircularTestimonials({
   const designationSize = fontSizes.designation || "16px";
   const quoteSize = fontSizes.quote || "18px";
 
-  const nextTestimonial = () => {
+  const nextTestimonial = useCallback(() => {
     setActiveIndex((prev) => (prev + 1) % testimonials.length);
-  };
+  }, [testimonials.length]);
 
-  const prevTestimonial = () => {
+  const prevTestimonial = useCallback(() => {
     setActiveIndex((prev) => (prev - 1 + testimonials.length) % testimonials.length);
-  };
+  }, [testimonials.length]);
 
   // Autoplay functionality
   useEffect(() => {
@@ -72,7 +72,7 @@ export function CircularTestimonials({
     return () => {
       if (autoplayRef.current) clearInterval(autoplayRef.current);
     };
-  }, [autoplay, autoplayInterval, testimonials.length]);
+  }, [autoplay, autoplayInterval, testimonials.length, nextTestimonial]);
 
   const handleManualNav = (action: () => void) => {
     if (autoplayRef.current) {

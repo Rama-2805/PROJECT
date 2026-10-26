@@ -4,8 +4,7 @@ import React, { useState, useEffect } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { User, Mail, Shield, BookOpen, Clock, Calendar, Key, ShieldCheck } from "lucide-react";
-import { apiRequest } from "@/lib/api/client";
-import { getUsers, hashPassword, updateUserPassword } from "@/lib/userStore";
+import { api, apiRequest } from "@/lib/api/client";
 
 export default function StudentProfilePage() {
   const [student, setStudent] = useState({
@@ -21,6 +20,7 @@ export default function StudentProfilePage() {
     faceEnrolled: false,
   });
 
+  const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -35,7 +35,7 @@ export default function StudentProfilePage() {
           const u = res.data;
           const stu = u.student || {};
           const name = stu.fullName || u.fullName || "Student";
-          const usn = stu.studentId || u.studentId || "—";
+          const usn = stu.rollNumber || stu.studentId || u.studentId || "—";
           const dept = stu.department?.name || u.department || "Computer Science & Engineering";
           const sem = stu.semester ? `Semester ${stu.semester}` : "Semester 4";
           const phone = stu.phone || u.phoneNumber || "—";
@@ -63,30 +63,16 @@ export default function StudentProfilePage() {
 
       if (typeof window !== "undefined") {
         const email = localStorage.getItem("currentUserEmail") || "";
-        const name = localStorage.getItem("currentUserName");
-        const usn = localStorage.getItem("currentUserUSN");
-        const users = getUsers();
-        if (email && users[email]) {
+        const name = localStorage.getItem("currentUserName") || "Student";
+        const usn = localStorage.getItem("currentUserUSN") || "—";
+        if (email) {
           setStudent({
-            fullName: users[email].fullName,
-            email: users[email].email,
-            department: users[email].department || "Computer Science & Engineering",
-            joiningDate: "August 18, 2023",
-            semester: users[email].semester ? `Semester ${users[email].semester}` : "Semester 4",
-            id: users[email].studentId || "—",
-            phone: "—",
-            campusCardStatus: "Active",
-            profilePhoto: null,
-            faceEnrolled: false,
-          });
-        } else if (email) {
-          setStudent({
-            fullName: name || "Student",
+            fullName: name,
             email: email,
             department: "Computer Science & Engineering",
             joiningDate: "August 18, 2023",
             semester: "Semester 4",
-            id: usn || "—",
+            id: usn,
             phone: "—",
             campusCardStatus: "Active",
             profilePhoto: null,
@@ -123,13 +109,21 @@ export default function StudentProfilePage() {
     }
 
     try {
-      const newHash = await hashPassword(newPassword);
-      await updateUserPassword(student.email, newHash, false);
+      const res = await api.post<any>("/auth/change-password", {
+        currentPassword: currentPassword || undefined,
+        newPassword,
+      });
+
       setIsLoading(false);
-      setMessage("Password updated successfully! Your credentials have been secured.");
-      setNewPassword("");
-      setConfirmPassword("");
-    } catch (err) {
+      if (res.success) {
+        setMessage("Password updated successfully! Your credentials have been secured.");
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+      } else {
+        setError(res.error || "Failed to update password. Please check your credentials.");
+      }
+    } catch {
       setIsLoading(false);
       setError("Failed to update password. Please try again.");
     }

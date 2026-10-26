@@ -1,7 +1,12 @@
 "use client";
 
+/**
+ * @deprecated GlassSidebar.tsx is the authoritative production dashboard navigation sidebar.
+ * This legacy implementation is preserved for reference only.
+ */
+
 import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
 
 /* ─── Menu Items ──────────────────────────────────────────────── */

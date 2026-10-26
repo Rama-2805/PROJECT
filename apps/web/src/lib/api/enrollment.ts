@@ -9,15 +9,6 @@ import { apiRequest } from "./client";
 
 // In production, all AI service paths are proxied through Next.js rewrites
 // (/api/v1/*, /storage/*) so we use relative URLs by default.
-const AI_WS_URL = (() => {
-  if (process.env.NEXT_PUBLIC_AI_WS_URL) return process.env.NEXT_PUBLIC_AI_WS_URL;
-  if (typeof window !== "undefined") {
-    const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    return `${proto}://${window.location.host}`;
-  }
-  return "ws://localhost:8000";
-})();
-
 export const AI_HTTP_URL = "";
 
 // ── Types ────────────────────────────────────────────────────────────
@@ -211,5 +202,18 @@ export async function finalizeSession(sessionId: string) {
 // ── WebSocket ────────────────────────────────────────────────────────
 
 export function getEnrollmentWsUrl(): string {
-  return `${AI_WS_URL}/api/v1/ws`;
+  if (process.env.NEXT_PUBLIC_AI_WS_URL) {
+    return `${process.env.NEXT_PUBLIC_AI_WS_URL}/api/v1/ws`;
+  }
+  if (typeof window !== "undefined") {
+    const isHttps = window.location.protocol === "https:";
+    const host = window.location.hostname;
+    // In local development, Next.js rewrites do not support WebSocket upgrades, so connect directly to AI service port 8000
+    if (host === "localhost" || host === "127.0.0.1") {
+      return `ws://${host}:8000/api/v1/ws`;
+    }
+    // In production HTTPS deployments with WSS reverse proxy
+    return `${isHttps ? "wss" : "ws"}://${window.location.host}/api/v1/ws`;
+  }
+  return "ws://127.0.0.1:8000/api/v1/ws";
 }

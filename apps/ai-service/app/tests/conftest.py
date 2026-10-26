@@ -98,6 +98,9 @@ def mock_insightface(monkeypatch):
     # So we need: insightface.app.FaceAnalysis(...) → mock_app
     mock_insightface_module = MagicMock()
     mock_insightface_module.app.FaceAnalysis.return_value = mock_app
+    mock_rec = MagicMock()
+    mock_rec.get_feat.return_value = mock_face.embedding.reshape(1, 512)
+    mock_insightface_module.model_zoo.get_model.return_value = mock_rec
     orig_insightface = sys.modules.get("insightface")
     orig_insightface_app = sys.modules.get("insightface.app")
 

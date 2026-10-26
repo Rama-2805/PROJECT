@@ -1,7 +1,7 @@
-import { IsString, IsOptional, IsBoolean } from "class-validator";
+import { IsString, IsOptional, IsBoolean } from 'class-validator';
 
 export class CreateDepartmentDto {
-  @IsString() institutionId: string;
+  @IsOptional() @IsString() institutionId?: string;
   @IsString() name: string;
   @IsString() code: string;
   @IsOptional() @IsString() hodName?: string;

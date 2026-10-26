@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { apiRequest } from "@/lib/api/client";
-import { getUsers } from "@/lib/userStore";
 
 // All /storage/* paths are proxied through Next.js rewrites — use relative URLs
 const AI_BASE = "";
@@ -114,19 +113,17 @@ export default function StudentFaceProfilePage() {
         console.error("Failed to load profile from API:", err);
       }
 
-      // LocalStorage / UserStore fallback
+      // LocalStorage fallback
       if (typeof window !== "undefined") {
         const email = localStorage.getItem("currentUserEmail") || "";
         const name = localStorage.getItem("currentUserName") || "Student";
-        const usn = localStorage.getItem("currentUserUSN") || "1VI23CS001";
-        const users = getUsers();
-        const storedUser = email && users[email] ? users[email] : null;
+        const usn = localStorage.getItem("currentUserUSN") || "—";
 
         setStudent({
-          fullName: storedUser?.fullName || name,
-          usn: storedUser?.studentId || usn,
+          fullName: name,
+          usn: usn,
           email: email,
-          department: storedUser?.department || "Computer Science & Engineering",
+          department: "Computer Science & Engineering",
           profilePhoto: null,
           faceEnrolled: false,
           faceSamples: 0,

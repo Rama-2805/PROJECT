@@ -6,8 +6,10 @@ and classroom monitoring capabilities.
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+import hmac
 
 from .config.settings import settings
 from .config.database import Base, engine
@@ -52,6 +54,23 @@ async def lifespan(app: FastAPI):
     sc_logger.setLevel(logging.INFO)
     if not sc_logger.handlers:
         sc_logger.addHandler(handler)
+
+    # Validate production secrets on startup
+    is_prod = (
+        os.environ.get("ENVIRONMENT", "").lower() == "production"
+        or os.environ.get("NODE_ENV", "").lower() == "production"
+    )
+    if is_prod:
+        insecure_keys = {
+            "sc-internal-service-key-dev-only",
+            "dev-encryption-key-32-bytes-long!!",
+            "change-me",
+            "secret",
+        }
+        if not settings.internal_api_key or settings.internal_api_key in insecure_keys or len(settings.internal_api_key) < 16:
+            raise RuntimeError("FATAL: Insecure or missing INTERNAL_API_KEY in production (must be >= 16 chars).")
+        if not settings.encryption_key or settings.encryption_key in insecure_keys or len(settings.encryption_key) < 16:
+            raise RuntimeError("FATAL: Insecure or missing ENCRYPTION_KEY in production (must be >= 16 chars).")
 
     # Create all database tables on startup
     print(f"[{settings.app_name}] Initializing database tables...")
@@ -137,9 +156,18 @@ app = FastAPI(
 )
 
 # CORS configuration
+import os
+cors_env = os.environ.get("CORS_ORIGINS", "")
+allowed_origins = [o.strip() for o in cors_env.split(",") if o.strip()] if cors_env else [
+    "http://localhost:3000",
+    "http://localhost:4000",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:4000",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -161,9 +189,53 @@ app.include_router(dashboard_router)
 app.include_router(learning_router)
 app.include_router(session_enrollment_router)
 
-# Serve storage folder statically
-from fastapi.staticfiles import StaticFiles
-app.mount("/storage", StaticFiles(directory="storage"), name="storage")
+# Public Live Tracking Frame Endpoint (allows frontend dashboard to display real-time tracking bounding boxes)
+@app.get("/api/v1/sessions/{session_id}/live-frame")
+async def get_session_live_frame(session_id: str):
+    """Return the latest annotated face tracking preview frame for a processing session."""
+    import os
+    from fastapi.responses import FileResponse, Response
+    clean_id = "".join(c for c in session_id if c.isalnum() or c in ("-", "_"))
+    candidates = [
+        os.path.join("storage", "enrollment", clean_id, "live_preview.jpg"),
+        os.path.join("apps", "ai-service", "storage", "enrollment", clean_id, "live_preview.jpg"),
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return FileResponse(p, media_type="image/jpeg", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+    return Response(status_code=204)
+
+# Secure storage file serving (SEC-10)
+@app.get("/storage/{file_path:path}")
+async def serve_storage_file(file_path: str, request: Request):
+    """Secure endpoint for serving facial biometric assets and video streams.
+    Restricts raw metadata, vector clusters, and embeddings to authorized services with x-api-key.
+    Prevents directory traversal and public data dumps.
+    """
+    allowed_media_exts = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".webm", ".mov", ".avi"}
+    ext = os.path.splitext(file_path)[1].lower()
+
+    if ext not in allowed_media_exts:
+        # Sensitive data: raw embeddings, clusters.json, FAISS indices
+        api_key = request.headers.get("x-api-key")
+        if not api_key or not settings.internal_api_key or not hmac.compare_digest(api_key, settings.internal_api_key):
+            raise HTTPException(
+                status_code=403,
+                detail="Direct access to raw biometric metadata, cluster definitions, or vector files is restricted",
+            )
+
+    clean_path = file_path.lstrip("/")
+    if clean_path.startswith("storage/"):
+        clean_path = clean_path[len("storage/"):]
+
+    full_path = os.path.join("storage", clean_path)
+    storage_root = os.path.realpath("storage")
+    resolved = os.path.realpath(full_path)
+
+    if not resolved.startswith(storage_root) or not os.path.exists(resolved):
+        raise HTTPException(status_code=404, detail="Biometric asset not found")
+
+    return FileResponse(resolved, headers={"Cache-Control": "public, max-age=86400"})
 
 
 

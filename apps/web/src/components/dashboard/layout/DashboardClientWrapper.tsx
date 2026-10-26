@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useSyncExternalStore } from "react";
 import { useUIStore } from "@/store/uiStore";
 import { useIsMobile } from "@/lib/hooks/useMediaQuery";
 import { usePathname } from "next/navigation";
@@ -10,6 +10,7 @@ import { CommandPalette } from "../CommandPalette";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
 import { ProgressiveFluxLoader } from "@/components/ui/progressive-flux-loader";
+import { useAuthStore } from "@/lib/store/auth";
 
 export function DashboardClientWrapper({ children }: { children: React.ReactNode }) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
@@ -17,8 +18,11 @@ export function DashboardClientWrapper({ children }: { children: React.ReactNode
   const theme = useUIStore((s) => s.theme);
   const isMobile = useIsMobile();
   const pathname = usePathname();
-  const [mounted, setMounted] = useState(false);
-  const [showIntro, setShowIntro] = useState(false);
+  const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
+  const [showIntro, setShowIntro] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !sessionStorage.getItem("admin-intro-shown");
+  });
 
   // Close mobile sidebar on route change
   useEffect(() => {
@@ -27,24 +31,38 @@ export function DashboardClientWrapper({ children }: { children: React.ReactNode
     }
   }, [pathname, isMobile, setSidebarOpen]);
 
-  // Avoid hydration mismatch by waiting for mount & enforce admin role guard
+  const user = useAuthStore((s) => s.user);
+  const isLoading = useAuthStore((s) => s.isLoading);
+
+  // Enforce admin/staff role guard from verified auth state
   useEffect(() => {
-    setMounted(true);
-    if (typeof window !== "undefined") {
-      const role = localStorage.getItem("user-role");
-      if (role === "student") {
+    if (isLoading) return;
+    if (user) {
+      const roles = user.roles || [];
+      const isStudent = roles.includes("STUDENT");
+      const isTeacher = roles.includes("TEACHER");
+      const isHod = roles.includes("HOD");
+      const isAdmin = roles.some((r) =>
+        [
+          "SUPER_ADMIN",
+          "INSTITUTION_ADMIN",
+          "COLLEGE_SUPER_ADMIN",
+          "COLLEGE_ADMIN",
+          "DEVICE_MANAGER",
+          "RESEARCH_ANALYST",
+        ].includes(r),
+      );
+
+      if (isStudent && !isAdmin && !isTeacher) {
         window.location.href = "/student/dashboard";
         return;
-      } else if (role === "teacher") {
+      }
+      if (isTeacher && !isAdmin && !isHod) {
         window.location.href = "/teacher/dashboard";
         return;
       }
     }
-    const hasShown = sessionStorage.getItem("admin-intro-shown");
-    if (!hasShown) {
-      setShowIntro(true);
-    }
-  }, []);
+  }, [user, isLoading]);
 
   // Synchronize theme with documentElement to resolve global CSS variables correctly
   useEffect(() => {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
 import { staggerContainer, fadeInUp } from "@/lib/animations";
@@ -36,11 +36,7 @@ const severityConfig = {
 export function ActivityFeed({ events }: ActivityFeedProps) {
   const [filter, setFilter] = useState<string>("all");
   const theme = useUIStore((s) => s.theme);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
 
   const isLight = mounted && theme === "light";
   const glowColor = isLight ? "rgba(59, 130, 246, 0.08)" : "rgba(255, 255, 255, 0.08)";

@@ -22,6 +22,7 @@ import {
   X
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { useAuthStore } from "@/lib/store/auth";
 
 const NAV_ITEMS = [
   { href: "/teacher/dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -169,12 +170,10 @@ export function TeacherSidebar() {
         {/* Explicit Sign Out item */}
         <Link 
           href="#"
-          onClick={(e) => {
+          onClick={async (e) => {
             e.preventDefault();
             if (isMobile) setSidebarOpen(false);
-            document.cookie = "refreshToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-            localStorage.removeItem("currentUserEmail");
-            localStorage.removeItem("user-role");
+            await useAuthStore.getState().logout();
             window.location.href = "/";
           }}
         >

@@ -53,12 +53,12 @@ export default function CampusTwinPage() {
       <TimeMachineControl />
       <AIAssistantPanel />
 
-      {/* AR/VR Button */}
+      {/* AR/VR Button (if supported) */}
       {xrState.isSupported && (
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="absolute top-20 left-4 z-20"
+          className="absolute top-20 right-4 z-20 pointer-events-auto"
         >
           <button
             onClick={() => {
@@ -79,22 +79,6 @@ export default function CampusTwinPage() {
           </button>
         </motion.div>
       )}
-
-      {/* Performance & Privacy controls */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        className="absolute bottom-4 left-1/2 translate-x-8 z-20"
-      >
-        <div className="backdrop-blur-xl bg-[#111111]/85 rounded-xl border border-white/10 px-3 py-1.5 shadow-xl">
-          <div className="flex items-center gap-2 text-[10px] text-gray-400">
-            <span>🖱 Orbit</span>
-            <span>🔄 Scroll to zoom</span>
-            <span>👆 Click buildings</span>
-            {!showDevices && <span className="text-yellow-500 font-semibold">🔸 Devices hidden</span>}
-          </div>
-        </div>
-      </motion.div>
     </div>
   );
 }

@@ -1,51 +1,64 @@
-import { Injectable, ExecutionContext } from "@nestjs/common";
-import { AuthGuard } from "@nestjs/passport";
-import { RoleName } from "../../_shared/enums/roles";
+import { Injectable, ExecutionContext } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+import { RoleName } from '../../_shared/enums/roles';
+import * as crypto from 'crypto';
 
 @Injectable()
-export class JwtAuthGuard extends AuthGuard("jwt") {
+export class JwtAuthGuard extends AuthGuard('jwt') {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
-    const authHeader = (request.headers["authorization"] as string) || "";
-    const apiKey = request.headers["x-api-key"];
-    const expectedApiKey = process.env.INTERNAL_API_KEY || process.env.ENCRYPTION_KEY;
+    const apiKey = request.headers['x-api-key'];
+    const internalApiKey = process.env.INTERNAL_API_KEY;
 
-    // 1. API key bypass
-    if (apiKey && apiKey === expectedApiKey) {
+    // 1. Authenticate internal service-to-service calls with scoped privileges
+    // Strict requirement: INTERNAL_API_KEY must be set in environment; timing-safe comparison
+    const isProd = process.env.NODE_ENV === 'production';
+    if (
+      isProd &&
+      (internalApiKey === 'sc-internal-service-key-dev-only' ||
+        !internalApiKey ||
+        internalApiKey.length < 16)
+    ) {
+      // In production, reject default or weak internal API keys
+      return super.canActivate(context) as Promise<boolean>;
+    }
+
+    if (
+      typeof apiKey === 'string' &&
+      typeof internalApiKey === 'string' &&
+      apiKey.length > 0 &&
+      apiKey.length === internalApiKey.length &&
+      crypto.timingSafeEqual(Buffer.from(apiKey), Buffer.from(internalApiKey))
+    ) {
       request.user = {
-        id: "system",
-        roles: [RoleName.SUPER_ADMIN, RoleName.DEVICE_MANAGER, RoleName.TEACHER],
+        id: 'service:internal',
+        roles: [RoleName.DEVICE_MANAGER, RoleName.TEACHER],
       };
       return true;
     }
 
-    // 2. Mock token / DEMO mode / Dev mode bypass (strictly disabled in production)
-    const isProd = process.env.NODE_ENV === "production";
-    const isMockToken = authHeader.includes("mock-token");
-    const isDemo = process.env.DEMO_MODE === "true" || process.env.NEXT_PUBLIC_DEMO_MODE === "true";
-    const isDev = !process.env.NODE_ENV || process.env.NODE_ENV === "development";
-
-    if (!isProd && (isMockToken || isDemo || isDev)) {
-      // Try super.canActivate first if there is a non-mock token
-      if (authHeader && !isMockToken) {
-        try {
-          const result = await (super.canActivate(context) as Promise<boolean>);
-          if (result) return true;
-        } catch {
-          // Token invalid — fall through to dev user fallback
-        }
+    // In development / local testing, allow camera stream & frame preview even if browser cookie is detached
+    if (
+      !isProd &&
+      (request.path?.includes('/camera/stream') ||
+        request.path?.includes('/camera/frame'))
+    ) {
+      try {
+        const can = await (super.canActivate(context) as Promise<boolean>);
+        if (can) return true;
+      } catch {
+        // Fallback for media element img tags without cookies
+        request.user = {
+          id: 'dev-stream-user',
+          roles: [RoleName.TEACHER, RoleName.DEVICE_MANAGER],
+        };
+        return true;
       }
-
-      // Dev/Demo user fallback
-      request.user = {
-        id: "usr_admin_dev",
-        email: "admin@smartcampus.edu",
-        roles: [RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER],
-      };
-      return true;
     }
 
+    // 2. Enforce strict Passport JWT verification on all user requests
     return super.canActivate(context) as Promise<boolean>;
   }
 }
+
 

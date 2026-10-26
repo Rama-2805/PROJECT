@@ -12,13 +12,18 @@ import numpy as np
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
 from ..config.settings import settings
 from .websocket import websocket_manager
+from ..services.security_service import verify_internal_api_key
 
 logger = logging.getLogger("smartcampus.session_enrollment")
 
-router = APIRouter(prefix=f"{settings.api_prefix}/sessions", tags=["Session Enrollment"])
+router = APIRouter(
+    prefix=f"{settings.api_prefix}/sessions",
+    tags=["Session Enrollment"],
+    dependencies=[Depends(verify_internal_api_key)],
+)
 
 # ── Pydantic models ────────────────────────────────────────────────────
 
@@ -129,20 +134,29 @@ async def process_session_videos(
 
 def _get_session_dir(session_id: str) -> Path:
     """Resolve session directory across project root and ai-service working directory variants."""
-    root_proj = Path(__file__).resolve().parent.parent.parent.parent
-    ai_root = Path(__file__).resolve().parent.parent.parent
+    safe_session_id = "".join(c for c in session_id if c.isalnum() or c in ("-", "_"))
+    if not safe_session_id:
+        safe_session_id = "default_session"
+
+    file_p = Path(__file__).resolve()
+    ai_root = file_p.parent.parent.parent  # apps/ai-service
+    root_proj = ai_root.parent.parent if ai_root.name == "ai-service" else ai_root.parent  # PROJECT
+
     candidates = [
-        root_proj / "storage" / "enrollment" / session_id,
-        ai_root / "storage" / "enrollment" / session_id,
-        Path(os.getcwd()) / "storage" / "enrollment" / session_id,
-        Path(os.getcwd()).parent.parent / "storage" / "enrollment" / session_id,
+        ai_root / "storage" / "enrollment" / safe_session_id,
+        root_proj / "storage" / "enrollment" / safe_session_id,
+        root_proj / "apps" / "ai-service" / "storage" / "enrollment" / safe_session_id,
+        Path(os.getcwd()) / "storage" / "enrollment" / safe_session_id,
     ]
-    for d in candidates:
-        if (d / "clusters.json").exists():
-            return d
+    # 1. Directories with actual tracks take highest precedence
     for d in candidates:
         if (d / "tracks").exists() and any((d / "tracks").iterdir()):
             return d
+    # 2. Directories with clusters.json
+    for d in candidates:
+        if (d / "clusters.json").exists():
+            return d
+    # 3. Existing directories
     for d in candidates:
         if d.exists():
             return d
@@ -430,7 +444,7 @@ async def reset_student_enrollment(req: ResetStudentEnrollmentRequest):
 @router.get("/{session_id}/status")
 async def get_session_status(session_id: str):
     """Poll current processing status for a session."""
-    if session_id not in state.sessions:
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
         _load_session_disk_fallback(session_id)
 
     if session_id not in state.sessions:
@@ -476,7 +490,7 @@ async def get_session_clusters(session_id: str):
         except Exception:
             pass
 
-    if session_id not in state.sessions:
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
         _load_session_disk_fallback(session_id)
 
     clusters = state.sessions.get(session_id, {}).get("clusters", [])
@@ -498,7 +512,7 @@ async def get_session_clusters(session_id: str):
 @router.get("/{session_id}/clusters/{cluster_id}")
 async def get_cluster_detail(session_id: str, cluster_id: str):
     """Return single cluster details."""
-    if session_id not in state.sessions:
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
         _load_session_disk_fallback(session_id)
     if session_id not in state.sessions:
         raise HTTPException(status_code=404, detail="Session not found in AI service")
@@ -512,7 +526,7 @@ async def get_cluster_detail(session_id: str, cluster_id: str):
 @router.get("/{session_id}/diagnostics")
 async def get_session_diagnostics(session_id: str):
     """Return detailed pipeline diagnostics for a session."""
-    if session_id not in state.sessions:
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
         _load_session_disk_fallback(session_id)
     if session_id not in state.sessions:
         raise HTTPException(status_code=404, detail="Session not found in AI service")
@@ -644,7 +658,7 @@ async def stop_session_processing(session_id: str):
     if clusters:
         try:
             import httpx
-            nestjs_url = f"http://127.0.0.1:4000/api/enrollment/sessions/{session_id}/sync-clusters"
+            nestjs_url = f"{settings.backend_api_url}/api/enrollment/sessions/{session_id}/sync-clusters"
             async with httpx.AsyncClient(timeout=10.0) as client:
                 await client.post(nestjs_url)
         except Exception as sync_e:
@@ -689,7 +703,7 @@ async def cluster_session_tracks(session_id: str):
     # Trigger NestJS sync
     try:
         import httpx
-        nestjs_url = f"http://127.0.0.1:4000/api/enrollment/sessions/{session_id}/sync-clusters"
+        nestjs_url = f"{settings.backend_api_url}/api/enrollment/sessions/{session_id}/sync-clusters"
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.post(nestjs_url)
     except Exception:
@@ -733,7 +747,7 @@ def _find_cluster(clusters: list, cluster_id: str):
 @router.post("/{session_id}/clusters/{cluster_id}/assign")
 async def assign_cluster_identity(session_id: str, cluster_id: str, req: AssignStudentRequest):
     """Manually assign a verified student identity to a cluster with duplicate assignment protection."""
-    if session_id not in state.sessions:
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
         _load_session_disk_fallback(session_id)
     if session_id not in state.sessions:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -744,29 +758,30 @@ async def assign_cluster_identity(session_id: str, cluster_id: str, req: AssignS
     if not matched:
         raise HTTPException(status_code=404, detail=f"Cluster '{cluster_id}' not found in session")
 
-    # When assigning/re-enrolling same student, unassign any previous cluster in this session
-    for c in clusters:
-        cid = c.get("clusterId") or c.get("cluster_id")
-        if cid != cluster_id and (
-            (c.get("usn") and str(c.get("usn")).strip().upper() == req.usn.strip().upper())
-            or (req.studentId and c.get("student_id") == req.studentId)
-        ):
-            logger.info(f"Unassigning previous cluster {cid} for student {req.usn} in session {session_id}")
-            c["identity_status"] = "UNASSIGNED"
-            c["status"] = "UNASSIGNED"
-            c["assignment_source"] = None
-            c["usn"] = None
-            c["name"] = None
-            c["student_id"] = None
-            c["assignedStudent"] = None
-            c["isEnrolled"] = False
-            c["enrolled"] = False
+    # Check if previously assigned to a different student, and purge stale FAISS vectors
+    old_usn = matched.get("assignedUsn") or matched.get("usn") or (matched.get("assignedStudent", {}).get("usn") if isinstance(matched.get("assignedStudent"), dict) else None)
+    if old_usn and old_usn.strip().upper() != req.usn.strip().upper():
+        from ..services.faiss_service import faiss_service
+        # Check if old_usn is used by any other cluster in this session
+        other_uses = any(
+            c for c in clusters
+            if c != matched and (
+                c.get("assignedUsn") == old_usn or
+                c.get("usn") == old_usn or
+                (c.get("assignedStudent") or {}).get("usn") == old_usn
+            )
+        )
+        if not other_uses:
+            faiss_service.remove_student_vectors(old_usn)
+            logger.info(f"Purged stale FAISS vectors for reassigned student {old_usn}")
 
     matched["identity_status"] = "CONFIRMED"
     matched["status"] = "ASSIGNED"
     matched["assignment_source"] = "MANUAL"
     matched["usn"] = req.usn
+    matched["assignedUsn"] = req.usn
     matched["name"] = req.name or req.usn
+    matched["assignedStudentName"] = req.name or req.usn
     matched["student_id"] = req.studentId
     matched["confidence"] = 1.0
     matched["assignedStudent"] = {
@@ -801,7 +816,7 @@ async def assign_cluster_identity(session_id: str, cluster_id: str, req: AssignS
 @router.post("/{session_id}/clusters/{cluster_id}/confirm")
 async def confirm_cluster_identity(session_id: str, cluster_id: str):
     """Confirm a candidate cluster identity."""
-    if session_id not in state.sessions:
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
         _load_session_disk_fallback(session_id)
     if session_id not in state.sessions:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -812,10 +827,33 @@ async def confirm_cluster_identity(session_id: str, cluster_id: str):
     if not matched:
         raise HTTPException(status_code=404, detail=f"Cluster '{cluster_id}' not found")
 
+    cand = matched.get("candidateMatch") or matched.get("candidate_match") or {}
+    cur_assigned = matched.get("assignedStudent") if isinstance(matched.get("assignedStudent"), dict) else {}
+    target_usn = cur_assigned.get("usn") or cand.get("usn") or matched.get("assignedUsn") or matched.get("usn")
+    target_name = cur_assigned.get("name") or cand.get("name") or matched.get("assignedStudentName") or matched.get("name") or target_usn
+    target_sid = cur_assigned.get("studentId") or cand.get("studentId") or matched.get("student_id")
+    target_conf = cur_assigned.get("confidence") or cand.get("confidence") or cand.get("similarity") or 1.0
+
+    if not target_usn:
+        raise HTTPException(status_code=400, detail="Cannot confirm cluster without a candidate student identity")
+
     matched["identity_status"] = "CONFIRMED"
     matched["status"] = "ASSIGNED"
-    if "assignedStudent" in matched and matched["assignedStudent"]:
-        matched["assignedStudent"]["status"] = "CONFIRMED"
+    matched["assignment_source"] = "CONFIRMED"
+    matched["usn"] = target_usn
+    matched["assignedUsn"] = target_usn
+    matched["name"] = target_name
+    matched["assignedStudentName"] = target_name
+    matched["student_id"] = target_sid
+    matched["confidence"] = target_conf
+    matched["assignedStudent"] = {
+        "usn": target_usn,
+        "name": target_name,
+        "studentId": target_sid,
+        "status": "CONFIRMED",
+        "source": "CONFIRMED",
+        "confidence": target_conf,
+    }
 
     sess_dir = Path(os.getcwd()) / "storage" / "enrollment" / session_id
     if sess_dir.exists():
@@ -831,7 +869,7 @@ async def confirm_cluster_identity(session_id: str, cluster_id: str):
 @router.post("/{session_id}/clusters/{cluster_id}/reject")
 async def reject_cluster_identity(session_id: str, cluster_id: str):
     """Reject a cluster or candidate match."""
-    if session_id not in state.sessions:
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
         _load_session_disk_fallback(session_id)
     if session_id not in state.sessions:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -862,7 +900,7 @@ async def reject_cluster_identity(session_id: str, cluster_id: str):
 @router.post("/{session_id}/clusters/{cluster_id}/merge")
 async def merge_clusters(session_id: str, cluster_id: str, req: MergeClustersRequest):
     """Merge cluster_id (source) into targetClusterId."""
-    if session_id not in state.sessions:
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
         _load_session_disk_fallback(session_id)
     if session_id not in state.sessions:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -907,7 +945,7 @@ class EnrollClusterRequest(BaseModel):
 @router.post("/{session_id}/finalize-faiss")
 async def finalize_session_in_faiss(session_id: str):
     """Batch enroll all confirmed clusters for this session into FAISS and persist index."""
-    if session_id not in state.sessions:
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
         _load_session_disk_fallback(session_id)
         
     sess = state.sessions.get(session_id, {})
@@ -916,33 +954,42 @@ async def finalize_session_in_faiss(session_id: str):
     from ..services.faiss_service import faiss_service
     import numpy as np
     
-    enrolled_count = 0
+    # Group confirmed clusters by student USN to accumulate multi-angle vectors
+    clusters_by_usn = {}
     for c in clusters:
         usn = c.get("assignedUsn") or c.get("usn") or (c.get("assignedStudent", {}).get("usn") if isinstance(c.get("assignedStudent"), dict) else None)
         is_confirmed = (
-            c.get("identity_status") == "CONFIRMED" or
-            c.get("status") == "ASSIGNED" or
-            c.get("isEnrolled") is True or
-            c.get("enrolled") is True or
+            (c.get("identity_status") == "CONFIRMED" or c.get("isEnrolled") is True or c.get("enrolled") is True) and
+            c.get("status") == "ASSIGNED" and
             bool(usn)
         )
         if not is_confirmed or not usn:
             continue
-            
-        vectors = []
-        for key in ("representative_embedding", "centroid_embedding", "centroid", "medoid_embedding"):
-            emb = c.get(key)
-            if isinstance(emb, list) and len(emb) == 512:
-                vec = np.array(emb, dtype=np.float32)
-                norm = np.linalg.norm(vec)
-                if norm > 0:
-                    vec = vec / norm
-                vectors.append(vec)
-                
-        if vectors:
-            faiss_service.remove_student_vectors(usn)
-            for v in vectors:
-                faiss_service.add_student(usn, v)
+        usn_clean = str(usn).strip().upper()
+        if usn_clean not in clusters_by_usn:
+            clusters_by_usn[usn_clean] = []
+        clusters_by_usn[usn_clean].append(c)
+
+    enrolled_count = 0
+    for usn_clean, u_clusters in clusters_by_usn.items():
+        all_student_vectors = []
+        for c in u_clusters:
+            for key in ("representative_embedding", "centroid_embedding", "centroid", "medoid_embedding"):
+                emb = c.get(key)
+                if isinstance(emb, list) and len(emb) == 512:
+                    vec = np.array(emb, dtype=np.float32)
+                    norm = np.linalg.norm(vec)
+                    if norm > 0:
+                        vec = vec / norm
+                    all_student_vectors.append(vec)
+
+        if all_student_vectors:
+            # Clear old vectors once for this student, then add all accumulated cluster vectors
+            faiss_service.remove_student_vectors(usn_clean)
+            for v in all_student_vectors:
+                faiss_service.add_student(usn_clean, v, check_duplicate=True)
+
+        for c in u_clusters:
             c["isEnrolled"] = True
             c["enrolled"] = True
             c["status"] = "ASSIGNED"
@@ -976,10 +1023,22 @@ async def rebuild_faiss_from_db():
     }
 
 
+class PurgeStudentVectorsRequest(BaseModel):
+    usn: str
+
+
+@router.post("/purge-student-vectors")
+async def purge_student_vectors(req: PurgeStudentVectorsRequest):
+    """Purge all face vectors for a student from FAISS index."""
+    from ..services.faiss_service import faiss_service
+    removed = faiss_service.remove_student_vectors(req.usn)
+    return {"success": True, "usn": req.usn, "removedVectors": removed}
+
+
 @router.post("/{session_id}/enroll-cluster")
 async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
     """Register all high-quality 512D ArcFace embeddings for a cluster into the FAISS vector index."""
-    if session_id not in state.sessions:
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
         _load_session_disk_fallback(session_id)
 
     from ..services.faiss_service import faiss_service
@@ -1026,13 +1085,19 @@ async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
             # Fallback: compute ArcFace 512D embedding on demand from real crop image
             best_img = matched.get("bestImageUrl") or (matched.get("gallery", [None])[0] if matched.get("gallery") else None)
             if best_img:
-                clean_rel = best_img.lstrip("/")
+                clean_rel = os.path.normpath(best_img.lstrip("/")).replace("..", "")
                 candidates = [
                     Path(clean_rel),
                     Path(__file__).resolve().parent.parent.parent / clean_rel,
                     Path(__file__).resolve().parent.parent.parent.parent / clean_rel,
                 ]
                 for p in candidates:
+                    try:
+                        resolved_p = p.resolve()
+                        if not any(part in ("storage", "data", "enrollment") for part in resolved_p.parts):
+                            continue
+                    except Exception:
+                        continue
                     if p.exists():
                         try:
                             import cv2
@@ -1055,15 +1120,11 @@ async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
             detail=f"Cannot enroll cluster '{cluster_id}' into FAISS: No valid 512D ArcFace embeddings found. Mock vectors are strictly prohibited."
         )
 
-    # Purge old vectors for this student from FAISS before saving new cluster vectors
-    purged = faiss_service.remove_student_vectors(usn)
-    if purged > 0:
-        logger.info(f"Purged {purged} old FAISS vectors for student {usn} prior to saving new cluster.")
-
+    # Multi-cluster accumulation: Add vectors for this cluster to student in FAISS without wiping previous clusters
     added_count = 0
     for vec in vectors_to_add:
-        faiss_service.add_student(usn, vec)
-        added_count += 1
+        if faiss_service.add_student(usn, vec, check_duplicate=True):
+            added_count += 1
 
     try:
         faiss_service.save_index()
@@ -1071,7 +1132,7 @@ async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
         logger.warning(f"Failed saving FAISS index to disk: {s_err}")
 
     # Mark cluster as enrolled in AI session state
-    if session_id not in state.sessions:
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
         _load_session_disk_fallback(session_id)
 
     sess = state.sessions.get(session_id, {})
@@ -1101,7 +1162,8 @@ async def enroll_cluster_in_faiss(session_id: str, req: EnrollClusterRequest):
         import httpx
         async with httpx.AsyncClient(timeout=2.0) as client:
             await client.post(
-                "http://localhost:4000/api/students/sync-enrollment",
+                f"{settings.backend_api_url}/api/students/sync-enrollment",
+                headers={"x-api-key": settings.internal_api_key},
                 json={
                     "usn": usn,
                     "faceSamples": added_count,
@@ -1218,7 +1280,7 @@ async def direct_photo_enroll(req: DirectPhotoEnrollRequest):
 @router.delete("/{session_id}/clusters/{cluster_id}")
 async def delete_session_cluster(session_id: str, cluster_id: str):
     """Delete a specific cluster from a session's in-memory state and disk storage."""
-    if session_id not in state.sessions:
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
         _load_session_disk_fallback(session_id)
     if session_id not in state.sessions:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -1366,7 +1428,7 @@ async def _run_pipeline_background(
         # Trigger NestJS cluster sync to persist clusters into Postgres
         try:
             import httpx
-            nestjs_url = f"http://127.0.0.1:4000/api/enrollment/sessions/{session_id}/sync-clusters"
+            nestjs_url = f"{settings.backend_api_url}/api/enrollment/sessions/{session_id}/sync-clusters"
             async with httpx.AsyncClient(timeout=5.0) as client:
                 await client.post(nestjs_url)
             logger.info(f"[{session_id}] Automatically triggered NestJS cluster sync into Postgres.")
@@ -1401,7 +1463,7 @@ async def _run_pipeline_background(
             })
             try:
                 import httpx
-                nestjs_url = f"http://127.0.0.1:4000/api/enrollment/sessions/{session_id}/sync-clusters"
+                nestjs_url = f"{settings.backend_api_url}/api/enrollment/sessions/{session_id}/sync-clusters"
                 async with httpx.AsyncClient(timeout=5.0) as client:
                     await client.post(nestjs_url)
             except Exception:

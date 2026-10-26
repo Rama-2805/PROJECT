@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsNumber, IsEnum } from "class-validator";
+import { IsString, IsOptional, IsNumber, IsEnum } from 'class-validator';
 
 export class RegisterDeviceDto {
   @IsString() deviceId: string;

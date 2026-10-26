@@ -88,7 +88,7 @@ const MOCK_BUILDINGS: BuildingSummary[] = [
 const MOCK_ALERTS: SecurityAlert[] = [
   { id: "alert-001", type: "intrusion", severity: "high", location: "Library Back Entrance", description: "Unauthorized access attempt detected", time: "2 min ago", status: "active" },
   { id: "alert-002", type: "suspicious", severity: "medium", location: "Parking Lot East", description: "Suspicious vehicle loitering near gate", time: "15 min ago", status: "investigating" },
-  { id: "alert-003", type: "emergency", severity: "critical", location: "Science Block Lab 3", description: "Fire alarm triggered — dispatching robot", time: "1 hour ago", status: "resolved" },
+  { id: "alert-003", type: "emergency", severity: "critical", location: "Science Block Lab 3", description: "[Simulated Demo Scenario] Fire alarm triggered — dispatching robot", time: "1 hour ago", status: "resolved" },
 ];
 
 const MOCK_MAINTENANCE: MaintenanceItem[] = [

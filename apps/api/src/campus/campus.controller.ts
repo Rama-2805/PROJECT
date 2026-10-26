@@ -1,9 +1,11 @@
 // ─── SmartCampus AI — Campus Digital Twin Controller ──
 
-import { Controller, Get, Param } from '@nestjs/common';
+import { Controller, Get, Param, UseGuards } from '@nestjs/common';
 import { CampusService } from './campus.service';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 
 @Controller('campus')
+@UseGuards(JwtAuthGuard)
 export class CampusController {
   constructor(private readonly campusService: CampusService) {}
 

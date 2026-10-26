@@ -9,6 +9,7 @@ import { getTeachers, type Teacher } from "@/lib/mock/teachers";
 import { getDepartments, type Department } from "@/lib/mock/departments";
 import { cn } from "@/lib/utils/cn";
 import { initializeUserStore, getUsers, saveUsers, createUser, updateUserPassword, hashPassword } from "@/lib/userStore";
+import { api } from "@/lib/api/client";
 import { X, ShieldAlert } from "lucide-react";
 
 export default function TeachersPage() {
@@ -41,9 +42,31 @@ export default function TeachersPage() {
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetSuccess, setResetSuccess] = useState<string | null>(null);
 
-  const loadData = () => {
+  const loadData = async () => {
     setLoading(true);
-    Promise.all([getTeachers(), getDepartments()]).then(([teachersData, deptsData]) => {
+    try {
+      const [backendTeachers, teachersData, backendDepts, mockDepts] = await Promise.all([
+        api.get<any>("/teachers").catch(() => null),
+        getTeachers(),
+        api.get<any[]>("/departments").catch(() => null),
+        getDepartments(),
+      ]);
+
+      const deptsData = (backendDepts?.success && Array.isArray(backendDepts.data) && backendDepts.data.length > 0)
+        ? backendDepts.data.map((d: any) => ({
+            id: d.id,
+            name: d.name,
+            code: d.code,
+            hodName: d.hodName || "Not Assigned",
+            description: d.description || "",
+            studentCount: d._count?.students || 0,
+            teacherCount: d._count?.teachers || 0,
+            classroomCount: d._count?.classrooms || 0,
+            courseCount: d._count?.courses || 0,
+            isActive: d.isActive !== false,
+          }))
+        : mockDepts;
+
       // Initialize and merge custom teachers
       initializeUserStore();
       const users = getUsers();
@@ -70,16 +93,68 @@ export default function TeachersPage() {
           } as any;
         });
 
-      // Avoid duplication by email
-      const uniqueMock = teachersData.filter(t => !customTeachers.some(ct => ct.email === t.email));
-      setTeachers([...customTeachers, ...uniqueMock]);
+      let loadedTeachers: Teacher[] = [];
+      if (backendTeachers && backendTeachers.success && Array.isArray(backendTeachers.data) && backendTeachers.data.length > 0) {
+        loadedTeachers = backendTeachers.data.map((t: any) => ({
+          id: t.id,
+          employeeId: t.employeeId || `EMP-${t.id.slice(-4)}`,
+          fullName: t.user?.fullName || t.fullName || "Faculty Member",
+          email: t.user?.email || t.email || "",
+          phone: t.phone || "+91-9876543210",
+          departmentId: t.departmentId || "dept-com",
+          departmentName: t.department?.name || "Computer Science",
+          specialization: t.specialization || "Engineering",
+          subjectsCount: t.subjects?.length || 2,
+          classSessionsCount: t.classesCount || 4,
+          isActive: t.isActive !== false,
+        }));
+      }
+
+      // Deduplicate all teachers strictly by email (Backend > Custom > Mock)
+      const seenEmails = new Set<string>();
+      const deduplicatedTeachers: Teacher[] = [];
+
+      for (const t of loadedTeachers) {
+        const emailLower = (t.email || "").toLowerCase().trim();
+        if (emailLower && !seenEmails.has(emailLower)) {
+          seenEmails.add(emailLower);
+          deduplicatedTeachers.push(t);
+        }
+      }
+
+      for (const t of customTeachers) {
+        const emailLower = (t.email || "").toLowerCase().trim();
+        if (emailLower && !seenEmails.has(emailLower)) {
+          seenEmails.add(emailLower);
+          deduplicatedTeachers.push(t);
+        }
+      }
+
+      for (const t of teachersData) {
+        const emailLower = (t.email || "").toLowerCase().trim();
+        if (emailLower && !seenEmails.has(emailLower)) {
+          seenEmails.add(emailLower);
+          deduplicatedTeachers.push(t);
+        }
+      }
+
+      setTeachers(deduplicatedTeachers);
       setDepartments(deptsData);
+    } catch {
+      // Fallback
+    } finally {
       setLoading(false);
-    });
+    }
   };
 
   useEffect(() => {
-    loadData();
+    let isMounted = true;
+    Promise.resolve().then(() => {
+      if (isMounted) loadData();
+    });
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const filtered = selectedDept
@@ -94,13 +169,23 @@ export default function TeachersPage() {
     e.preventDefault();
     setAddError(null);
 
-    if (!addEmail.endsWith(".edu.in")) {
+    const normalizedEmail = addEmail.trim().toLowerCase();
+    if (!normalizedEmail.endsWith(".edu.in")) {
       setAddError("Teacher email must end with .edu.in");
       return;
     }
 
     try {
-      await createUser(addEmail, addName, "teacher", addDept);
+      const res = await api.post("/teachers", {
+        fullName: addName.trim(),
+        email: normalizedEmail,
+        departmentId: addDept,
+        password: "demo123",
+      });
+      if (!res.success && res.error) {
+        throw new Error(res.error);
+      }
+      await createUser(normalizedEmail, addName.trim(), "teacher", addDept);
       setAddName("");
       setAddEmail("");
       setIsAddModalOpen(false);
@@ -177,9 +262,17 @@ export default function TeachersPage() {
     }
 
     try {
+      const targetEmail = resetTargetEmail.trim().toLowerCase();
       const hashedPass = await hashPassword(resetPassword);
-      await updateUserPassword(resetTargetEmail, hashedPass, false); // Direct override clears force reset
-      setResetSuccess(`Password for ${resetTargetEmail} updated successfully directly!`);
+      await updateUserPassword(targetEmail, hashedPass, false); // Direct override clears force reset
+      const res = await api.post("/teachers/reset-password", {
+        email: targetEmail,
+        password: resetPassword,
+      });
+      if (!res.success && res.error) {
+        console.warn("Backend reset password warning:", res.error);
+      }
+      setResetSuccess(`Password for ${resetTargetEmail} updated successfully!`);
       setResetPassword("");
       setResetConfirm("");
       setTimeout(() => {
@@ -257,7 +350,7 @@ export default function TeachersPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {filtered.map((teacher, i) => (
             <motion.div
-              key={teacher.email}
+              key={teacher.id ? `teacher-${teacher.id}` : `teacher-${teacher.email || i}`}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.03 }}
@@ -332,7 +425,7 @@ export default function TeachersPage() {
                     onChange={(e) => setAddDept(e.target.value)}
                     className="w-full bg-bg-secondary border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
                   >
-                    {["CSE", "ISE", "ECE", "EEE", "AIML", "CSE(AI)", "MECH", "CIVIL"].map((d) => (
+                    {(departments.length > 0 ? departments.map(d => d.code) : ["CSE", "ISE", "ECE", "EEE", "AIML", "MECH", "CIVIL"]).map((d) => (
                       <option key={d} value={d}>{d}</option>
                     ))}
                   </select>

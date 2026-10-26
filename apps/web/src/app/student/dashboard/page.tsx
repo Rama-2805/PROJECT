@@ -4,7 +4,6 @@ import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { AnimatedText } from "@/components/ui/animated-text";
-import { getUsers } from "@/lib/userStore";
 import { 
   CheckSquare, 
   ScanFace, 
@@ -18,12 +17,6 @@ import {
 } from "lucide-react";
 
 import { apiRequest } from "@/lib/api/client";
-
-function getFormattedDate(offsetDays = 0) {
-  const d = new Date();
-  d.setDate(d.getDate() - offsetDays);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
 
 export default function StudentDashboardPage() {
   const [studentInfo, setStudentInfo] = useState({
@@ -52,7 +45,7 @@ export default function StudentDashboardPage() {
       "Campus Attendance System: Live record confirmed",
     ];
 
-    async function loadStudentData(silent = false) {
+    async function loadStudentData() {
       tick++;
       let currentUsn = "";
 
@@ -83,27 +76,14 @@ export default function StudentDashboardPage() {
           localStorage.setItem("currentUserEmail", user.email);
           localStorage.setItem("currentUserUSN", usn);
         }
-      } catch (err) {}
+      } catch {}
 
       if (!currentUsn && typeof window !== "undefined") {
         const email = localStorage.getItem("currentUserEmail") || "";
         const name = localStorage.getItem("currentUserName");
         const usn = localStorage.getItem("currentUserUSN") || "—";
         currentUsn = usn;
-        const users = getUsers();
-        if (email && users[email]) {
-          if (!isCancelled) {
-            setStudentInfo({
-              fullName: users[email].fullName,
-              email: users[email].email,
-              department: users[email].department || "Computer Science & Engineering",
-              semester: users[email].semester ? `Semester ${users[email].semester}` : "Semester 4",
-              id: users[email].studentId || "—",
-              faceEnrolled: true,
-            });
-            setLastUpdated(new Date());
-          }
-        } else if (email && !isCancelled) {
+        if (email && !isCancelled) {
           setStudentInfo({
             fullName: name || "Student",
             email: email,
@@ -122,22 +102,51 @@ export default function StudentDashboardPage() {
           const attRes = await apiRequest<any>(`/attendance/student/${encodeURIComponent(currentUsn)}`);
           if (attRes && attRes.success && attRes.data && !isCancelled) {
             const data = attRes.data;
-            if (data.totalRecords > 0) {
-              const rate = Math.min(100, Math.max(70, Number((data.averageConfidence > 0 ? (data.averageConfidence * 100) : 95).toFixed(1))));
-              setAttendanceRate(`${rate}%`);
+            if (data.attendanceRate !== null && data.attendanceRate !== undefined) {
+              setAttendanceRate(`${data.attendanceRate}%`);
+            } else if (data.totalSessions > 0) {
+              const computedRate = Math.min(
+                100,
+                Math.round((data.totalRecords / data.totalSessions) * 100),
+              );
+              setAttendanceRate(`${computedRate}%`);
+            } else if (data.totalRecords > 0) {
+              setAttendanceRate("100%");
+            } else {
+              setAttendanceRate("0.0%");
             }
             if (data.recentRecords && data.recentRecords.length > 0) {
-              setRecentScans(data.recentRecords.slice(0, 5).map((r: any) => ({
-                date: new Date(r.markedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
-                time: new Date(r.markedAt).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" }),
-                course: r.session?.subjectName || "Computer Science & Engineering",
-                device: r.source === "BIOMETRIC_CAMERA" ? "CAM-EDGE-01" : "CAM-ROOM-023",
-                confidence: `${(r.confidence * 100).toFixed(1)}%`,
-                status: r.status === "PRESENT" ? "Present" : "Late",
-              })));
+              setRecentScans(
+                data.recentRecords.slice(0, 5).map((r: any) => ({
+                  date: new Date(r.markedAt).toLocaleDateString("en-US", {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  }),
+                  time: new Date(r.markedAt).toLocaleTimeString("en-US", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  }),
+                  course:
+                    r.session?.subject?.name ||
+                    r.session?.subjectName ||
+                    "Computer Science & Engineering",
+                  device:
+                    r.source === "BIOMETRIC_CAMERA"
+                      ? "CAM-EDGE-01"
+                      : "CAM-ROOM-023",
+                  confidence: `${((r.confidence || 0.95) * 100).toFixed(1)}%`,
+                  status:
+                    r.status === "PRESENT"
+                      ? "Present"
+                      : r.status === "LATE"
+                        ? "Late"
+                        : "Absent",
+                })),
+              );
             }
           }
-        } catch (e) {}
+        } catch {}
       }
 
       if (!isCancelled) {
@@ -149,14 +158,14 @@ export default function StudentDashboardPage() {
       }
     }
 
-    loadStudentData(false);
+    loadStudentData();
 
     // Continuous real-time updates every 4 seconds
     const interval = setInterval(() => {
-      loadStudentData(true);
+      loadStudentData();
     }, 4000);
 
-    const onFocus = () => loadStudentData(true);
+    const onFocus = () => loadStudentData();
     window.addEventListener("focus", onFocus);
 
     return () => {
@@ -239,7 +248,7 @@ export default function StudentDashboardPage() {
             <div className="flex items-center justify-between mb-4 border-b border-glass-border pb-3">
               <div className="flex items-center gap-2">
                 <Calendar className="w-4 h-4 text-blue-400" />
-                <h3 className="text-sm font-semibold text-text-primary font-mono uppercase tracking-wider">Today's Class Schedule</h3>
+                <h3 className="text-sm font-semibold text-text-primary font-mono uppercase tracking-wider">Today&apos;s Class Schedule</h3>
               </div>
               <span className="text-[10px] font-mono text-text-muted uppercase">
                 {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}

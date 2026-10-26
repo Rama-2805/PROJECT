@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils/cn";
-import { api } from "@/lib/api/client";
+import { api, getAccessToken } from "@/lib/api/client";
 import { useAuthStore } from "@/lib/store/auth";
 import {
   Smartphone,
@@ -55,42 +55,30 @@ export interface ClassroomOption {
   schedule: string;
 }
 
-const CLASSROOM_OPTIONS: ClassroomOption[] = [
+const DEFAULT_CLASSROOM_OPTIONS: ClassroomOption[] = [
   {
     id: "sec-a",
-    name: "Section A — Room 023",
+    name: "7th Semester — Section A",
     section: "A",
-    roomNumber: "Room 023 (Engineering Block, Floor 2)",
-    course: "CSE 6A · Machine Learning & AI",
+    roomNumber: "7th Sem - Section A (Engineering Block, Floor 2)",
+    course: "CSE 7A · Machine Learning & AI",
     faculty: "Prof. Kalaiselvi S",
-    enrolledCount: 59,
+    enrolledCount: 60,
     cameraId: "room-023",
     department: "Computer Science & Engineering",
     schedule: "10:00 AM – 11:30 AM",
   },
   {
     id: "sec-b",
-    name: "Section B — Room 024",
+    name: "7th Semester — Section B",
     section: "B",
-    roomNumber: "Room 024 (Engineering Block, Floor 2)",
-    course: "CSE 6B · Distributed Computing",
+    roomNumber: "7th Sem - Section B (Engineering Block, Floor 2)",
+    course: "CSE 7B · Distributed Computing",
     faculty: "Prof. Harish Kumar",
     enrolledCount: 71,
     cameraId: "room-024",
     department: "Computer Science & Engineering",
     schedule: "11:30 AM – 01:00 PM",
-  },
-  {
-    id: "sec-c",
-    name: "Section A — Room 012",
-    section: "A",
-    roomNumber: "Room 012 (Main Block, Floor 1)",
-    course: "CSE 4A · Data Structures & Algorithms",
-    faculty: "Dr. Ramesh Babu",
-    enrolledCount: 62,
-    cameraId: "room-012",
-    department: "Computer Science & Engineering",
-    schedule: "02:00 PM – 03:30 PM",
   },
 ];
 
@@ -101,7 +89,7 @@ export interface StudentBehaviorState {
   name: string;
   section: string;
   status: "ALERT" | "SLEEPING" | "PHONE_USAGE" | "DISTRACTED" | "INSUFFICIENT_DATA" | "NORMAL";
-  current_state?: "NORMAL" | "OBSERVING_PHONE" | "POSSIBLE_PHONE_USAGE" | "OBSERVING_POSTURE" | "POSSIBLE_SLEEPING" | "ALERTED" | "INSUFFICIENT_VISUAL_EVIDENCE" | "TRACK_LOST";
+  current_state?: "NORMAL" | "NORMAL_ACTIVITY" | "OBSERVING_PHONE" | "POSSIBLE_PHONE_USAGE" | "OBSERVING_POSTURE" | "POSSIBLE_SLEEPING" | "ALERTED" | "INSUFFICIENT_VISUAL_EVIDENCE" | "TRACK_LOST";
   attentionScore: number | null;
   observationCount?: number;
   posture: string;
@@ -122,21 +110,24 @@ export interface LiveAttendanceEvent {
   type: "ATTENDANCE_DETECTED" | "UNKNOWN_PERSON" | "MANUAL_CHECKIN";
   studentId: string;
   studentName?: string;
+  faceImageUrl?: string;
   confidence: number;
   time: string;
 }
 
 export interface LiveBehaviorAlert {
   id: string;
-  type: "PHONE_USAGE" | "POSSIBLE_SLEEPING_POSTURE" | "SLEEPING" | "DISTRACTED";
-  studentId: string;
-  studentName: string;
+  type: "PHONE_USAGE" | "PROBABLE_SLEEPING" | "POSSIBLE_SLEEPING_POSTURE" | "SLEEPING" | "DISTRACTED";
+  trackRef?: string;
+  studentId?: string | null;
+  studentName?: string | null;
+  faceImageUrl?: string;
   title: string;
   description: string;
   confidence: number;
   duration: number;
   time: string;
-  status: "ACTIVE" | "ACKNOWLEDGED" | "DISMISSED";
+  status: "ACTIVE" | "ACKNOWLEDGED" | "DISMISSED" | "RESOLVED";
 }
 
 interface LiveNotificationToast {
@@ -183,10 +174,12 @@ function LiveCameraFeed({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cameraBaseUrl = "/api/camera";
 
-  // Reset stream error on session toggle or stream key change
-  useEffect(() => {
+  const [prevStreamKey, setPrevStreamKey] = useState(`${streamKey}-${sessionActive}-${mode}`);
+  const currentStreamKey = `${streamKey}-${sessionActive}-${mode}`;
+  if (prevStreamKey !== currentStreamKey) {
+    setPrevStreamKey(currentStreamKey);
     setStreamFailed(false);
-  }, [streamKey, sessionActive, mode]);
+  }
 
   // Handle local video playback controls (forward, prev, next)
   useEffect(() => {
@@ -222,12 +215,12 @@ function LiveCameraFeed({
       const h = canvas.height;
       ctx.clearRect(0, 0, w, h);
 
-      // Student detection bounding boxes across classroom desks
+      // Classroom face detection targets (verified enrolled vs unknown visitors)
       const boxes = [
         { name: "Rahul S.", usn: "1VI23CS045", conf: 0.984, x: 0.22, y: 0.32, w: 0.085, h: 0.125, status: "PRESENT", beh: "ATTENTIVE", att: 96 },
         { name: "Ananya R.", usn: "1VI23CS012", conf: 0.971, x: 0.40, y: 0.30, w: 0.080, h: 0.120, status: "PRESENT", beh: "ATTENTIVE", att: 94 },
         { name: "Priya M.", usn: "1VI23CS089", conf: 0.965, x: 0.58, y: 0.34, w: 0.082, h: 0.122, status: "PRESENT", beh: "ATTENTIVE", att: 92 },
-        { name: "Karthik N.", usn: "1VI23CS034", conf: 0.952, x: 0.74, y: 0.35, w: 0.085, h: 0.128, status: "PRESENT", beh: "NORMAL", att: 88 },
+        { name: "Unknown Individual", usn: "UNKNOWN", conf: 0.860, x: 0.74, y: 0.35, w: 0.085, h: 0.128, status: "UNKNOWN", beh: "NORMAL", att: 88 },
         { name: "Sneha P.", usn: "1VI23CS102", conf: 0.978, x: 0.32, y: 0.48, w: 0.092, h: 0.138, status: "PRESENT", beh: "ATTENTIVE", att: 95 },
         { name: "Aditya V.", usn: "1VI23CS003", conf: 0.961, x: 0.52, y: 0.50, w: 0.095, h: 0.142, status: "PRESENT", beh: mode === "behavior" ? "PHONE_USAGE" : "PRESENT", att: mode === "behavior" ? 64 : 91 },
       ];
@@ -263,8 +256,9 @@ function LiveCameraFeed({
         const bh = b.h * h;
 
         const isAlert = mode === "behavior" && b.beh === "PHONE_USAGE";
-        const strokeColor = isAlert ? "#f59e0b" : "#10b981";
-        const bgColor = isAlert ? "rgba(245, 158, 11, 0.9)" : "rgba(16, 185, 129, 0.9)";
+        const isUnknown = b.status === "UNKNOWN";
+        const strokeColor = isAlert || isUnknown ? "#f59e0b" : "#10b981";
+        const bgColor = isAlert || isUnknown ? "rgba(245, 158, 11, 0.9)" : "rgba(16, 185, 129, 0.9)";
 
         // Target box border
         ctx.strokeStyle = strokeColor;
@@ -292,13 +286,17 @@ function LiveCameraFeed({
 
         ctx.fillStyle = "#000000";
         ctx.font = "bold 9px monospace";
-        const labelText = mode === "attendance"
+        const labelText = isUnknown
+          ? "? UNKNOWN PERSON"
+          : mode === "attendance"
           ? `${b.name} (${(b.conf * 100).toFixed(0)}%)`
           : `${b.name} • ${b.beh}`;
         ctx.fillText(labelText, bx + 4, by - 14);
 
         ctx.font = "8px monospace";
-        const subText = mode === "attendance"
+        const subText = isUnknown
+          ? "Unregistered Face · Pending Review"
+          : mode === "attendance"
           ? `${b.usn} • ${b.status}`
           : `ATTN: ${b.att}% • ${b.usn}`;
         ctx.fillText(subText, bx + 4, by - 4);
@@ -343,6 +341,10 @@ function LiveCameraFeed({
           playsInline
           className="w-full h-full object-cover"
         />
+        <div className="absolute top-4 left-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-semibold backdrop-blur-md pointer-events-none">
+          <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+          <span>Demo Playback Mode (Edge Camera Stream Offline)</span>
+        </div>
         <canvas
           ref={canvasRef}
           width={1280}
@@ -353,10 +355,13 @@ function LiveCameraFeed({
     );
   }
 
+  const token = typeof window !== "undefined" ? getAccessToken() : null;
+  const streamSrc = `${cameraBaseUrl}/stream?camera_id=${encodeURIComponent(cameraId)}&mode=${mode}&_t=${streamKey}${token ? `&token=${encodeURIComponent(token)}` : ""}`;
+
   return (
     <img
       key={`${streamKey}-${mode}`}
-      src={`${cameraBaseUrl}/stream?camera_id=${cameraId}&mode=${mode}&_t=${streamKey}`}
+      src={streamSrc}
       className="w-full h-full object-cover"
       alt="Classroom Live Stream"
       onError={() => {
@@ -381,7 +386,53 @@ export default function LiveMonitoringPage() {
   // Step 2: Choose Monitoring Mode (Attendance vs Behavioral)
   // Step 3: Dedicated Monitoring View
   const [selectedClass, setSelectedClass] = useState<ClassroomOption | null>(null);
+  const [classroomOptions, setClassroomOptions] = useState<ClassroomOption[]>(DEFAULT_CLASSROOM_OPTIONS);
   const [monitoringMode, setMonitoringMode] = useState<"attendance" | "behavior" | null>(null);
+
+  // Sync classrooms directly with Classes section (/classrooms)
+  useEffect(() => {
+    async function loadDynamicClassrooms() {
+      try {
+        const res = await api.get<any[]>("/classrooms");
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          const mapped: ClassroomOption[] = res.data.map((c: any, idx: number) => {
+            const rawRoom = (c.roomNumber || c.name || `Room ${idx + 1}`).trim();
+            const isSecB =
+              rawRoom.toUpperCase().includes("SECTION B") ||
+              rawRoom.toUpperCase().includes("SEC B") ||
+              rawRoom.toUpperCase().endsWith(" B") ||
+              idx === 1;
+            const section: "A" | "B" = isSecB ? "B" : "A";
+
+            const displayName = rawRoom.toLowerCase().includes("sem")
+              ? (rawRoom.includes("—") ? rawRoom : rawRoom.replace("-", "—"))
+              : `7th Semester — ${rawRoom}`;
+
+            const enrolled = section === "A" ? 60 : 71;
+
+            return {
+              id: c.id || (section === "A" ? "sec-a" : "sec-b"),
+              name: displayName,
+              section,
+              roomNumber: `${rawRoom} (${c.building || "Engineering Block"}, Floor ${c.floor || 2})`,
+              course: section === "A" ? "CSE 7A · Machine Learning & AI" : "CSE 7B · Distributed Computing",
+              faculty: section === "A" ? "Prof. Kalaiselvi S" : "Prof. Harish Kumar",
+              enrolledCount: enrolled,
+              cameraId: section === "A" ? "room-023" : "room-024",
+              department: c.department?.name || "Computer Science & Engineering",
+              schedule: section === "A" ? "10:00 AM – 11:30 AM" : "11:30 AM – 01:00 PM",
+            };
+          });
+
+          setClassroomOptions(mapped);
+        }
+      } catch (err) {
+        console.warn("Using default 7th semester classroom options:", err);
+      }
+    }
+
+    loadDynamicClassrooms();
+  }, []);
 
   // Attendance Events Log (Zero behavioral events)
   const [attendanceEvents, setAttendanceEvents] = useState<LiveAttendanceEvent[]>([]);
@@ -394,7 +445,7 @@ export default function LiveMonitoringPage() {
   // Session Controls
   const [loading, setLoading] = useState(false);
   const [sessionActive, setSessionActive] = useState(false);
-  const [streamKey, setStreamKey] = useState<number>(Date.now());
+  const [streamKey, setStreamKey] = useState<number>(0);
   const [sessionDuration, setSessionDuration] = useState<number>(0);
   const [controlToast, setControlToast] = useState<string | null>(null);
 
@@ -439,116 +490,87 @@ export default function LiveMonitoringPage() {
         console.warn("Failed to load students from backend:", e);
       }
 
-      // Default classroom roster for Section A (Room 023) so live dashboard populates on deployed Vercel instance
+      // Default classroom roster for Section A (7th Sem) so live dashboard populates on deployed Vercel instance
       const defaultRoster = [
-        { id: "s1", fullName: "Rahul Sharma", rollNumber: "1VI23CS045", section: "A", department: "CSE", semester: 6 },
-        { id: "s2", fullName: "Ananya Rao", rollNumber: "1VI23CS012", section: "A", department: "CSE", semester: 6 },
-        { id: "s3", fullName: "Priya Menon", rollNumber: "1VI23CS089", section: "A", department: "CSE", semester: 6 },
-        { id: "s4", fullName: "Karthik Nair", rollNumber: "1VI23CS034", section: "A", department: "CSE", semester: 6 },
-        { id: "s5", fullName: "Sneha Patel", rollNumber: "1VI23CS102", section: "A", department: "CSE", semester: 6 },
-        { id: "s6", fullName: "Aditya Verma", rollNumber: "1VI23CS003", section: "A", department: "CSE", semester: 6 },
-        { id: "s7", fullName: "Meera Krishnan", rollNumber: "1VI23CS067", section: "A", department: "CSE", semester: 6 },
-        { id: "s8", fullName: "Vikram Hegde", rollNumber: "1VI23CS115", section: "A", department: "CSE", semester: 6 },
-        { id: "s9", fullName: "Divya Balaji", rollNumber: "1VI23CS028", section: "A", department: "CSE", semester: 6 },
-        { id: "s10", fullName: "Rohan Deshmukh", rollNumber: "1VI23CS094", section: "A", department: "CSE", semester: 6 },
-        { id: "s11", fullName: "Shreya Iyer", rollNumber: "1VI23CS051", section: "A", department: "CSE", semester: 6 },
-        { id: "s12", fullName: "Varun Reddy", rollNumber: "1VI23CS120", section: "A", department: "CSE", semester: 6 },
-        { id: "s13", fullName: "Kavya Murthy", rollNumber: "1VI23CS041", section: "A", department: "CSE", semester: 6 },
-        { id: "s14", fullName: "Sanjay Kumar", rollNumber: "1VI23CS078", section: "A", department: "CSE", semester: 6 },
-        { id: "s15", fullName: "Pooja Hegde", rollNumber: "1VI23CS083", section: "A", department: "CSE", semester: 6 },
-        { id: "s16", fullName: "Arjun Gowda", rollNumber: "1VI23CS019", section: "A", department: "CSE", semester: 6 },
-        { id: "s17", fullName: "Deepa Nambiar", rollNumber: "1VI23CS025", section: "A", department: "CSE", semester: 6 },
-        { id: "s18", fullName: "Nikhil Joshi", rollNumber: "1VI23CS071", section: "A", department: "CSE", semester: 6 },
+        { id: "s1", fullName: "Rahul Sharma", rollNumber: "1VI23CS045", section: "A", department: "CSE", semester: 7 },
+        { id: "s2", fullName: "Ananya Rao", rollNumber: "1VI23CS012", section: "A", department: "CSE", semester: 7 },
+        { id: "s3", fullName: "Priya Menon", rollNumber: "1VI23CS089", section: "A", department: "CSE", semester: 7 },
+        { id: "s4", fullName: "Karthik Nair", rollNumber: "1VI23CS034", section: "A", department: "CSE", semester: 7 },
+        { id: "s5", fullName: "Sneha Patel", rollNumber: "1VI23CS102", section: "A", department: "CSE", semester: 7 },
+        { id: "s6", fullName: "Aditya Verma", rollNumber: "1VI23CS003", section: "A", department: "CSE", semester: 7 },
+        { id: "s7", fullName: "Meera Krishnan", rollNumber: "1VI23CS067", section: "A", department: "CSE", semester: 7 },
+        { id: "s8", fullName: "Vikram Hegde", rollNumber: "1VI23CS115", section: "A", department: "CSE", semester: 7 },
+        { id: "s9", fullName: "Divya Balaji", rollNumber: "1VI23CS028", section: "A", department: "CSE", semester: 7 },
+        { id: "s10", fullName: "Rohan Deshmukh", rollNumber: "1VI23CS094", section: "A", department: "CSE", semester: 7 },
+        { id: "s11", fullName: "Shreya Iyer", rollNumber: "1VI23CS051", section: "A", department: "CSE", semester: 7 },
+        { id: "s12", fullName: "Varun Reddy", rollNumber: "1VI23CS120", section: "A", department: "CSE", semester: 7 },
+        { id: "s13", fullName: "Kavya Murthy", rollNumber: "1VI23CS041", section: "A", department: "CSE", semester: 7 },
+        { id: "s14", fullName: "Sanjay Kumar", rollNumber: "1VI23CS078", section: "A", department: "CSE", semester: 7 },
+        { id: "s15", fullName: "Pooja Hegde", rollNumber: "1VI23CS083", section: "A", department: "CSE", semester: 7 },
+        { id: "s16", fullName: "Arjun Gowda", rollNumber: "1VI23CS019", section: "A", department: "CSE", semester: 7 },
+        { id: "s17", fullName: "Deepa Nambiar", rollNumber: "1VI23CS025", section: "A", department: "CSE", semester: 7 },
+        { id: "s18", fullName: "Nikhil Joshi", rollNumber: "1VI23CS071", section: "A", department: "CSE", semester: 7 },
       ];
       setEnrolledStudents(defaultRoster);
     }
     loadStudents();
   }, []);
 
-  // Deployed verification stream simulation (for Vercel and offline demo mode)
-  useEffect(() => {
-    if (!sessionActive || enrolledStudents.length === 0) return;
-
-    let index = 0;
-    const interval = setInterval(() => {
-      if (index >= enrolledStudents.length || index >= 16) {
-        clearInterval(interval);
-        return;
-      }
-      const st = enrolledStudents[index];
-      const sUsn = st.rollNumber || st.usn || st.studentId;
-      const sName = st.fullName || sUsn;
-      const sConf = Number((0.95 + Math.random() * 0.04).toFixed(3));
-      const sTime = new Date().toLocaleTimeString();
-
-      const newEvent: LiveAttendanceEvent = {
-        id: `att_auto_${Date.now()}_${index}`,
-        type: "ATTENDANCE_DETECTED",
-        studentId: sUsn,
-        studentName: sName,
-        confidence: sConf,
-        time: sTime,
-      };
-
-      setAttendanceEvents((prev) => {
-        if (prev.some((e) => e.studentId === sUsn)) return prev;
-        return [newEvent, ...prev].slice(0, 50);
-      });
-
-      index++;
-    }, 2200);
-
-    return () => clearInterval(interval);
-  }, [sessionActive, enrolledStudents]);
+  // Biometric facial verification: Only enrolled faces detected by the AI pipeline are marked.
+  // Unknown or unrecognized faces are tracked in Unknown Faces roster and attendance log.
 
   // Initialize behavior states for enrolled students
   useEffect(() => {
     if (enrolledStudents.length === 0) return;
+    let isMounted = true;
 
-    setStudentBehaviors((prev) => {
-      const next = { ...prev };
-      enrolledStudents.forEach((s) => {
-        const usn = s.rollNumber || s.usn || s.studentId;
-        const sec = s.section || (usn.startsWith("1VI23CS") && parseInt(usn.replace("1VI23CS", ""), 10) <= 64 ? "A" : "B");
-        if (!next[usn]) {
-          next[usn] = {
-            id: s.id,
-            usn,
-            name: s.fullName,
-            section: sec,
-            status: "INSUFFICIENT_DATA",
-            current_state: "NORMAL",
-            attentionScore: null,
-            observationCount: 0,
-            posture: "Upright",
-            gaze: "Facing Front",
-            pitch: 0,
-            yaw: 0,
-            phoneDetected: false,
-            sleepingDetected: false,
-            accumulated_phone_duration: 0,
-            accumulated_sleeping_duration: 0,
-            is_verified_identity: true,
-            lastUpdated: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-          };
-        }
+    Promise.resolve().then(() => {
+      if (!isMounted) return;
+      setStudentBehaviors((prev) => {
+        const next = { ...prev };
+        enrolledStudents.forEach((s) => {
+          const usn = s.rollNumber || s.usn || s.studentId;
+          const sec = s.section || (usn.startsWith("1VI23CS") && parseInt(usn.replace("1VI23CS", ""), 10) <= 64 ? "A" : "B");
+          if (!next[usn]) {
+            next[usn] = {
+              id: s.id,
+              usn,
+              name: s.fullName,
+              section: sec,
+              status: "INSUFFICIENT_DATA",
+              current_state: "NORMAL",
+              attentionScore: null,
+              observationCount: 0,
+              posture: "Upright",
+              gaze: "Facing Front",
+              pitch: 0,
+              yaw: 0,
+              phoneDetected: false,
+              sleepingDetected: false,
+              accumulated_phone_duration: 0,
+              accumulated_sleeping_duration: 0,
+              is_verified_identity: true,
+              lastUpdated: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            };
+          }
+        });
+        return next;
       });
-      return next;
     });
+
+    return () => {
+      isMounted = false;
+    };
   }, [enrolledStudents]);
 
   // Session Duration Timer
   useEffect(() => {
-    let timer: NodeJS.Timeout | null = null;
-    if (sessionActive) {
-      timer = setInterval(() => {
-        setSessionDuration((prev) => prev + 1);
-      }, 1000);
-    } else {
-      setSessionDuration(0);
-    }
+    if (!sessionActive) return;
+    const timer = setInterval(() => {
+      setSessionDuration((prev) => prev + 1);
+    }, 1000);
     return () => {
-      if (timer) clearInterval(timer);
+      clearInterval(timer);
     };
   }, [sessionActive]);
 
@@ -596,48 +618,100 @@ export default function LiveMonitoringPage() {
             const clusterId = eventData.cluster_id || eventData.id || "unknown_visitor";
             setUnknownFaceClusters((prev) => new Set(prev).add(clusterId));
 
+            const unkTrackRef = eventData.track_id ? `Track ${eventData.track_id}` : clusterId;
+            const unkFaceImage = eventData.image_url || eventData.image_path || (eventData.preview_image ? eventData.preview_image : undefined);
             const unkEvent: LiveAttendanceEvent = {
-              id: `unk_${Date.now()}`,
+              id: `unk_${eventData.id || Date.now()}`,
               type: "UNKNOWN_PERSON",
-              studentId: clusterId,
-              confidence: 0.90,
+              studentId: unkTrackRef,
+              studentName: "UNKNOWN",
+              faceImageUrl: unkFaceImage,
+              confidence: eventData.quality_score || 0.85,
               time: new Date().toLocaleTimeString(),
             };
-            setAttendanceEvents((prev) => [unkEvent, ...prev].slice(0, 50));
+            setAttendanceEvents((prev) => [unkEvent, ...prev.filter((e) => e.studentId !== unkTrackRef)].slice(0, 50));
+
+            const newPending: PendingUnknownFace = {
+              id: String(eventData.id || Date.now()),
+              cluster_id: clusterId,
+              image_path: eventData.image_path,
+              preview_image: eventData.image_path,
+              quality_score: eventData.quality_score || 0.85,
+              camera_id: eventData.camera || selectedClass?.cameraId || "room-023",
+              is_resolved: false,
+              created_at: eventData.timestamp || new Date().toISOString(),
+              detected_at: eventData.timestamp || new Date().toISOString(),
+              suggested_match: eventData.possible_match
+                ? {
+                    usn: eventData.possible_match.usn,
+                    name: eventData.possible_match.usn,
+                    confidence: (eventData.possible_match.confidence || 0.85) * 100,
+                  }
+                : undefined,
+            };
+            setPendingUnknownFaces((prev) => {
+              if (prev.some((p) => p.cluster_id === newPending.cluster_id || p.id === newPending.id)) return prev;
+              return [newPending, ...prev].slice(0, 20);
+            });
           }
 
           // 2. Behavioral Alerts (behavior log only - NEVER marks attendance)
           if (eventType === "BEHAVIOR_ALERT") {
-            const bType = eventData.behavior_type || "UNKNOWN";
-            const sId = eventData.student_id || "Unidentified";
-            const sName = eventData.student_name || `Track ${sId}`;
-            const sConf = eventData.confidence || 0.85;
-            const sDur = eventData.duration || (bType === "PHONE_USAGE" ? 5.0 : 10.0);
+            const rawType = eventData.behavior_type || eventData.event_type || "UNKNOWN";
+            const isSleep =
+              rawType === "PROBABLE_SLEEPING" ||
+              rawType === "SLEEPING" ||
+              rawType === "POSSIBLE_SLEEPING_POSTURE" ||
+              eventData.title?.toLowerCase().includes("sleep");
+            const bType = isSleep ? "PROBABLE_SLEEPING" : "PHONE_USAGE";
+
+            const rawTrackId = String(eventData.track_id || "");
+            const digits = rawTrackId.match(/\d+/);
+            const anonTrackRef = digits ? `Track P-${digits[0].padStart(3, "0")}` : (rawTrackId ? `Track ${rawTrackId}` : "Track P-001");
+
+            const sId = isSleep ? null : (eventData.student_id || null);
+            const sName = isSleep ? anonTrackRef : (eventData.student_name || anonTrackRef);
+            const sConf = eventData.confidence || 0.90;
+            const sDur = eventData.duration || (isSleep ? 30.0 : 5.0);
             const sTime = eventData.time || new Date().toLocaleTimeString();
 
             const newAlert: LiveBehaviorAlert = {
-              id: `beh_${Date.now()}_${Math.random()}`,
+              id: eventData.event_id || `beh_${rawTrackId || Date.now()}`,
               type: bType,
+              trackRef: anonTrackRef,
               studentId: sId,
               studentName: sName,
-              title: eventData.title || (bType === "PHONE_USAGE" ? "Mobile Phone Usage Detected" : "Possible sleeping posture"),
-              description: eventData.description || (bType === "PHONE_USAGE" ? `Sustained mobile phone usage observed (${sDur}s)` : `Sustained slumped posture observed (${sDur}s)`),
+              title: eventData.title || (isSleep ? `Probable Sleeping — ${anonTrackRef}` : "Mobile Phone Usage Detected"),
+              description: eventData.description || (isSleep ? `Sustained probable sleeping posture observed (${sDur}s)` : `Sustained mobile phone usage observed (${sDur}s)`),
               confidence: sConf,
               duration: sDur,
               time: sTime,
               status: "ACTIVE",
             };
 
-            setBehavioralAlerts((prev) => [newAlert, ...prev].slice(0, 50));
+            setBehavioralAlerts((prev) => {
+              const existingIdx = prev.findIndex((e) => (e.trackRef === anonTrackRef && e.type === bType) || e.id === newAlert.id);
+              if (existingIdx >= 0) {
+                const updated = [...prev];
+                updated[existingIdx] = {
+                  ...updated[existingIdx],
+                  duration: Math.max(updated[existingIdx].duration, sDur),
+                  time: sTime,
+                  confidence: sConf,
+                };
+                return updated;
+              }
+              return [newAlert, ...prev].slice(0, 50);
+            });
 
             // Show Toast
             setActiveLiveToast({
               id: newAlert.id,
-              type: bType === "PHONE_USAGE" ? "PHONE" : "SLEEP",
+              type: isSleep ? "SLEEP" : "PHONE",
               title: newAlert.title,
-              message: `${sName} — ${newAlert.description}`,
+              message: newAlert.description,
               time: sTime,
-              severity: bType === "PHONE_USAGE" ? "WARNING" : "CRITICAL",
+              severity: isSleep ? "CRITICAL" : "WARNING",
             });
           }
         } catch (err) {
@@ -652,6 +726,47 @@ export default function LiveMonitoringPage() {
       if (socket) socket.close();
     };
   }, [sessionActive]);
+
+  // Synchronize active session state from backend on mount or mode switch
+  useEffect(() => {
+    let isMounted = true;
+    const activeCameraId = selectedClass?.cameraId || "room-023";
+
+    async function syncBackendSession() {
+      try {
+        if (monitoringMode === "behavior") {
+          const res = await fetch("/api/v1/behavior/session/status");
+          if (res.ok) {
+            const data = await res.json();
+            const isRunning =
+              data?.sessions?.some(
+                (s: any) => s.camera_id === activeCameraId && s.running
+              ) ?? data?.active ?? false;
+            if (isMounted && isRunning) {
+              setSessionActive(true);
+            }
+          }
+        } else if (monitoringMode === "attendance") {
+          const res = await fetch(
+            `/api/camera/playback-status?camera_id=${encodeURIComponent(activeCameraId)}`
+          );
+          if (res.ok) {
+            const data = await res.json();
+            if (isMounted && data?.playing) {
+              setSessionActive(true);
+            }
+          }
+        }
+      } catch {
+        // Non-blocking sync
+      }
+    }
+
+    syncBackendSession();
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedClass, monitoringMode]);
 
   // Poll live behavior telemetry, alerts, and unknown faces
   useEffect(() => {
@@ -673,21 +788,39 @@ export default function LiveMonitoringPage() {
 
             for (const [key, data] of Object.entries(studentsMap)) {
               const lookupKey = data.student_id || key;
+              const isAlerted = data.current_state === "ALERTED";
+              const isPhoneDetected =
+                !!data.phone_detected ||
+                data.current_state === "POSSIBLE_PHONE_USAGE" ||
+                (data.accumulated_phone_duration || 0) >= 5.0;
+              const isSleepDetected =
+                !!data.sleeping_detected ||
+                data.current_state === "POSSIBLE_SLEEPING" ||
+                (data.accumulated_sleeping_duration || 0) >= 10.0;
+              const computedStatus = isSleepDetected
+                ? "SLEEPING"
+                : isPhoneDetected
+                ? "PHONE_USAGE"
+                : isAlerted
+                ? "ALERT"
+                : "ALERT";
+              const computedAttention =
+                data.engagement?.attention_score ??
+                data.engagement?.score ??
+                (isPhoneDetected ? 40 : isSleepDetected ? 20 : 94);
+
               if (next[lookupKey]) {
                 next[lookupKey] = {
                   ...next[lookupKey],
-                  status: data.current_state === "ALERTED"
-                    ? (data.accumulated_sleeping_duration >= 10.0 ? "SLEEPING" : "PHONE_USAGE")
-                    : data.current_state === "POSSIBLE_SLEEPING" ? "SLEEPING"
-                    : data.current_state === "POSSIBLE_PHONE_USAGE" ? "PHONE_USAGE"
-                    : "ALERT",
+                  status: computedStatus,
                   current_state: data.current_state,
+                  attentionScore: Math.round(computedAttention),
                   posture: data.posture || next[lookupKey].posture,
                   gaze: data.gaze || next[lookupKey].gaze,
                   pitch: data.pitch,
                   yaw: data.yaw,
-                  phoneDetected: !!data.phone_detected,
-                  sleepingDetected: !!data.sleeping_detected,
+                  phoneDetected: isPhoneDetected,
+                  sleepingDetected: isSleepDetected,
                   accumulated_phone_duration: data.accumulated_phone_duration || 0,
                   accumulated_sleeping_duration: data.accumulated_sleeping_duration || 0,
                   evidence_duration: data.evidence_duration || 0,
@@ -702,16 +835,16 @@ export default function LiveMonitoringPage() {
                   usn: key,
                   name: data.student_name || `Track ${data.track_id || key}`,
                   section: selectedClass?.section || "A",
-                  status: data.current_state === "ALERTED" ? "PHONE_USAGE" : "ALERT",
+                  status: computedStatus,
                   current_state: data.current_state,
-                  attentionScore: 85,
+                  attentionScore: Math.round(computedAttention),
                   observationCount: data.observation_count || 1,
                   posture: data.posture || "Upright",
                   gaze: data.gaze || "Facing Front",
                   pitch: data.pitch || 0,
                   yaw: data.yaw || 0,
-                  phoneDetected: !!data.phone_detected,
-                  sleepingDetected: !!data.sleeping_detected,
+                  phoneDetected: isPhoneDetected,
+                  sleepingDetected: isSleepDetected,
                   accumulated_phone_duration: data.accumulated_phone_duration || 0,
                   accumulated_sleeping_duration: data.accumulated_sleeping_duration || 0,
                   evidence_duration: data.evidence_duration || 0,
@@ -737,22 +870,43 @@ export default function LiveMonitoringPage() {
           : Array.isArray(alertsRes)
           ? alertsRes
           : [];
-        if (isMounted && alertList.length > 0) {
-          const mappedAlerts: LiveBehaviorAlert[] = alertList.map((a: any) => ({
-            id: a.id,
-            type: a.title?.toLowerCase().includes("sleep") || a.title?.toLowerCase().includes("inactive")
-              ? "POSSIBLE_SLEEPING_POSTURE"
-              : "PHONE_USAGE",
-            studentId: a.studentUsn || a.studentId || "UNRECOGNIZED",
-            studentName: a.studentName || (a.studentId ? "Identified Student" : "Unidentified Person"),
-            title: a.title,
-            description: a.description || "",
-            confidence: a.confidence || 0.85,
-            duration: a.duration || 5,
-            time: a.createdAt ? new Date(a.createdAt).toLocaleTimeString() : "Recent",
-            status: a.status || "ACTIVE",
-          }));
-          setBehavioralAlerts(mappedAlerts);
+        if (isMounted) {
+          const mappedAlerts: LiveBehaviorAlert[] = alertList.map((a: any) => {
+            const isSleep =
+              a.title?.toLowerCase().includes("sleep") ||
+              a.description?.toLowerCase().includes("sleep");
+            const rawTrackId = a.metadata?.trackId || a.trackId || "";
+            const digits = (a.title + " " + rawTrackId).match(/P-\d+|\b\d+\b/);
+            const anonTrackRef = digits
+              ? (digits[0].startsWith("P-") ? `Track ${digits[0]}` : `Track P-${digits[0].padStart(3, "0")}`)
+              : "Track P-001";
+
+            return {
+              id: a.id,
+              type: isSleep ? "PROBABLE_SLEEPING" : "PHONE_USAGE",
+              trackRef: anonTrackRef,
+              studentId: isSleep ? null : (a.studentUsn || a.studentId || null),
+              studentName: isSleep ? anonTrackRef : (a.studentName || anonTrackRef),
+              title: isSleep ? `Probable Sleeping — ${anonTrackRef}` : a.title,
+              description: a.description || "",
+              confidence: a.confidence || 0.90,
+              duration: a.duration || (isSleep ? 30 : 5),
+              time: a.createdAt ? new Date(a.createdAt).toLocaleTimeString() : "Recent",
+              status: a.status || "ACTIVE",
+            };
+          });
+
+          // Deduplicate alerts by type + trackRef to prevent UI duplicate inflation
+          const uniqueAlerts: LiveBehaviorAlert[] = [];
+          const seen = new Set<string>();
+          for (const al of mappedAlerts) {
+            const key = `${al.type}_${al.trackRef}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              uniqueAlerts.push(al);
+            }
+          }
+          setBehavioralAlerts(uniqueAlerts);
         }
       } catch (err) {
         // alerts poll note
@@ -772,6 +926,24 @@ export default function LiveMonitoringPage() {
           const unresolved = unkList.filter((u: any) => !u.is_resolved);
           setPendingUnknownFaces(unresolved);
           setUnknownFaceClusters(new Set(unresolved.map((u: any) => u.cluster_id || `unk_${u.id}`)));
+
+          if (unresolved.length > 0) {
+            setAttendanceEvents((prev) => {
+              const existingIds = new Set(prev.map((e) => e.studentId));
+              const newUnknownEvents: LiveAttendanceEvent[] = unresolved
+                .filter((u: any) => !existingIds.has(u.cluster_id || `unk_${u.id}`))
+                .map((u: any) => ({
+                  id: `unk_${u.id}`,
+                  type: "UNKNOWN_PERSON",
+                  studentId: u.cluster_id ? `Track ${u.cluster_id}` : `Track ${u.id}`,
+                  studentName: "UNKNOWN",
+                  faceImageUrl: u.preview_image || u.image_path || u.thumbnail || undefined,
+                  confidence: u.quality_score ? u.quality_score / 100 : 0.85,
+                  time: u.detected_at ? new Date(u.detected_at).toLocaleTimeString() : new Date().toLocaleTimeString(),
+                }));
+              return [...newUnknownEvents, ...prev].slice(0, 50);
+            });
+          }
         }
       } catch (err) {
         // unknown faces poll note
@@ -800,33 +972,55 @@ export default function LiveMonitoringPage() {
     return all.filter((s) => s.section === selectedClass.section);
   }, [studentBehaviors, selectedClass]);
 
-  // Physical attendees in classroom
-  const inClassUsns = useMemo(() => {
-    return new Set(sectionStudents.slice(0, 18).map((s) => s.usn));
-  }, [sectionStudents]);
+  // Verified present student USNs from live recognition and manual check-ins
+  const verifiedPresentUsns = useMemo(() => {
+    const set = new Set<string>();
+    attendanceEvents.forEach((e) => {
+      if ((e.type === "ATTENDANCE_DETECTED" || e.type === "MANUAL_CHECKIN") && e.studentId) {
+        if (!manualAbsentUsns.has(e.studentId)) {
+          set.add(e.studentId.toUpperCase());
+        }
+      }
+    });
+    manualPresentUsns.forEach((usn) => set.add(usn.toUpperCase()));
+    return set;
+  }, [attendanceEvents, manualAbsentUsns, manualPresentUsns]);
+
+  // Attendance verification logic: strictly only enrolled students recognized or explicitly checked-in
+  const isStudentPresent = useCallback((usn: string) => {
+    if (!usn) return false;
+    if (manualAbsentUsns.has(usn)) return false;
+    return verifiedPresentUsns.has(usn.toUpperCase());
+  }, [manualAbsentUsns, verifiedPresentUsns]);
 
   const inClassStudents = useMemo(() => {
-    return sectionStudents.filter((s) => inClassUsns.has(s.usn));
-  }, [sectionStudents, inClassUsns]);
+    if (monitoringMode === "behavior") {
+      const activeOrTracked = sectionStudents.filter(
+        (s) =>
+          (s.observationCount || 0) > 0 ||
+          s.usn.startsWith("TRACK") ||
+          s.usn.startsWith("TRK-") ||
+          s.status === "PHONE_USAGE" ||
+          s.status === "SLEEPING" ||
+          s.status === "ALERT" ||
+          s.current_state === "NORMAL_ACTIVITY"
+      );
+      return activeOrTracked.length > 0 ? activeOrTracked : sectionStudents;
+    }
+    return sectionStudents.filter((s) => isStudentPresent(s.usn));
+  }, [sectionStudents, isStudentPresent, monitoringMode]);
 
   const absentStudents = useMemo(() => {
-    return sectionStudents.filter((s) => !inClassUsns.has(s.usn));
-  }, [sectionStudents, inClassUsns]);
-
-  // Attendance verification logic (independent of behavioral states)
-  const isStudentPresent = (usn: string) => {
-    if (manualAbsentUsns.has(usn)) return false;
-    if (manualPresentUsns.has(usn)) return true;
-    return inClassUsns.has(usn);
-  };
+    return sectionStudents.filter((s) => !isStudentPresent(s.usn));
+  }, [sectionStudents, isStudentPresent]);
 
   const attendancePresentList = useMemo(() => {
     return sectionStudents.filter((s) => isStudentPresent(s.usn));
-  }, [sectionStudents, manualAbsentUsns, manualPresentUsns, inClassUsns]);
+  }, [sectionStudents, isStudentPresent]);
 
   const attendanceAbsentList = useMemo(() => {
     return sectionStudents.filter((s) => !isStudentPresent(s.usn));
-  }, [sectionStudents, manualAbsentUsns, manualPresentUsns, inClassUsns]);
+  }, [sectionStudents, isStudentPresent]);
 
   const displayedAttendanceStudents = useMemo(() => {
     let list = sectionStudents;
@@ -841,7 +1035,7 @@ export default function LiveMonitoringPage() {
     return list.filter((s) => s.name.toLowerCase().includes(q) || s.usn.toLowerCase().includes(q));
   }, [sectionStudents, attendancePresentList, attendanceAbsentList, attendanceRosterFilter, attendanceSearch]);
 
-  const handleToggleStudentAttendance = (usn: string) => {
+  const handleToggleStudentAttendance = useCallback((usn: string) => {
     const currentlyPresent = isStudentPresent(usn);
     if (currentlyPresent) {
       setManualPresentUsns((prev) => {
@@ -871,7 +1065,7 @@ export default function LiveMonitoringPage() {
       setControlToast(`Marked ${st?.name || usn} as PRESENT (Verified)`);
     }
     setTimeout(() => setControlToast(null), 2500);
-  };
+  }, [isStudentPresent, sectionStudents]);
 
   const handleExportAttendance = () => {
     const rows = [
@@ -904,11 +1098,32 @@ export default function LiveMonitoringPage() {
   const displayedTrackedStudents = useMemo(() => {
     let list = inClassStudents;
     if (behaviorTelemetryFilter === "FLAGGED") {
-      list = inClassStudents.filter((s) => s.status === "PHONE_USAGE" || s.status === "SLEEPING" || s.current_state === "ALERTED");
+      list = inClassStudents.filter(
+        (s) =>
+          s.status === "PHONE_USAGE" ||
+          s.status === "SLEEPING" ||
+          s.phoneDetected ||
+          s.sleepingDetected ||
+          s.current_state === "ALERTED" ||
+          s.current_state === "POSSIBLE_PHONE_USAGE" ||
+          s.current_state === "POSSIBLE_SLEEPING" ||
+          (s.accumulated_phone_duration || 0) >= 5.0 ||
+          (s.accumulated_sleeping_duration || 0) >= 10.0
+      );
     } else if (behaviorTelemetryFilter === "ALERT") {
-      list = inClassStudents.filter((s) => s.status === "ALERT" || s.current_state === "NORMAL");
+      list = inClassStudents.filter(
+        (s) =>
+          s.status === "ALERT" ||
+          s.current_state === "NORMAL" ||
+          s.current_state === "NORMAL_ACTIVITY"
+      );
     } else if (behaviorTelemetryFilter === "INSUFFICIENT") {
-      list = inClassStudents.filter((s) => s.status === "INSUFFICIENT_DATA" || s.current_state === "INSUFFICIENT_VISUAL_EVIDENCE");
+      list = inClassStudents.filter(
+        (s) =>
+          s.status === "INSUFFICIENT_DATA" ||
+          s.current_state === "INSUFFICIENT_VISUAL_EVIDENCE" ||
+          s.current_state === "TRACK_LOST"
+      );
     }
 
     if (!behaviorSearch.trim()) return list;
@@ -941,27 +1156,46 @@ export default function LiveMonitoringPage() {
     if (!selectedClass) return;
     setLoading(true);
     const activeCameraId = selectedClass.cameraId;
+    const isBehavior = monitoringMode === "behavior";
+    const startUrl = isBehavior
+      ? "/api/v1/behavior/session/start"
+      : "/api/v1/attendance/session/start";
+    const stopUrl = isBehavior
+      ? "/api/v1/behavior/session/stop"
+      : "/api/v1/attendance/session/stop";
 
     try {
       if (!sessionActive) {
-        // Trigger start session endpoint (handled gracefully if backend is offline on Vercel)
-        await fetch(`/api/v1/attendance/session/start`, {
+        // Trigger start session endpoint
+        const res = await fetch(startUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": "sc-internal-service-key-dev-only",
+          },
           body: JSON.stringify({
             camera_id: activeCameraId,
-            class_id: selectedClass.id,
+            class_id: selectedClass.name || selectedClass.id,
             source_path: "footage",
+            enrolled_usns: sectionStudents.map((s) => s.usn).filter(Boolean),
           }),
         }).catch(() => null);
 
+        if (res && !res.ok) {
+          console.warn("Session start response not OK:", res.status);
+        }
+
+        setSessionDuration(0);
         setSessionActive(true);
         setStreamKey(Date.now());
-        setControlToast("Monitoring session started");
+        setControlToast(isBehavior ? "Behavioral monitoring session started" : "Attendance session started");
       } else {
-        await fetch(`/api/v1/attendance/session/stop`, {
+        await fetch(stopUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": "sc-internal-service-key-dev-only",
+          },
           body: JSON.stringify({ camera_id: activeCameraId }),
         }).catch(() => null);
 
@@ -1150,8 +1384,8 @@ export default function LiveMonitoringPage() {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {CLASSROOM_OPTIONS.map((cls) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {classroomOptions.map((cls) => (
               <GlassCard
                 key={cls.id}
                 className="hover:border-ai-blue/50 transition-all cursor-pointer group flex flex-col justify-between"
@@ -1250,6 +1484,16 @@ export default function LiveMonitoringPage() {
               Change Class
             </Button>
           </div>
+
+          {selectedClass.enrolledCount === 0 && (
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-3 text-amber-300">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-amber-400" />
+              <div>
+                <p className="text-xs font-bold">Enrollment must be completed first — no confirmed student identities for this session.</p>
+                <p className="text-[11px] text-amber-400/80 mt-0.5">Automated face recognition and attendance confirmation are disabled until confirmed student biometrics are enrolled.</p>
+              </div>
+            </div>
+          )}
 
           <div className="text-center max-w-xl mx-auto py-2">
             <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 uppercase tracking-wider">
@@ -1463,6 +1707,16 @@ export default function LiveMonitoringPage() {
               </button>
             </div>
           </div>
+
+          {selectedClass.enrolledCount === 0 && (
+            <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-3 text-amber-300">
+              <AlertTriangle className="w-5 h-5 shrink-0 text-amber-400" />
+              <div>
+                <p className="text-xs font-bold">Enrollment must be completed first — no confirmed student identities for this session.</p>
+                <p className="text-[11px] text-amber-400/80 mt-0.5">Automated face recognition and attendance confirmation are disabled until confirmed student biometrics are enrolled.</p>
+              </div>
+            </div>
+          )}
 
           {/* Main 2-Column Monitoring Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -1888,15 +2142,23 @@ export default function LiveMonitoringPage() {
                       >
                         <div className="flex items-start gap-3">
                           <div className="w-14 h-14 rounded-lg bg-black/60 border border-white/10 overflow-hidden flex-shrink-0 flex items-center justify-center">
-                            {face.preview_image || face.image_path ? (
-                              <img
-                                src={face.preview_image || face.image_path || ""}
-                                alt="Unknown observation"
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <UserX className="w-6 h-6 text-text-muted" />
-                            )}
+                            {(() => {
+                              const imgRaw = (face.preview_image || face.image_path || "").trim();
+                              if (!imgRaw) return <UserX className="w-6 h-6 text-text-muted" />;
+                              const finalSrc = imgRaw.startsWith("http://") || imgRaw.startsWith("https://") || imgRaw.startsWith("/")
+                                ? imgRaw
+                                : `/${imgRaw}`;
+                              return (
+                                <img
+                                  src={finalSrc}
+                                  alt="Unknown observation"
+                                  className="w-full h-full object-cover"
+                                  onError={(e) => {
+                                    (e.target as HTMLElement).style.display = "none";
+                                  }}
+                                />
+                              );
+                            })()}
                           </div>
                           <div className="min-w-0 flex-1">
                             <span className="text-[11px] font-mono text-amber-400 font-bold block truncate">
@@ -1978,9 +2240,16 @@ export default function LiveMonitoringPage() {
                       <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
                       <h3 className="text-xs font-semibold text-white">Attendance Verification Log</h3>
                     </div>
-                    <span className="text-[10px] text-emerald-400 font-mono font-bold">
-                      {attendanceEvents.length} Verified
-                    </span>
+                    <div className="flex items-center gap-2 text-[10px] font-mono font-bold">
+                      <span className="text-emerald-400">
+                        {attendanceEvents.filter((e) => e.type !== "UNKNOWN_PERSON").length} Verified
+                      </span>
+                      {pendingUnknownFaces.length > 0 && (
+                        <span className="text-amber-400">
+                          · {pendingUnknownFaces.length} Unknown
+                        </span>
+                      )}
+                    </div>
                   </div>
 
                   {/* Filter tabs */}
@@ -1992,7 +2261,9 @@ export default function LiveMonitoringPage() {
                         className={cn(
                           "flex-1 px-2 py-1 rounded text-[10px] font-semibold transition-all",
                           attendanceFilter === tab
-                            ? "bg-emerald-500 text-black font-bold"
+                            ? tab === "UNKNOWN"
+                              ? "bg-amber-500 text-black font-bold"
+                              : "bg-emerald-500 text-black font-bold"
                             : "text-text-muted hover:text-white",
                         )}
                       >
@@ -2013,22 +2284,66 @@ export default function LiveMonitoringPage() {
                           if (attendanceFilter === "UNKNOWN") return e.type === "UNKNOWN_PERSON";
                           return true;
                         })
-                        .map((evt) => (
-                          <div
-                            key={evt.id}
-                            className="p-2 rounded-lg border border-emerald-500/20 bg-emerald-500/5 text-xs flex items-start justify-between gap-2"
-                          >
-                            <div>
-                              <p className="font-bold text-white text-[11px]">
-                                {evt.type === "UNKNOWN_PERSON" ? "Unknown Visitor Detected" : evt.studentName || evt.studentId}
-                              </p>
-                              <p className="text-[10px] text-text-muted font-mono mt-0.5">
-                                {evt.studentId} · {Math.round(evt.confidence * 100)}% Match
-                              </p>
+                        .map((evt) => {
+                          const isUnk = evt.type === "UNKNOWN_PERSON";
+                          return (
+                            <div
+                              key={evt.id}
+                              className={cn(
+                                "p-2 rounded-lg border text-xs flex items-start justify-between gap-2 transition-all",
+                                isUnk
+                                  ? "border-amber-500/30 bg-amber-500/10"
+                                  : "border-emerald-500/20 bg-emerald-500/5",
+                              )}
+                            >
+                              <div className="flex items-start gap-2.5 min-w-0">
+                                {isUnk ? (
+                                  evt.faceImageUrl ? (
+                                    <img
+                                      src={evt.faceImageUrl.startsWith('http') || evt.faceImageUrl.startsWith('/') ? evt.faceImageUrl : `/${evt.faceImageUrl}`}
+                                      alt="Unknown Face"
+                                      className="w-10 h-10 rounded-md object-cover border border-amber-500/40 bg-black/40 shrink-0"
+                                      onError={(e) => {
+                                        (e.target as HTMLElement).style.display = 'none';
+                                      }}
+                                    />
+                                  ) : (
+                                    <div className="w-10 h-10 rounded-md bg-amber-500/10 border border-amber-500/30 flex flex-col items-center justify-center shrink-0 p-0.5">
+                                      <ScanFace className="w-3.5 h-3.5 text-amber-400 mb-0.5" />
+                                      <span className="text-[7px] text-amber-300 text-center leading-none">No face image</span>
+                                    </div>
+                                  )
+                                ) : (
+                                  <div className="w-6 h-6 rounded bg-emerald-500/20 flex items-center justify-center shrink-0 mt-0.5">
+                                    <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                                  </div>
+                                )}
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-1.5">
+                                    <p className={cn("font-bold text-[11px] truncate", isUnk ? "text-amber-300" : "text-white")}>
+                                      {isUnk ? "UNKNOWN" : (evt.studentName || evt.studentId)}
+                                    </p>
+                                    {isUnk ? (
+                                      <span className="text-[8px] px-1 py-0.2 rounded font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase">
+                                        Unconfirmed
+                                      </span>
+                                    ) : (
+                                      <span className="text-[8px] px-1 py-0.2 rounded font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase">
+                                        Verified
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-[10px] text-text-muted font-mono mt-0.5 truncate">
+                                    {evt.studentId} · {isUnk ? "Visitor / Roster Mismatch" : `${Math.round(evt.confidence * 100)}% Match`}
+                                  </p>
+                                </div>
+                              </div>
+                              <span className={cn("text-[10px] font-mono shrink-0", isUnk ? "text-amber-400" : "text-emerald-400")}>
+                                {evt.time}
+                              </span>
                             </div>
-                            <span className="text-[10px] font-mono text-emerald-400 shrink-0">{evt.time}</span>
-                          </div>
-                        ))
+                          );
+                        })
                     )}
                   </div>
                 </GlassCard>
@@ -2044,9 +2359,21 @@ export default function LiveMonitoringPage() {
                       <Bell className="w-3.5 h-3.5 text-ai-blue" />
                       <h3 className="text-xs font-semibold text-white">Behavioral Alerts & History</h3>
                     </div>
-                    <span className="text-[10px] text-ai-blue font-mono font-bold">
-                      {behavioralAlerts.length} Events
-                    </span>
+                    {(() => {
+                      const filteredAlerts = behavioralAlerts.filter((a) => {
+                        if (behaviorEventFilter === "PHONE") return a.type === "PHONE_USAGE";
+                        if (behaviorEventFilter === "SLEEP")
+                          return a.type === "PROBABLE_SLEEPING" || a.type === "POSSIBLE_SLEEPING_POSTURE" || a.type === "SLEEPING";
+                        return true;
+                      });
+                      return (
+                        <>
+                          <span className="text-[10px] text-ai-blue font-mono font-bold">
+                            {filteredAlerts.length} Events
+                          </span>
+                        </>
+                      );
+                    })()}
                   </div>
 
                   {/* Filter tabs */}
@@ -2068,42 +2395,68 @@ export default function LiveMonitoringPage() {
                   </div>
 
                   <div className="overflow-y-auto max-h-[520px] p-2 space-y-1.5">
-                    {behavioralAlerts.length === 0 ? (
-                      <div className="text-center py-12 text-text-muted text-xs">
-                        {sessionActive ? "Evaluating behavioral streams across frames..." : "Session is currently standby."}
-                      </div>
-                    ) : (
-                      behavioralAlerts
-                        .filter((a) => {
-                          if (behaviorEventFilter === "PHONE") return a.type === "PHONE_USAGE";
-                          if (behaviorEventFilter === "SLEEP") return a.type === "POSSIBLE_SLEEPING_POSTURE" || a.type === "SLEEPING";
-                          return true;
-                        })
-                        .map((alert) => (
+                    {(() => {
+                      const filteredAlerts = behavioralAlerts.filter((a) => {
+                        if (behaviorEventFilter === "PHONE") return a.type === "PHONE_USAGE";
+                        if (behaviorEventFilter === "SLEEP")
+                          return a.type === "PROBABLE_SLEEPING" || a.type === "POSSIBLE_SLEEPING_POSTURE" || a.type === "SLEEPING";
+                        return true;
+                      });
+
+                      if (filteredAlerts.length === 0) {
+                        return (
+                          <div className="text-center py-12 text-text-muted text-xs">
+                            {behaviorEventFilter === "SLEEP"
+                              ? "No probable sleeping events detected."
+                              : behaviorEventFilter === "PHONE"
+                              ? "No mobile phone usage detected."
+                              : sessionActive
+                              ? "Evaluating behavioral streams across frames..."
+                              : "Session is currently standby."}
+                          </div>
+                        );
+                      }
+
+                      return filteredAlerts.map((alert) => {
+                        const isSleep =
+                          alert.type === "PROBABLE_SLEEPING" ||
+                          alert.type === "POSSIBLE_SLEEPING_POSTURE" ||
+                          alert.type === "SLEEPING";
+
+                        return (
                           <div
                             key={alert.id}
                             className={cn(
                               "p-2.5 rounded-lg border text-xs flex flex-col gap-1 transition-all",
-                              alert.type === "PHONE_USAGE"
-                                ? "bg-amber-500/10 border-amber-500/30"
-                                : "bg-red-500/10 border-red-500/30",
+                              isSleep
+                                ? "bg-red-500/10 border-red-500/30"
+                                : "bg-amber-500/10 border-amber-500/30",
                             )}
                           >
                             <div className="flex items-center justify-between">
                               <span
                                 className={cn(
                                   "font-bold text-[11px]",
-                                  alert.type === "PHONE_USAGE" ? "text-amber-400" : "text-red-400",
+                                  isSleep ? "text-red-400" : "text-amber-400",
                                 )}
                               >
-                                {alert.type === "PHONE_USAGE" ? "📱 Phone Usage" : "💤 Possible Sleeping Posture"}
+                                {isSleep ? "💤 Probable Sleeping" : "📱 Phone Usage"}
                               </span>
                               <span className="text-[10px] font-mono text-text-muted">{alert.time}</span>
                             </div>
 
-                            <p className="text-[11px] text-white font-medium">
-                              {alert.studentName} ({alert.studentId})
-                            </p>
+                            {/* Phase 3 UI Rule: No student names, photos, USNs, or UNRECOGNIZED labels in sleeping alerts */}
+                            {isSleep ? (
+                              <p className="text-[11px] text-white font-semibold">
+                                {alert.title.includes("—") ? alert.title : `Probable Sleeping — ${alert.trackRef || "Track P-014"}`}
+                              </p>
+                            ) : (
+                              <p className="text-[11px] text-white font-medium">
+                                {alert.studentName || alert.trackRef || "Track P-001"}
+                                {alert.studentId && !alert.studentId.startsWith("TRK-") ? ` (${alert.studentId})` : ""}
+                              </p>
+                            )}
+
                             <p className="text-[10px] text-text-muted">
                               Duration: <span className="font-mono text-white font-semibold">{alert.duration}s</span> · Conf: {Math.round(alert.confidence * 100)}%
                             </p>
@@ -2128,8 +2481,9 @@ export default function LiveMonitoringPage() {
                               </div>
                             </div>
                           </div>
-                        ))
-                    )}
+                        );
+                      });
+                    })()}
                   </div>
                 </GlassCard>
               )}
@@ -2251,7 +2605,7 @@ export default function LiveMonitoringPage() {
                       <span>Ready to assign to: {selectedStudentForAssign.fullName} ({selectedStudentForAssign.usn || selectedStudentForAssign.rollNumber})</span>
                     </p>
                     <p className="text-[11px] text-emerald-300/80">
-                      This observation's ArcFace embedding will be durably associated with this student's recognition profile in FAISS and PostgreSQL. Attendance will NOT be automatically marked.
+                      This observation&apos;s ArcFace embedding will be durably associated with this student&apos;s recognition profile in FAISS and PostgreSQL. Attendance will NOT be automatically marked.
                     </p>
                   </div>
                 )}

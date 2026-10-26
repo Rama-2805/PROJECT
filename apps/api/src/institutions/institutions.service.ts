@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
-import { CreateInstitutionDto, UpdateInstitutionDto } from "./institutions.dto";
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateInstitutionDto, UpdateInstitutionDto } from './institutions.dto';
 
 @Injectable()
 export class InstitutionsService {
@@ -17,7 +17,7 @@ export class InstitutionsService {
       where: { id },
       include: { _count: { select: { users: true } } },
     });
-    if (!inst) throw new NotFoundException("Institution not found");
+    if (!inst) throw new NotFoundException('Institution not found');
     return inst;
   }
 
@@ -27,7 +27,7 @@ export class InstitutionsService {
 
   async update(id: string, dto: UpdateInstitutionDto) {
     const inst = await this.prisma.institution.findUnique({ where: { id } });
-    if (!inst) throw new NotFoundException("Institution not found");
+    if (!inst) throw new NotFoundException('Institution not found');
     return this.prisma.institution.update({ where: { id }, data: dto });
   }
 }

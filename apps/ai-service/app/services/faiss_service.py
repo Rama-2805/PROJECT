@@ -35,11 +35,14 @@ class FaissService:
 
     def __init__(self):
         self.dimension = 512
-        # Resolve project root (5 levels up from faiss_service.py)
-        project_root = Path(__file__).resolve().parents[4]
-        if (project_root / "vectors").exists():
-            self.index_path = (project_root / "vectors" / "face_index.faiss").resolve()
-            self.metadata_path = (project_root / "vectors" / "metadata.json").resolve()
+        # Resolve project root safely
+        parents = Path(__file__).resolve().parents
+        if len(parents) > 4 and (parents[4] / "vectors").exists():
+            self.index_path = (parents[4] / "vectors" / "face_index.faiss").resolve()
+            self.metadata_path = (parents[4] / "vectors" / "metadata.json").resolve()
+        elif len(parents) > 2 and (parents[2] / "vectors").exists():
+            self.index_path = (parents[2] / "vectors" / "face_index.faiss").resolve()
+            self.metadata_path = (parents[2] / "vectors" / "metadata.json").resolve()
         else:
             self.index_path = Path(settings.face_index_path).resolve()
             self.metadata_path = Path(settings.metadata_path).resolve()
@@ -131,20 +134,60 @@ class FaissService:
                 logger.error(f"Failed to atomically save FAISS index: {e}")
                 raise e
 
-    def add_student(self, student_usn: str, embedding: np.ndarray) -> None:
-        """Add a student's average embedding to the FAISS index.
+    def add_student(
+        self,
+        student_usn: str,
+        embedding: np.ndarray,
+        check_duplicate: bool = True,
+        dup_threshold: float = 0.95
+    ) -> bool:
+        """Add a student's average embedding to the FAISS index with normalization and duplicate check.
 
         Args:
             student_usn: Student USN
             embedding: 512-dimensional normalized numpy embedding vector
+            check_duplicate: Reject vector if cosine similarity to existing vector exceeds dup_threshold
+            dup_threshold: Cosine similarity duplicate rejection threshold
+
+        Returns:
+            True if vector was added, False if rejected (duplicate, NaN, or invalid).
         """
+        if embedding is None:
+            return False
+
         with self._lock:
-            vector = np.array([embedding], dtype=np.float32)
+            vec = np.array(embedding, dtype=np.float32).flatten()
+            if vec.shape[0] != self.dimension or np.isnan(vec).any() or np.isinf(vec).any():
+                logger.warning(f"Invalid embedding dimensions ({vec.shape}) or values for {student_usn}")
+                return False
+
+            norm = float(np.linalg.norm(vec))
+            if norm < 1e-6:
+                logger.warning(f"Embedding norm too small ({norm}) for {student_usn}")
+                return False
+            vec = (vec / norm).astype(np.float32)
+
+            target_usn = student_usn.strip().upper()
+
+            # Prevent duplicate vectors for the same student in FAISS
+            if check_duplicate and self.index.ntotal > 0:
+                query = np.array([vec], dtype=np.float32)
+                distances, indices = self.index.search(query, 1)
+                best_sim = float(distances[0][0])
+                best_idx = int(indices[0][0])
+                if best_idx != -1 and best_sim >= dup_threshold:
+                    matched_usn = self.metadata.get(str(best_idx), "")
+                    if matched_usn.strip().upper() == target_usn:
+                        logger.info(f"Duplicate embedding rejected for {target_usn} (similarity {best_sim:.3f} >= {dup_threshold})")
+                        return False
+
+            vector = np.array([vec], dtype=np.float32)
             current_id = self.index.ntotal
             self.index.add(vector)
-            self.metadata[str(current_id)] = student_usn
+            self.metadata[str(current_id)] = target_usn
             self.save_index()
-            logger.info(f"Added embedding for student {student_usn} to FAISS index at ID {current_id}.")
+            logger.info(f"Added embedding for student {target_usn} to FAISS index at ID {current_id}.")
+            return True
 
     def add_profile_sample(
         self,
@@ -289,7 +332,7 @@ class FaissService:
 
         if self.index is None or self.index.ntotal == 0:
             duration_ms = (time.perf_counter() - start_time) * 1000.0
-            logger.info(f"Match: None SearchTime={duration_ms:.1f}ms")
+            logger.debug(f"Match: None SearchTime={duration_ms:.1f}ms")
             return None
 
         # Format input query vector
@@ -303,7 +346,8 @@ class FaissService:
         # If allowed_usns filter is provided, query top-K candidates to find the best match within the whitelist
         if allowed_usns:
             norm_allowed = {u.strip().upper() for u in allowed_usns if u}
-            search_k = min(15, self.index.ntotal)
+            # Scalable candidate retrieval based on whitelist size and total index size (replaces hardcoded 15)
+            search_k = min(max(len(norm_allowed) * 5, 50, self.index.ntotal), self.index.ntotal)
             distances, indices = self.index.search(query, search_k)
             duration_ms = (time.perf_counter() - start_time) * 1000.0
 
@@ -317,7 +361,7 @@ class FaissService:
                     logger.info(f"Match (Section-Filtered): USN={student_usn} Similarity={cand_sim:.3f} SearchTime={duration_ms:.1f}ms")
                     return student_usn, cand_sim
 
-            logger.info(f"Match: None (No candidate in allowed section) SearchTime={duration_ms:.1f}ms")
+            logger.debug(f"Match: None (No candidate in allowed section) SearchTime={duration_ms:.1f}ms")
             return None
 
         # Standard unconstrained search for single nearest neighbor (k=1)
@@ -328,7 +372,7 @@ class FaissService:
 
         if best_idx == -1:
             duration_ms = (time.perf_counter() - start_time) * 1000.0
-            logger.info(f"Match: None SearchTime={duration_ms:.1f}ms")
+            logger.debug(f"Match: None SearchTime={duration_ms:.1f}ms")
             return None
 
         student_usn = self.metadata.get(str(best_idx))
@@ -338,16 +382,23 @@ class FaissService:
             logger.info(f"Match: USN={student_usn} Similarity={best_sim:.3f} SearchTime={duration_ms:.1f}ms")
             return student_usn, best_sim
 
-        logger.info(f"Match: None SearchTime={duration_ms:.1f}ms")
+        logger.debug(f"Match: None SearchTime={duration_ms:.1f}ms")
         return None
 
-    def search_top_k(self, embedding: np.ndarray, k: int = 3, threshold: float = 0.50) -> List[Tuple[str, float]]:
+    def search_top_k(
+        self,
+        embedding: np.ndarray,
+        k: int = 3,
+        threshold: float = 0.50,
+        allowed_usns: Optional[Set[str]] = None,
+    ) -> List[Tuple[str, float]]:
         """Search for top-K matching students in FAISS index for a given embedding.
 
         Args:
             embedding: 512-dimensional query embedding (normalized)
             k: Number of nearest neighbors to retrieve
             threshold: Minimum cosine similarity to accept
+            allowed_usns: Optional set of uppercase student USNs to filter search by (e.g. active session roster).
 
         Returns:
             List of (student_usn, similarity_score) sorted descending by similarity
@@ -359,6 +410,24 @@ class FaissService:
         norm = np.linalg.norm(query)
         if norm > 1e-6:
             query = query / norm
+
+        if allowed_usns:
+            norm_allowed = {u.strip().upper() for u in allowed_usns if u}
+            search_k = min(max(len(norm_allowed) * 5, 50, self.index.ntotal), self.index.ntotal)
+            distances, indices = self.index.search(query, search_k)
+            results = []
+            seen_usns = set()
+            for sim, idx in zip(distances[0], indices[0]):
+                if idx != -1 and float(sim) >= threshold:
+                    usn = self.metadata.get(str(int(idx)))
+                    if usn:
+                        u_clean = usn.strip().upper()
+                        if u_clean in norm_allowed and u_clean not in seen_usns:
+                            seen_usns.add(u_clean)
+                            results.append((usn, float(sim)))
+                            if len(results) >= k:
+                                break
+            return results
 
         actual_k = min(k, self.index.ntotal)
         if actual_k <= 0:
@@ -407,30 +476,40 @@ class FaissService:
             logger.info("FAISS index rebuild completed successfully.")
 
     def rebuild_from_postgres(self) -> int:
-        """Reconstruct the FAISS vector index directly from durable PostgreSQL FaceEmbedding records.
+        """Reconstruct the FAISS vector index directly from durable PostgreSQL/SQLite records.
 
-        Ensures that PostgreSQL is the true source of truth, and FAISS can be restored
-        or rebuilt at any time or upon service restart.
+        Uses the project's configured SQLAlchemy database engine with automatic fallback,
+        ensuring that database configuration is respected without direct raw psycopg2 calls.
         """
-        import psycopg2
         import json
-        logger.info("Rebuilding FAISS index from durable PostgreSQL FaceEmbedding records...")
-        
+        from sqlalchemy import text
+        from ..config.database import engine
+        logger.info("Rebuilding FAISS index from durable database FaceEmbedding records...")
+
         try:
-            conn = psycopg2.connect(settings.database_url)
-            cur = conn.cursor()
-            
-            cur.execute("""
-                SELECT s."rollNumber", s."studentId", s."usn", fe."embeddingVector"
-                FROM "FaceEmbedding" fe
-                JOIN "Student" s ON s.id = fe."studentId"
-                ORDER BY fe."createdAt" ASC
-            """)
-            rows = cur.fetchall()
-            cur.close()
-            conn.close()
-            
             enrolled_embeddings: List[Tuple[str, np.ndarray]] = []
+            with engine.connect() as conn:
+                try:
+                    result = conn.execute(text("""
+                        SELECT s."rollNumber", s."studentId", s."usn", fe."embeddingVector"
+                        FROM "FaceEmbedding" fe
+                        JOIN "Student" s ON s.id = fe."studentId"
+                        ORDER BY fe."createdAt" ASC
+                    """))
+                    rows = result.fetchall()
+                except Exception as pg_err:
+                    logger.debug(f"PostgreSQL FaceEmbedding query skipped ({pg_err}), trying SQLite fallback schema...")
+                    try:
+                        result = conn.execute(text("""
+                            SELECT s.usn, s.usn, s.usn, e.vector_path
+                            FROM embeddings e
+                            JOIN face_profiles fp ON fp.id = e.face_profile_id
+                            JOIN students s ON s.id = fp.student_id
+                        """))
+                        rows = result.fetchall()
+                    except Exception:
+                        rows = []
+
             for r_roll, r_sid, r_usn, r_vec in rows:
                 target_usn = r_roll or r_sid or r_usn
                 if not target_usn or not r_vec:
@@ -445,12 +524,12 @@ class FaissService:
                         enrolled_embeddings.append((target_usn.strip().upper(), arr))
                 except Exception as ex:
                     logger.debug(f"Skipping malformed embedding: {ex}")
-            
+
             self.rebuild_index(enrolled_embeddings)
-            logger.info(f"Reconstructed FAISS index with {len(enrolled_embeddings)} vectors from PostgreSQL.")
+            logger.info(f"Reconstructed FAISS index with {len(enrolled_embeddings)} vectors from database.")
             return len(enrolled_embeddings)
         except Exception as e:
-            logger.error(f"Failed to rebuild FAISS index from PostgreSQL: {e}")
+            logger.error(f"Failed to rebuild FAISS index from database: {e}")
             return 0
 
 

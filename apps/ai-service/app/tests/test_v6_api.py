@@ -9,6 +9,7 @@ from app.models.face_profile import FaceProfile
 from app.models.embedding import Embedding
 from app.models.unknown_face import UnknownFace
 from app.models.attendance import Attendance
+from app.config.settings import settings
 
 
 def test_enrollment_pipeline_api(client, db_session, monkeypatch):
@@ -55,7 +56,13 @@ def test_enrollment_pipeline_api(client, db_session, monkeypatch):
         lambda *args: ["img.jpg"],
     )
     import cv2
-    monkeypatch.setattr(cv2, "imread", lambda *args: np.zeros((112, 112, 3), dtype=np.uint8))
+    dummy_vec = np.ones(512, dtype=np.float32)
+    dummy_vec /= np.linalg.norm(dummy_vec)
+    monkeypatch.setattr(cv2, "imread", lambda *args: np.full((112, 112, 3), 128, dtype=np.uint8))
+    monkeypatch.setattr(
+        "app.services.embedding_service.embedding_service.generate_embedding",
+        lambda *args, **kwargs: dummy_vec,
+    )
     monkeypatch.setattr("app.services.faiss_service.faiss_service.add_student", lambda *args: None)
 
     # 2. Complete enrollment
@@ -97,12 +104,20 @@ def test_attendance_endpoints_api(client, monkeypatch):
         "class_id": "CSE_6A",
         "source_path": "0",
     }
-    response = client.post("/api/v1/attendance/start", json=start_payload)
+    response = client.post(
+        "/api/v1/attendance/start",
+        json=start_payload,
+        headers={"x-api-key": settings.internal_api_key},
+    )
     assert response.status_code == 200
     assert response.json()["status"] == "success"
 
     # 2. Stop loop
-    response = client.post("/api/v1/attendance/stop", json={"camera_id": "webcam"})
+    response = client.post(
+        "/api/v1/attendance/stop",
+        json={"camera_id": "webcam"},
+        headers={"x-api-key": settings.internal_api_key},
+    )
     assert response.status_code == 200
     assert response.json()["status"] == "success"
 

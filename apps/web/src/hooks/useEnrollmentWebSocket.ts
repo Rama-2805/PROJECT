@@ -48,6 +48,8 @@ export function useEnrollmentWebSocket({
     onEventRef.current = onEvent;
   }, [onEvent]);
 
+  const connectRef = useRef<() => void>(() => {});
+
   const connect = useCallback(() => {
     if (!mountedRef.current || !enabled) return;
 
@@ -82,7 +84,7 @@ export function useEnrollmentWebSocket({
         if (mountedRef.current && enabled) {
           // Reconnect after delay
           reconnectTimer.current = setTimeout(() => {
-            if (mountedRef.current) connect();
+            if (mountedRef.current) connectRef.current();
           }, reconnectDelay);
         }
       };
@@ -95,11 +97,15 @@ export function useEnrollmentWebSocket({
       console.debug("[EnrollmentWS] Failed to connect:", err);
       if (mountedRef.current && enabled) {
         reconnectTimer.current = setTimeout(() => {
-          if (mountedRef.current) connect();
+          if (mountedRef.current) connectRef.current();
         }, reconnectDelay);
       }
     }
   }, [enabled, reconnectDelay]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     mountedRef.current = true;

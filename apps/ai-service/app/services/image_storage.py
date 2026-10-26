@@ -193,15 +193,21 @@ class ImageStorageService:
         Args:
             student_usn: Student USN
         """
+        # Sanitize student USN against path traversal
+        safe_usn = "".join(c for c in student_usn if c.isalnum() or c in ("-", "_", "."))
+        if not safe_usn or safe_usn in (".", ".."):
+            logger.warning(f"Rejected invalid student USN in deletion: {student_usn}")
+            return
+
         # Delete enrollment files
-        student_folder = self.students_dir / student_usn
-        if student_folder.exists() and student_folder.is_dir():
+        student_folder = (self.students_dir / safe_usn).resolve()
+        if student_folder.parent == self.students_dir.resolve() and student_folder.exists() and student_folder.is_dir():
             shutil.rmtree(str(student_folder), ignore_errors=True)
             logger.info(f"Deleted student enrollment folder: {student_folder}")
 
         # Delete candidate files
-        student_cand_dir = self.candidates_dir / student_usn
-        if student_cand_dir.exists() and student_cand_dir.is_dir():
+        student_cand_dir = (self.candidates_dir / safe_usn).resolve()
+        if student_cand_dir.parent == self.candidates_dir.resolve() and student_cand_dir.exists() and student_cand_dir.is_dir():
             shutil.rmtree(str(student_cand_dir), ignore_errors=True)
             logger.info(f"Deleted student candidate folder: {student_cand_dir}")
 

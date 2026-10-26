@@ -15,7 +15,13 @@ import { CampusService } from './campus.service';
   namespace: '/campus',
   cors: { origin: '*', credentials: true },
 })
-export class CampusGateway implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy {
+export class CampusGateway
+  implements
+    OnGatewayInit,
+    OnGatewayConnection,
+    OnGatewayDisconnect,
+    OnModuleDestroy
+{
   @WebSocketServer() server: Server;
 
   private intervals: NodeJS.Timeout[] = [];
@@ -24,26 +30,32 @@ export class CampusGateway implements OnGatewayInit, OnGatewayConnection, OnGate
 
   afterInit() {
     // Broadcast campus updates every 10 seconds
-    this.intervals.push(setInterval(() => {
-      this.server.emit('CAMPUS_UPDATE', {
-        overview: this.campusService.getOverview(),
-        timestamp: new Date().toISOString(),
-      });
-    }, 10000));
+    this.intervals.push(
+      setInterval(() => {
+        this.server.emit('CAMPUS_UPDATE', {
+          overview: this.campusService.getOverview(),
+          timestamp: new Date().toISOString(),
+        });
+      }, 10000),
+    );
 
     // Broadcast random events every 5 seconds
-    this.intervals.push(setInterval(() => {
-      const event = this.campusService.generateEvent();
-      this.server.emit('ALERT_CREATED', event);
-    }, 5000));
+    this.intervals.push(
+      setInterval(() => {
+        const event = this.campusService.generateEvent();
+        this.server.emit('ALERT_CREATED', event);
+      }, 5000),
+    );
 
     // Broadcast occupancy updates every 15 seconds
-    this.intervals.push(setInterval(() => {
-      this.server.emit('OCCUPANCY_CHANGED', {
-        occupancy: this.campusService.getOccupancy(),
-        timestamp: new Date().toISOString(),
-      });
-    }, 15000));
+    this.intervals.push(
+      setInterval(() => {
+        this.server.emit('OCCUPANCY_CHANGED', {
+          occupancy: this.campusService.getOccupancy(),
+          timestamp: new Date().toISOString(),
+        });
+      }, 15000),
+    );
   }
 
   handleConnection(client: Socket) {

@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { Cloud, CheckCircle, XCircle } from "lucide-react";
 
 export default function LoginSuccessPage() {
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [errorMsg] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const searchParams = new URLSearchParams(window.location.search);
+    return searchParams.get("error") ? "Access Denied: Email not in database." : null;
+  });
 
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
@@ -12,7 +16,6 @@ export default function LoginSuccessPage() {
     const email = searchParams.get("email");
     
     if (error) {
-       setErrorMsg("Access Denied: Email not in database.");
        if (window.opener) {
            window.opener.postMessage({ type: 'login-error', error }, '*');
        }
@@ -22,9 +25,10 @@ export default function LoginSuccessPage() {
        }
     }
 
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       window.close();
     }, 1500);
+    return () => clearTimeout(timer);
   }, []);
 
   return (

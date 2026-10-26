@@ -6,6 +6,7 @@ import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils/cn";
 import { initializeUserStore, getUsers, createUser, updateUserPassword, hashPassword, type AppUser } from "@/lib/userStore";
+import { api } from "@/lib/api/client";
 import { X, ShieldAlert, ShieldCheck, Mail, Phone, Calendar, Search } from "lucide-react";
 
 const DEPARTMENTS = ["CSE", "ISE", "ECE", "EEE", "AIML", "CSE(AI)", "MECH", "CIVIL"];
@@ -20,6 +21,7 @@ interface HODUser {
 
 export default function HODPage() {
   const [hods, setHods] = useState<HODUser[]>([]);
+  const [availableDepts, setAvailableDepts] = useState<string[]>(DEPARTMENTS);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDept, setSelectedDept] = useState("");
   const [loading, setLoading] = useState(true);
@@ -41,15 +43,45 @@ export default function HODPage() {
   const [resetError, setResetError] = useState<string | null>(null);
   const [resetSuccess, setResetSuccess] = useState<string | null>(null);
 
-  const loadData = () => {
+  const loadData = async () => {
     setLoading(true);
     initializeUserStore();
     const users = getUsers();
+
+    // Fetch teachers from backend to include any HOD accounts created via API
+    let backendHods: HODUser[] = [];
+    try {
+      const [res, dRes] = await Promise.all([
+        api.get<any[]>("/teachers"),
+        api.get<any[]>("/departments"),
+      ]);
+      if (dRes.success && Array.isArray(dRes.data) && dRes.data.length > 0) {
+        const codes = Array.from(new Set([...DEPARTMENTS, ...dRes.data.map((d: any) => d.code.toUpperCase())]));
+        setAvailableDepts(codes);
+      }
+      if (res.success && Array.isArray(res.data)) {
+        backendHods = res.data
+          .filter((t: any) =>
+            t.specialization?.toLowerCase().includes("administration") ||
+            t.specialization?.toLowerCase().includes("hod") ||
+            t.user?.userRoles?.some((ur: any) => ur.role?.name === "HOD")
+          )
+          .map((t: any) => ({
+            fullName: t.fullName,
+            email: t.email,
+            department: t.department?.code || t.department?.name || "CSE",
+            createdAt: t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "Active",
+            phone: t.phone || "+91-9876543210",
+          }));
+      }
+    } catch {
+      // ignore
+    }
     
     // Filter HODs from user store
-    const hodList: HODUser[] = Object.values(users)
+    const localHodList: HODUser[] = Object.values(users)
       .filter((u) => u.role === "hod")
-      .map((u, idx) => ({
+      .map((u) => ({
         fullName: u.fullName,
         email: u.email,
         department: u.department || "CSE",
@@ -57,26 +89,53 @@ export default function HODPage() {
         phone: "+91-9876543210"
       }));
 
-    setHods(hodList);
+    // Deduplicate by normalized email
+    const emailMap = new Map<string, HODUser>();
+    for (const h of [...backendHods, ...localHodList]) {
+      const key = h.email.trim().toLowerCase();
+      if (!emailMap.has(key)) {
+        emailMap.set(key, h);
+      }
+    }
+
+    setHods(Array.from(emailMap.values()));
     setLoading(false);
   };
 
   useEffect(() => {
-    loadData();
+    let isMounted = true;
+    Promise.resolve().then(() => {
+      if (isMounted) loadData();
+    });
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const handleAddHODSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAddError(null);
 
+    const normalizedEmail = addEmail.trim().toLowerCase();
     const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.edu\.in$/;
-    if (!emailPattern.test(addEmail)) {
+    if (!emailPattern.test(normalizedEmail)) {
       setAddError("HOD email must be an institutional address ending in .edu.in");
       return;
     }
 
     try {
-      await createUser(addEmail, addName, "hod", addDept);
+      const res = await api.post("/teachers", {
+        fullName: addName.trim(),
+        email: normalizedEmail,
+        departmentId: addDept,
+        isHod: true,
+        role: "HOD",
+        password: "hod123",
+      });
+      if (!res.success && res.error) {
+        throw new Error(res.error);
+      }
+      await createUser(normalizedEmail, addName.trim(), "hod", addDept);
       setAddName("");
       setAddEmail("");
       setIsAddModalOpen(false);
@@ -111,9 +170,17 @@ export default function HODPage() {
     }
 
     try {
+      const targetEmail = resetTargetEmail.trim().toLowerCase();
       const hashedPass = await hashPassword(resetPassword);
-      await updateUserPassword(resetTargetEmail, hashedPass, false);
-      setResetSuccess(`Password for ${resetTargetEmail} updated successfully directly!`);
+      await updateUserPassword(targetEmail, hashedPass, false);
+      const res = await api.post("/teachers/reset-password", {
+        email: targetEmail,
+        password: resetPassword,
+      });
+      if (!res.success && res.error) {
+        console.warn("Backend reset password warning:", res.error);
+      }
+      setResetSuccess(`Password for ${resetTargetEmail} updated successfully!`);
       setResetPassword("");
       setResetConfirm("");
       setTimeout(() => {
@@ -171,7 +238,7 @@ export default function HODPage() {
           >
             All Departments
           </button>
-          {DEPARTMENTS.map((dept) => (
+          {availableDepts.map((dept) => (
             <button
               key={dept}
               onClick={() => setSelectedDept(dept)}
@@ -201,7 +268,7 @@ export default function HODPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {filteredHods.map((hod, i) => (
             <motion.div
-              key={hod.email}
+              key={`hod-${hod.email}-${i}`}
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: i * 0.03 }}
@@ -310,7 +377,7 @@ export default function HODPage() {
                     onChange={(e) => setAddDept(e.target.value)}
                     className="w-full bg-bg-secondary border border-glass-border rounded-xl px-4 py-2.5 text-text-primary focus:outline-none focus:border-glass-border/60 transition-colors"
                   >
-                    {DEPARTMENTS.map((d) => (
+                    {availableDepts.map((d) => (
                       <option key={d} value={d}>{d}</option>
                     ))}
                   </select>

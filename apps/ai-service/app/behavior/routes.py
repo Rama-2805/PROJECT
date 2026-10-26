@@ -5,6 +5,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
 
 from ..config.settings import settings
 from .models import BehaviorEvent, AlertSeverity
@@ -18,6 +19,89 @@ router = APIRouter(prefix=f"{settings.api_prefix}/behavior", tags=["Behavior"])
 
 # WebSocket connections for live behavior updates
 live_connections: dict[str, list[WebSocket]] = {}
+
+
+class StartBehaviorSessionRequest(BaseModel):
+    camera_id: str = Field("room-023", description="Camera identifier to monitor.")
+    class_id: str = Field(..., description="Target class/lecture identifier.")
+    source_path: str = Field("footage", description="Video source: folder path, file path, webcam index or RTSP URL.")
+    session_id: Optional[str] = Field(None, description="Actual attendance/class session identifier (e.g. SESS_xxx). If omitted, a deterministic reference is maintained.")
+
+
+class StopBehaviorSessionRequest(BaseModel):
+    camera_id: str = Field(..., description="Camera identifier to stop.")
+
+
+@router.post("/session/start")
+def start_behavior_session(req: StartBehaviorSessionRequest):
+    """Start the behavioural monitoring pipeline for a class.
+
+    Behavioural mode processes frames and generates behavioural events only —
+    attendance is never marked from this pipeline.
+    """
+    from ..services.attendance_engine import attendance_engine
+
+    if not req.class_id or not req.class_id.strip():
+        raise HTTPException(status_code=400, detail="A valid class_id is required to start behavioral monitoring.")
+
+    try:
+        started = attendance_engine.start_behavior_session(
+            camera_id=req.camera_id,
+            class_id=req.class_id,
+            source_path=req.source_path,
+            session_id=req.session_id,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Behavioral pipeline failed to start: {exc}")
+
+    if not started:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Behavioral monitoring could not start for camera '{req.camera_id}'. Check the video/camera source.",
+        )
+
+    return {
+        "status": "success",
+        "mode": "behavior",
+        "camera_id": req.camera_id,
+        "class_id": req.class_id,
+        "started_at": time.time(),
+        "message": "Behavioral monitoring started.",
+    }
+
+
+@router.post("/session/stop")
+def stop_behavior_session(req: StopBehaviorSessionRequest):
+    """Stop behavioural monitoring and resolve any open behavioural events."""
+    from ..services.attendance_engine import attendance_engine
+
+    stopped = attendance_engine.stop_behavior_session(req.camera_id)
+    if not stopped:
+        raise HTTPException(status_code=404, detail="No active behavioral session for this camera.")
+    return {"status": "success", "mode": "behavior", "camera_id": req.camera_id, "message": "Behavioral monitoring stopped."}
+
+
+@router.get("/session/status")
+def get_behavior_session_status():
+    """Return truthful behavioural session + processing status (no simulated values)."""
+    from ..services.attendance_engine import attendance_engine
+    from .detector.hybrid_behavior_pipeline import hybrid_behavior_pipeline
+
+    status = attendance_engine.get_behavior_session_status()
+    try:
+        detection_ok = hybrid_behavior_pipeline.yolo_model is not None
+    except Exception:
+        detection_ok = False
+    try:
+        pose_ok = hybrid_behavior_pipeline.pose_model is not None
+    except Exception:
+        pose_ok = False
+    status["pipeline"] = {
+        "object_detection_available": detection_ok,
+        "pose_estimation_available": pose_ok,
+        "behavioral_processing_available": bool(detection_ok),
+    }
+    return status
 
 
 @router.get("/live")

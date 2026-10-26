@@ -29,13 +29,13 @@ logger = logging.getLogger("smartcampus.classroom_pipeline")
 # ── Tunable constants ──────────────────────────────────────────────────
 FRAME_INTERVAL_SEC         = 0.5    # Sample 2 frames per second (2 FPS)
 IDENTITY_THRESHOLD         = 0.58   # Cosine similarity threshold for identity matching (0.58 ~ cosine dist 0.42)
-MIN_FACE_PIXELS            = 20     # Minimum face width/height in pixels
+MIN_FACE_PIXELS            = 32     # Minimum face width/height in pixels
 MAX_FACE_SCALE             = 1920   # Downscale frame width for detection if needed
 CLUSTER_PREVIEW_SIZE       = (224, 224) # Saved crop preview size
 MAX_GALLERY_PER_CLUSTER    = 20     # Maximum images saved per cluster
 MAX_EMBEDDINGS_PER_TRACK   = 15     # Configurable max samples per temporal sequence
 QUALITY_BLUR_THRESH        = 25.0   # Laplacian variance threshold
-QUALITY_MIN_SCORE          = 20.0   # Minimum quality score (0-100)
+QUALITY_MIN_SCORE          = 25.0   # Minimum quality score (0-100)
 EMPTY_FRAME_SKIP_AFTER     = 10     # After this many consecutive empty frames, jump forward
 EMPTY_FRAME_JUMP_SEC       = 30.0   # Jump this many seconds ahead when skipping empty region
 # ───────────────────────────────────────────────────────────────────────
@@ -134,11 +134,17 @@ class IdentityCluster:
 
         # Determine rejection reason if any
         rejection_reason = None
+        std_val = float(np.std(gray))
+        sat_white = float(np.mean(gray >= 245))
         if w < MIN_FACE_PIXELS or h < MIN_FACE_PIXELS:
             rejection_reason = "too_small"
+        elif std_val < 14.0:
+            rejection_reason = "blank_or_uniform"
+        elif sat_white > 0.35:
+            rejection_reason = "saturated_white_glare"
         elif blur_var < QUALITY_BLUR_THRESH:
             rejection_reason = "blurry"
-        elif brightness < 30.0 or brightness > 235.0:
+        elif brightness < 30.0 or brightness > 230.0:
             rejection_reason = "lighting"
         elif total_score < QUALITY_MIN_SCORE:
             rejection_reason = "low_quality"
@@ -332,31 +338,39 @@ class ClassroomPipeline:
     def _load_enrolled_profiles(self) -> None:
         """Load durable confirmed student identities from PostgreSQL and populate memory profiles."""
         try:
-            import psycopg2
             import json
-            conn = psycopg2.connect(settings.database_url)
-            cur = conn.cursor()
-
-            # 1. Fetch session details if available (e.g. sectionId, institutionId)
-            cur.execute('SELECT "sectionId", "institutionId" FROM "EnrollmentSession" WHERE id = %s', (self.session_id,))
-            sess_row = cur.fetchone()
-            session_section_id = sess_row[0] if sess_row else None
-
-            # 2. Fetch all confirmed students with faceEnrolled = True
-            cur.execute('''
-                SELECT s.id, s."rollNumber", s."studentId", s."usn", s."fullName", s.section, s."sectionId",
-                       fe.id as emb_id, fe."embeddingVector", fe.confidence, fe."thumbnailPath"
-                FROM "Student" s
-                LEFT JOIN "FaceEmbedding" fe ON fe."studentId" = s.id
-                WHERE s."faceEnrolled" = TRUE
-                ORDER BY fe."createdAt" ASC
-            ''')
-            rows = cur.fetchall()
-            cur.close()
-            conn.close()
+            from sqlalchemy import text
+            from ..config.database import engine
 
             profiles: Dict[str, dict] = {}
             allowed_usns: Set[str] = set()
+
+            with engine.connect() as conn:
+                # 1. Fetch session details if available (e.g. sectionId, institutionId)
+                session_section_id = None
+                try:
+                    sess_res = conn.execute(
+                        text('SELECT "sectionId", "institutionId" FROM "EnrollmentSession" WHERE id = :id'),
+                        {"id": self.session_id}
+                    ).fetchone()
+                    session_section_id = sess_res[0] if sess_res else None
+                except Exception as sess_err:
+                    logger.debug(f"EnrollmentSession lookup skipped: {sess_err}")
+
+                # 2. Fetch all confirmed students with faceEnrolled = True
+                try:
+                    res = conn.execute(text('''
+                        SELECT s.id, s."rollNumber", s."studentId", s."usn", s."fullName", s.section, s."sectionId",
+                               fe.id as emb_id, fe."embeddingVector", fe.confidence, fe."thumbnailPath"
+                        FROM "Student" s
+                        LEFT JOIN "FaceEmbedding" fe ON fe."studentId" = s.id
+                        WHERE s."faceEnrolled" = TRUE
+                        ORDER BY fe."createdAt" ASC
+                    '''))
+                    rows = res.fetchall()
+                except Exception as pg_err:
+                    logger.debug(f"Student FaceEmbedding query skipped on engine ({pg_err})")
+                    rows = []
 
             for sid, roll, stid, usn_val, name, sec_val, sec_id, emb_id, vec_str, conf, thumb in rows:
                 primary_usn = (roll or stid or usn_val or "").strip().upper()
@@ -408,11 +422,11 @@ class ClassroomPipeline:
     ) -> bool:
         """Durably persist new accepted FaceEmbedding record into PostgreSQL and update Student.faceSamples."""
         try:
-            import psycopg2
             import json
             import uuid
-            conn = psycopg2.connect(settings.database_url)
-            cur = conn.cursor()
+            from datetime import datetime
+            from sqlalchemy import text
+            from ..config.database import engine
 
             vec_json = json.dumps(emb.tolist())
             rec_id = f"emb_{uuid.uuid4().hex[:20]}"
@@ -425,29 +439,46 @@ class ClassroomPipeline:
                 "timestamp": time.time(),
             })
 
-            cur.execute('''
-                INSERT INTO "FaceEmbedding" ("id", "studentId", "embeddingVector", "confidence", "thumbnailPath", "metadata", "createdAt")
-                VALUES (%s, %s, %s, %s, %s, %s, NOW())
-            ''', (rec_id, student_id, vec_json, float(confidence), thumbnail_path, meta))
+            with engine.begin() as conn:
+                conn.execute(text('''
+                    INSERT INTO "FaceEmbedding" ("id", "studentId", "embeddingVector", "confidence", "thumbnailPath", "metadata", "createdAt")
+                    VALUES (:id, :studentId, :vec, :conf, :thumb, :meta, :created_at)
+                '''), {
+                    "id": rec_id,
+                    "studentId": student_id,
+                    "vec": vec_json,
+                    "conf": float(confidence),
+                    "thumb": thumbnail_path,
+                    "meta": meta,
+                    "created_at": datetime.utcnow()
+                })
 
-            cur.execute('''
-                UPDATE "Student"
-                SET "faceSamples" = "faceSamples" + 1,
-                    "updatedAt" = NOW()
-                WHERE id = %s
-            ''', (student_id,))
+                conn.execute(text('''
+                    UPDATE "Student"
+                    SET "faceSamples" = "faceSamples" + 1,
+                        "updatedAt" = :updated_at
+                    WHERE id = :id
+                '''), {
+                    "id": student_id,
+                    "updated_at": datetime.utcnow()
+                })
 
-            hist_id = f"eh_{uuid.uuid4().hex[:20]}"
-            cur.execute('''
-                INSERT INTO "EnrollmentHistory" ("id", "studentId", "performedById", "action", "metadata", "createdAt")
-                VALUES (%s, %s, 'ai_adaptive_engine', 'UPDATED', %s, NOW())
-            ''', (hist_id, student_id, meta))
+                hist_id = f"eh_{uuid.uuid4().hex[:20]}"
+                conn.execute(text('''
+                    INSERT INTO "EnrollmentHistory" ("id", "studentId", "performedById", "action", "metadata", "createdAt")
+                    VALUES (:id, :studentId, 'ai_adaptive_engine', 'UPDATED', :meta, :created_at)
+                '''), {
+                    "id": hist_id,
+                    "studentId": student_id,
+                    "meta": meta,
+                    "created_at": datetime.utcnow()
+                })
 
-            conn.commit()
-            cur.close()
-            conn.close()
             logger.info(f"[{self.session_id}] Durably persisted new FaceEmbedding for student {usn} ({student_id}).")
             return True
+        except Exception as e:
+            logger.error(f"[{self.session_id}] Failed to persist embedding to database for {usn}: {e}")
+            return False
         except Exception as e:
             logger.error(f"[{self.session_id}] Failed to persist FaceEmbedding to Postgres: {e}")
             return False
@@ -795,29 +826,53 @@ class ClassroomPipeline:
             bx1, by1, bx2, by2 = [int(v) for v in track.bbox]
             crop_w, crop_h = max(0, bx2 - bx1), max(0, by2 - by1)
 
-            if crop_w < 12 or crop_h < 12:
+            if crop_w < 32 or crop_h < 32:
                 self.quality_rejected += 1
                 self.rejection_reasons["too_small"] += 1
                 continue
 
-            # Small-Face Expansion & High-Resolution Upscaling (Requirement 7)
-            # Preserves aspect ratio, expands context for small faces, and upscales to 112x112 for MediaPipe/ArcFace
-            cx, cy = (bx1 + bx2) / 2.0, (by1 + by2) / 2.0
-            margin_factor = 1.6 if (crop_w < 60 or crop_h < 60) else 1.25
-            side = max(int(max(crop_w, crop_h) * margin_factor), 32)
+            # Boundary clipping check: reject half-faces clipped by camera edge
+            touches_edge = (bx1 <= 1 or by1 <= 1 or bx2 >= w - 1 or by2 >= h - 1)
+            if touches_edge and (crop_w / float(crop_h) < 0.75 or crop_h / float(crop_w) < 0.75):
+                self.quality_rejected += 1
+                self.rejection_reasons["boundary_clipped"] = self.rejection_reasons.get("boundary_clipped", 0) + 1
+                continue
 
-            ex1 = max(0, int(cx - side / 2.0))
-            ey1 = max(0, int(cy - side / 2.0))
-            ex2 = min(w, int(cx + side / 2.0))
-            ey2 = min(h, int(cy + side / 2.0))
+            # Proportional Margin with Square Aspect Ratio Preservation
+            cx, cy = (bx1 + bx2) / 2.0, (by1 + by2) / 2.0
+            margin_factor = 1.3
+            side = max(int(max(crop_w, crop_h) * margin_factor), 40)
+            half_s = side / 2.0
+
+            # Shift center so the square stays strictly within image boundaries
+            if cx - half_s < 0:
+                cx = half_s
+            elif cx + half_s > w:
+                cx = max(half_s, w - half_s)
+            if cy - half_s < 0:
+                cy = half_s
+            elif cy + half_s > h:
+                cy = max(half_s, h - half_s)
+
+            ex1 = max(0, int(round(cx - half_s)))
+            ey1 = max(0, int(round(cy - half_s)))
+            ex2 = min(w, int(round(cx + half_s)))
+            ey2 = min(h, int(round(cy + half_s)))
 
             crop = frame[ey1:ey2, ex1:ex2].copy()
-            if crop.size == 0:
+            if crop.size == 0 or crop.shape[0] < 32 or crop.shape[1] < 32:
+                continue
+
+            # Reject blank white or low-texture crops
+            gray_crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+            if float(np.std(gray_crop)) < 14.0 or float(np.mean(gray_crop >= 245)) > 0.35:
+                self.quality_rejected += 1
+                self.rejection_reasons["blank_crop"] = self.rejection_reasons.get("blank_crop", 0) + 1
                 continue
 
             # Resize to standard high-resolution face size (112x112) for optimal MediaPipe & ArcFace feature extraction
-            if crop.shape[1] < 112 or crop.shape[0] < 112:
-                crop = cv2.resize(crop, (112, 112), interpolation=cv2.INTER_CUBIC)
+            if crop.shape[1] != 112 or crop.shape[0] != 112:
+                crop = cv2.resize(crop, (112, 112), interpolation=cv2.INTER_AREA if crop.shape[0] > 112 else cv2.INTER_LINEAR)
 
             sample_dict = track.consider_sample(
                 crop=crop,
@@ -1438,7 +1493,40 @@ class ClassroomPipeline:
                     continue
 
                 sim = float(np.dot(tr_emb, grp_emb)) if (tr_emb is not None and grp_emb is not None) else 0.0
-                seat_dist = float(np.sqrt((tr_seat[0] - grp_seat[0])**2 + (tr_seat[1] - grp_seat[1])**2)) if (tr_seat != (0.0, 0.0) and grp_seat != (0.0, 0.0)) else 999.0
+                is_valid_seat = (
+                    tr_seat != (0.0, 0.0) and grp_seat != (0.0, 0.0) and
+                    tr_seat != (150.0, 150.0) and grp_seat != (150.0, 150.0)
+                )
+                seat_dist = float(np.sqrt((tr_seat[0] - grp_seat[0])**2 + (tr_seat[1] - grp_seat[1])**2)) if is_valid_seat else 999.0
+
+                # Check temporal overlap
+                has_time_overlap = False
+                for g_tr in grp["tracks"]:
+                    t1_s = getattr(tr, "first_seen", 0.0)
+                    t1_e = getattr(tr, "last_seen", 0.0)
+                    g_obj = g_tr.get("track_obj")
+                    t2_s = getattr(g_obj, "first_seen", 0.0) if g_obj else 0.0
+                    t2_e = getattr(g_obj, "last_seen", 0.0) if g_obj else 0.0
+                    if (t1_s > 0 and t2_s > 0) and (min(t1_e, t2_e) - max(t1_s, t2_s) > 1.0):
+                        has_time_overlap = True
+                        break
+
+                if has_time_overlap:
+                    continue
+
+                # Check minimum similarity with all tracks in group
+                min_sim = sim
+                if grp.get("tracks"):
+                    grp_sims = [
+                        float(np.dot(tr_emb, t["centroid"]))
+                        for t in grp["tracks"]
+                        if t.get("centroid") is not None and tr_emb is not None
+                    ]
+                    if grp_sims:
+                        min_sim = min(grp_sims)
+
+                if not (tr_usn and grp_usn and tr_usn == grp_usn) and min_sim < 0.70:
+                    continue
 
                 is_merge = False
                 score = 0.0
@@ -1447,12 +1535,12 @@ class ClassroomPipeline:
                 if tr_usn and grp_usn and tr_usn == grp_usn:
                     is_merge = True
                     score = 10.0 + sim
-                # Merge Rule 2: Same seated desk anchor (<= 65px) + compatible face (sim >= 0.58)
-                elif seat_dist <= 65.0 and sim >= 0.58:
+                # Merge Rule 2: Same seated desk anchor (<= 30px) + compatible face (sim >= 0.74, min_sim >= 0.70)
+                elif is_valid_seat and seat_dist <= 30.0 and sim >= 0.74 and min_sim >= 0.70:
                     is_merge = True
-                    score = 5.0 + sim + (1.0 - seat_dist / 65.0)
-                # Merge Rule 3: Definite ArcFace identity match (sim >= 0.82)
-                elif sim >= 0.82:
+                    score = 5.0 + sim + (1.0 - seat_dist / 30.0)
+                # Merge Rule 3: Definite ArcFace identity match (sim >= 0.80, min_sim >= 0.72)
+                elif sim >= 0.80 and min_sim >= 0.72:
                     is_merge = True
                     score = 3.0 + sim
 
@@ -1539,8 +1627,9 @@ class ClassroomPipeline:
 
             cand_match = grp.get("best_match")
             if cand_match:
-                id_status = "CONFIRMED" if cand_match.get("similarity", 0.0) >= 0.75 else "CANDIDATE"
-                status = "ASSIGNED" if id_status == "CONFIRMED" else "UNASSIGNED"
+                id_status = "CANDIDATE"
+                status = "UNASSIGNED"
+                cand_match["status"] = "CANDIDATE"
             else:
                 id_status = "UNKNOWN"
                 status = "UNASSIGNED"
@@ -1564,7 +1653,7 @@ class ClassroomPipeline:
                 "quality_max": quality_max,
                 "qualityAvg": quality_avg,
                 "bestQualityScore": quality_max,
-                "confidence": 0.88,
+                "confidence": cand_match.get("confidence", 0.88) if cand_match else 0.88,
                 "best_image_path": best_img_rel,
                 "bestImagePath": best_img_rel,
                 "best_image_url": best_url,
@@ -1573,10 +1662,10 @@ class ClassroomPipeline:
                 "images": [{"id": f"img_{cluster_idx}_{k}", "imageUrl": g, "imagePath": g, "qualityScore": quality_avg / 100.0, "isBest": k == 0} for k, g in enumerate(gallery)],
                 "candidateMatch": cand_match,
                 "candidate_match": cand_match,
-                "assignedStudent": {"usn": cand_match["usn"], "name": cand_match["name"]} if cand_match and id_status == "CONFIRMED" else None,
-                "assigned_student": {"usn": cand_match["usn"], "name": cand_match["name"]} if cand_match and id_status == "CONFIRMED" else None,
-                "assignedStudentName": cand_match["name"] if cand_match and id_status == "CONFIRMED" else None,
-                "assignedUsn": cand_match["usn"] if cand_match and id_status == "CONFIRMED" else None,
+                "assignedStudent": None,
+                "assigned_student": None,
+                "assignedStudentName": None,
+                "assignedUsn": None,
                 "identity_status": id_status,
                 "identityStatus": id_status,
                 "status": status,
@@ -1612,6 +1701,7 @@ class ClassroomPipeline:
                 continue
                 
             track = TrackedFace(track_id=t_id, bbox=[100, 100, 200, 200], confidence=0.90, frame_number=0)
+            track.stable_seat_center = (0.0, 0.0)
             
             for img_p in img_files:
                 s_id = img_p.stem
@@ -1901,12 +1991,51 @@ class ClassroomPipeline:
                     # Seat locations
                     seat_a = getattr(cg_a["member_tracks"][0]["track_obj"], "stable_seat_center", (0.0, 0.0))
                     seat_b = getattr(cg_b["member_tracks"][0]["track_obj"], "stable_seat_center", (0.0, 0.0))
-                    seat_dist = float(np.sqrt((seat_a[0] - seat_b[0])**2 + (seat_a[1] - seat_b[1])**2)) if (seat_a != (0.0, 0.0) and seat_b != (0.0, 0.0)) else 999.0
-                    same_seat = (seat_dist <= 65.0 and c_sim >= 0.58)
+                    is_valid_seat = (
+                        seat_a != (0.0, 0.0) and seat_b != (0.0, 0.0) and
+                        seat_a != (150.0, 150.0) and seat_b != (150.0, 150.0)
+                    )
+                    seat_dist = float(np.sqrt((seat_a[0] - seat_b[0])**2 + (seat_a[1] - seat_b[1])**2)) if is_valid_seat else 999.0
+                    same_seat = (is_valid_seat and seat_dist <= 35.0 and c_sim >= 0.74)
+
+                    # Temporal Co-occurrence Guard (Hard Negative Blocker)
+                    # Two tracks visible simultaneously in the same video CANNOT be the same person
+                    time_overlap = False
+                    for tr_a in cg_a["member_tracks"]:
+                        for tr_b in cg_b["member_tracks"]:
+                            o_start = max(tr_a["first_seen"], tr_b["first_seen"])
+                            o_end = min(tr_a["last_seen"], tr_b["last_seen"])
+                            if (tr_a["last_seen"] > 0 and tr_b["last_seen"] > 0) and (o_end - o_start > 1.0):
+                                time_overlap = True
+                                break
+                        if time_overlap:
+                            break
+
+                    if time_overlap:
+                        incompatible_pairs.add(pair_key)
+                        merge_decisions_log.append({
+                            "candidate_a": cg_a_id,
+                            "candidate_b": cg_b_id,
+                            "centroid_similarity": round(c_sim, 3),
+                            "representative_similarity": round(r_sim, 3),
+                            "decision": "REJECT",
+                            "reason": "Temporal co-occurrence: tracks visible simultaneously"
+                        })
+                        continue
 
                     # 1. Contradictory Enrolled Identity Guard (Hard Blocker)
-                    faiss_a = faiss_service.search_face(cg_a["centroid"], threshold=0.60)
-                    faiss_b = faiss_service.search_face(cg_b["centroid"], threshold=0.60)
+                    if faiss_service.index is not None and faiss_service.index.ntotal > 0:
+                        faiss_a = cg_a.get("_faiss_m")
+                        if faiss_a is None and "_faiss_m" not in cg_a:
+                            faiss_a = faiss_service.search_face(cg_a["centroid"], threshold=0.60)
+                            cg_a["_faiss_m"] = faiss_a
+                        faiss_b = cg_b.get("_faiss_m")
+                        if faiss_b is None and "_faiss_m" not in cg_b:
+                            faiss_b = faiss_service.search_face(cg_b["centroid"], threshold=0.60)
+                            cg_b["_faiss_m"] = faiss_b
+                    else:
+                        faiss_a = None
+                        faiss_b = None
                     if faiss_a and faiss_b and faiss_a[0] != faiss_b[0]:
                         merge_rejected_contradictory_identity += 1
                         incompatible_pairs.add(pair_key)
@@ -1922,8 +2051,8 @@ class ClassroomPipeline:
 
                     same_enrolled = bool(faiss_a and faiss_b and faiss_a[0] == faiss_b[0])
 
-                    # Fast pre-filter
-                    if not same_enrolled and not same_seat and c_sim < 0.65:
+                    # Fast pre-filter: Strict biometric similarity gate
+                    if not same_enrolled and not same_seat and c_sim < 0.74:
                         continue
 
                     merge_attempts_count += 1
@@ -1940,7 +2069,7 @@ class ClassroomPipeline:
                     ]
                     min_track_sim = min(track_sims) if track_sims else c_sim
 
-                    if not same_enrolled and not same_seat and min_track_sim < 0.58:
+                    if not same_enrolled and min_track_sim < 0.70:
                         merge_rejected_internal_inconsistency += 1
                         incompatible_pairs.add(pair_key)
                         merge_decisions_log.append({
@@ -1950,7 +2079,7 @@ class ClassroomPipeline:
                             "representative_similarity": round(r_sim, 3),
                             "min_track_similarity": round(min_track_sim, 3),
                             "decision": "REJECT",
-                            "reason": "Internal track inconsistency / chain merging violation"
+                            "reason": f"Internal track inconsistency ({min_track_sim:.3f} < 0.700)"
                         })
                         continue
 
@@ -1969,24 +2098,24 @@ class ClassroomPipeline:
                     supporting_pairs_80 = sum(1 for s in cross_sims if s >= 0.80)
 
                     # Multi-Evidence Merge Rules:
-                    # Rule 1: Same enrolled student identity (both match same USN >= 0.60)
-                    is_enrolled_merge = same_enrolled
+                    # Rule 1: Same enrolled student identity (both match same USN >= 0.60 in FAISS)
+                    is_enrolled_merge = bool(same_enrolled and min_track_sim >= 0.68)
 
-                    # Rule 2: Same physical desk anchor (<= 65px) with compatible face (sim >= 0.58)
-                    is_seat_merge = same_seat
+                    # Rule 2: Physical desk continuity (tight desk anchor <= 35px, high appearance sim)
+                    is_seat_merge = bool(same_seat and min_track_sim >= 0.70)
 
                     # Rule 3: Direct Appearance Cosine Merge (Must have high confidence evidence)
                     is_appearance_merge = (
                         c_sim >= 0.78 and
                         r_sim >= 0.74 and
-                        min_track_sim >= 0.65
+                        min_track_sim >= 0.72
                     )
 
                     # Rule 4: High-confidence multi-sample match
                     is_multi_sample_merge = (
-                        c_sim >= 0.78 and
+                        c_sim >= 0.76 and
                         supporting_pairs_80 >= 2 and
-                        min_track_sim >= 0.65
+                        min_track_sim >= 0.70
                     )
 
                     if not (is_enrolled_merge or is_seat_merge or is_appearance_merge or is_multi_sample_merge):
@@ -2038,6 +2167,7 @@ class ClassroomPipeline:
             cg_a["quality_max"] = max(cg_a["quality_max"], cg_b["quality_max"])
             cg_a["first_seen"] = min(cg_a["first_seen"], cg_b["first_seen"])
             cg_a["last_seen"] = max(cg_a["last_seen"], cg_b["last_seen"])
+            cg_a.pop("_faiss_m", None)
 
             candidate_groups.pop(idx_b)
             merges_performed += 1
@@ -2050,7 +2180,7 @@ class ClassroomPipeline:
         )
 
         # ── Step 4.5: Internal Cluster Purity Validation & Auto-Split Pass ──────
-        # Verify no merged cluster contains strongly separated identity modes.
+        # Verify no merged cluster contains strongly separated identity modes or simultaneous tracks.
         clusters_split_count = 0
         multi_identity_detected_count = 0
         purified_candidate_groups = []
@@ -2062,56 +2192,79 @@ class ClassroomPipeline:
                 continue
 
             n_m = len(m_tracks)
-            sim_mat = np.zeros((n_m, n_m), dtype=np.float32)
-            for i in range(n_m):
-                for j in range(n_m):
-                    if i == j:
-                        sim_mat[i, j] = 1.0
-                    else:
-                        sim_mat[i, j] = float(np.dot(m_tracks[i]["centroid"], m_tracks[j]["centroid"]))
+            pw_sims = [
+                float(np.dot(m_tracks[i]["centroid"], m_tracks[j]["centroid"]))
+                for i in range(n_m)
+                for j in range(i + 1, n_m)
+            ]
+            min_pw = min(pw_sims) if pw_sims else 1.0
 
-            # Connected Components at standard ArcFace identity threshold 0.58
-            visited = [False] * n_m
-            components = []
+            has_internal_overlap = False
             for i in range(n_m):
-                if visited[i]:
-                    continue
-                comp = []
-                queue = [i]
-                visited[i] = True
-                while queue:
-                    curr = queue.pop(0)
-                    comp.append(curr)
-                    for nxt in range(n_m):
-                        if not visited[nxt] and sim_mat[curr, nxt] >= 0.58:
-                            visited[nxt] = True
-                            queue.append(nxt)
-                components.append(comp)
+                for j in range(i + 1, n_m):
+                    tr_i = m_tracks[i]
+                    tr_j = m_tracks[j]
+                    if (tr_i["last_seen"] > 0 and tr_j["last_seen"] > 0):
+                        o_start = max(tr_i["first_seen"], tr_j["first_seen"])
+                        o_end = min(tr_i["last_seen"], tr_j["last_seen"])
+                        if o_end - o_start > 1.0:
+                            has_internal_overlap = True
+                            break
+                if has_internal_overlap:
+                    break
 
-            if len(components) > 1:
-                multi_identity_detected_count += 1
-                clusters_split_count += (len(components) - 1)
-                logger.warning(
-                    f"[PURITY SPLIT] Cluster with tracks {[t['track_id'] for t in m_tracks]} "
-                    f"contained {len(components)} distinct identity modes. Automatically split into pure clusters."
-                )
-                for comp in components:
-                    sub_tracks = [m_tracks[idx] for idx in comp]
-                    sub_c = [tr["centroid"] for tr in sub_tracks]
-                    sub_mean = np.mean(sub_c, axis=0)
-                    sub_norm = float(np.linalg.norm(sub_mean))
-                    sub_centroid = (sub_mean / sub_norm if sub_norm > 0.1 else sub_c[0]).astype(np.float32)
-                    best_sub_tr = max(sub_tracks, key=lambda tr: tr["quality_max"])
-                    purified_candidate_groups.append({
-                        "member_tracks": sub_tracks,
-                        "centroid": sub_centroid,
-                        "rep_emb": best_sub_tr["representative_embedding"],
-                        "quality_max": max(tr["quality_max"] for tr in sub_tracks),
-                        "first_seen": min(tr["first_seen"] for tr in sub_tracks),
-                        "last_seen": max(tr["last_seen"] for tr in sub_tracks),
-                    })
-            else:
+            if min_pw >= 0.85 or (min_pw >= 0.72 and not has_internal_overlap):
                 purified_candidate_groups.append(cg)
+                continue
+
+            # Cluster contains mixed identities or temporal overlap: partition into pure cliques
+            multi_identity_detected_count += 1
+            logger.warning(
+                f"[PURITY SPLIT] Cluster with tracks {[t['track_id'] for t in m_tracks]} "
+                f"had min_sim={min_pw:.3f} or time_overlap={has_internal_overlap}. Partitioning into pure clusters."
+            )
+
+            # Sort tracks by quality_max descending so best faces seed pure clusters
+            sorted_tracks = sorted(m_tracks, key=lambda tr: tr["quality_max"], reverse=True)
+            sub_clusters: List[List[Dict[str, Any]]] = []
+
+            for tr in sorted_tracks:
+                placed = False
+                for sc in sub_clusters:
+                    compatible = True
+                    for m in sc:
+                        sim = float(np.dot(tr["centroid"], m["centroid"]))
+                        if sim < 0.72:
+                            compatible = False
+                            break
+                        if (tr["last_seen"] > 0 and m["last_seen"] > 0) and sim < 0.85:
+                            o_start = max(tr["first_seen"], m["first_seen"])
+                            o_end = min(tr["last_seen"], m["last_seen"])
+                            if o_end - o_start > 1.0:
+                                compatible = False
+                                break
+                    if compatible:
+                        sc.append(tr)
+                        placed = True
+                        break
+                if not placed:
+                    sub_clusters.append([tr])
+
+            clusters_split_count += (len(sub_clusters) - 1)
+            for sc_tracks in sub_clusters:
+                sub_c = [tr["centroid"] for tr in sc_tracks]
+                sub_mean = np.mean(sub_c, axis=0)
+                sub_norm = float(np.linalg.norm(sub_mean))
+                sub_centroid = (sub_mean / sub_norm if sub_norm > 0.1 else sub_c[0]).astype(np.float32)
+                best_sub_tr = max(sc_tracks, key=lambda tr: tr["quality_max"])
+                purified_candidate_groups.append({
+                    "member_tracks": sc_tracks,
+                    "centroid": sub_centroid,
+                    "rep_emb": best_sub_tr["representative_embedding"],
+                    "quality_max": max(tr["quality_max"] for tr in sc_tracks),
+                    "first_seen": min(tr["first_seen"] for tr in sc_tracks),
+                    "last_seen": max(tr["last_seen"] for tr in sc_tracks),
+                })
 
         candidate_groups = purified_candidate_groups
 
@@ -2219,6 +2372,8 @@ class ClassroomPipeline:
                 possible_multi_id = (internal_min_sim < 65.0)
 
             total_samples = len(sample_details)
+            if total_samples == 0:
+                continue
             # Evidence Rating
             if total_samples >= 6 and len(all_track_ids) >= 2 and internal_mean_sim >= 82.0:
                 evidence_rating = "Strong"
@@ -2263,6 +2418,7 @@ class ClassroomPipeline:
             assigned_id = None
             identity_conf = None
             assignment_src = None
+            candidate_match = None
             id_vote_count = 0
             id_mean_sim = 0.0
             id_max_sim = 0.0
@@ -2285,38 +2441,37 @@ class ClassroomPipeline:
                     db_name = best_usn
                     db_sid = None
 
-                if id_vote_count >= 3 and id_mean_sim >= 0.70:
-                    identity_status = "CONFIRMED"
-                    evidence_level = "CONFIRMED"
-                    assignment_src = "AUTOMATIC"
-                    assigned_usn = best_usn
-                    assigned_name = db_name
-                    assigned_id = db_sid
-                    identity_conf = id_mean_sim
-                    assigned_student = {
-                        "usn": best_usn,
-                        "name": db_name,
-                        "studentId": db_sid,
-                        "confidence": id_mean_sim,
-                        "status": "CONFIRMED",
-                        "source": "AUTOMATIC",
-                    }
-                elif id_vote_count >= 2 and id_mean_sim >= recog_thresh:
+                # Rule: NEVER auto-confirm clusters during enrollment pipeline.
+                # All suggested student matches are CANDIDATE only and remain UNASSIGNED until human verification.
+                if id_vote_count >= 2 and id_mean_sim >= recog_thresh:
                     identity_status = "CANDIDATE"
                     evidence_level = "CANDIDATE"
-                    assignment_src = "AUTOMATIC"
-                    assigned_usn = best_usn
-                    assigned_name = db_name
-                    assigned_id = db_sid
-                    identity_conf = id_mean_sim
-                    assigned_student = {
+                    candidate_match = {
                         "usn": best_usn,
                         "name": db_name,
                         "studentId": db_sid,
                         "confidence": id_mean_sim,
+                        "similarity": id_mean_sim,
+                        "votes": id_vote_count,
                         "status": "CANDIDATE",
-                        "source": "AUTOMATIC",
                     }
+                    # Keep unassigned until teacher confirms, but surface candidate suggestion
+                    assigned_student = None
+                    assigned_usn = best_usn
+                    assigned_name = db_name
+                    assigned_id = db_sid
+                    identity_conf = id_mean_sim
+                    assignment_src = "CANDIDATE"
+                else:
+                    identity_status = "UNKNOWN"
+                    evidence_level = "TENTATIVE" if total_samples <= 1 else "CANDIDATE"
+                    candidate_match = None
+                    assigned_student = None
+                    assigned_usn = None
+                    assigned_name = None
+                    assigned_id = None
+                    identity_conf = None
+                    assignment_src = None
 
             hdb_clusters.append({
                 "cluster_id": cluster_id,
@@ -2359,7 +2514,7 @@ class ClassroomPipeline:
                 "lastSeenSec": round(max(last_seen_vals), 2) if last_seen_vals else 0.0,
                 "identity_status": identity_status,
                 "evidence_level": evidence_level,
-                "status": "ASSIGNED" if identity_status == "CONFIRMED" else ("CANDIDATE" if identity_status == "CANDIDATE" else "UNASSIGNED"),
+                "status": "UNASSIGNED",
                 "student_id": assigned_id,
                 "usn": assigned_usn,
                 "assignedUsn": assigned_usn,
@@ -2367,6 +2522,8 @@ class ClassroomPipeline:
                 "assignedStudentName": assigned_name,
                 "confidence": identity_conf,
                 "assignedStudent": assigned_student,
+                "candidateMatch": candidate_match,
+                "candidate_match": candidate_match,
                 "assignment_source": assignment_src,
                 "identity_vote_count": id_vote_count,
                 "identity_total_samples": len(test_embeddings),

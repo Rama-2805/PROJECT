@@ -5,9 +5,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils/cn";
-import { getBehaviorAnalytics, type BehaviorAnalytics, type BehaviorAlert } from "@/lib/mock/behavior";
-import { useDemoMode, isDemoMode as checkDemoMode } from "@/lib/demo-mode";
+import { getBehaviorAnalytics, type BehaviorAnalytics, type BehaviorAlert, type BehaviorType } from "@/lib/mock/behavior";
+import { isDemoMode as checkDemoMode } from "@/lib/demo-mode";
 import { dashboardApi } from "@/lib/api/dashboardApi";
+import { api } from "@/lib/api/client";
 
 const fadeUp = {
   initial: { opacity: 0, y: 16 },
@@ -24,13 +25,21 @@ const BEHAVIOR_COLORS: Record<string, string> = {
   UNKNOWN: "#6B7280",
 };
 
-const SEVERITY_COLORS: Record<string, string> = {
-  INFO: "text-ai-blue border-ai-blue/30 bg-ai-blue/10",
-  WARNING: "text-warning border-warning/30 bg-warning/10",
-  CRITICAL: "text-error border-error/30 bg-error/10",
+const normalizeBehaviorType = (type?: string): BehaviorType => {
+  if (!type) return "UNKNOWN";
+  const upper = type.toUpperCase().replace(/\s+/g, "_");
+  if (upper.includes("SLEEP")) return "SLEEPING";
+  if (upper.includes("PHONE")) return "PHONE_USAGE";
+  if (upper.includes("DISTRACT") || upper.includes("INATTENTIVE")) return "DISTRACTED";
+  if (upper.includes("ABSENT")) return "ABSENT_FROM_SEAT";
+  if (upper.includes("ATTENTIVE") || upper.includes("NORMAL")) return "ATTENTIVE";
+  return (upper in BEHAVIOR_COLORS ? upper : "UNKNOWN") as BehaviorType;
 };
 
 function AlertCard({ alert, onAcknowledge }: { alert: BehaviorAlert; onAcknowledge: (id: string) => void }) {
+  const isUnk = !alert.studentName || alert.studentName === "UNKNOWN" || alert.studentName.startsWith("UNKNOWN");
+  const displayName = isUnk ? "UNKNOWN" : alert.studentName;
+
   return (
     <motion.div
       layout
@@ -43,7 +52,7 @@ function AlertCard({ alert, onAcknowledge }: { alert: BehaviorAlert; onAcknowled
       )}
     >
       {/* Severity indicator */}
-      <span className={cn("mt-0.5 h-2 w-2 rounded-full shrink-0", {
+      <span className={cn("mt-1.5 h-2 w-2 rounded-full shrink-0", {
         "bg-ai-blue": alert.severity === "INFO",
         "bg-warning": alert.severity === "WARNING",
         "bg-error animate-glow-pulse": alert.severity === "CRITICAL",
@@ -58,9 +67,21 @@ function AlertCard({ alert, onAcknowledge }: { alert: BehaviorAlert; onAcknowled
             {alert.severity}
           </span>
           <span className="text-[10px] text-text-muted">·</span>
-          <span className="text-[10px] text-text-muted">{alert.behaviorType.replace(/_/g, " ")}</span>
+          <span className="text-[10px] text-text-muted">{(alert.behaviorType || "UNKNOWN").replace(/_/g, " ")}</span>
+          <span className="text-[10px] text-text-muted">·</span>
+          {isUnk ? (
+            <span className="text-[8px] px-1 py-0.2 rounded font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30 uppercase">
+              UNKNOWN
+            </span>
+          ) : (
+            <span className="text-[8px] px-1 py-0.2 rounded font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 uppercase">
+              VERIFIED
+            </span>
+          )}
         </div>
-        <p className="text-xs text-text-primary font-medium truncate">{alert.studentName}</p>
+        <p className={cn("text-xs font-semibold truncate", isUnk ? "text-amber-300" : "text-text-primary")}>
+          {displayName}
+        </p>
         <div className="flex items-center gap-2 mt-1">
           <span className="text-[9px] text-text-muted">Confidence: {(alert.confidence * 100).toFixed(0)}%</span>
           <span className="text-[9px] text-text-muted">·</span>
@@ -82,94 +103,131 @@ function AlertCard({ alert, onAcknowledge }: { alert: BehaviorAlert; onAcknowled
 export default function BehaviorAnalyticsPage() {
   const [data, setData] = useState<BehaviorAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedTab, setSelectedTab] = useState<"overview" | "analytics" | "alerts">("overview");
   const [alerts, setAlerts] = useState<BehaviorAlert[]>([]);
-  const [acknowledgedIds, setAcknowledgedIds] = useState<Set<string>>(new Set());
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   useEffect(() => {
+    let isSubscribed = true;
+
     async function load() {
       const demo = checkDemoMode();
       if (demo) {
-        getBehaviorAnalytics().then((d) => {
-          setData(d);
-          setAlerts(d.recentAlerts);
-        }).finally(() => setLoading(false));
+        try {
+          const d = await getBehaviorAnalytics();
+          if (isSubscribed) {
+            setData(d);
+            setAlerts(d.recentAlerts);
+          }
+        } finally {
+          if (isSubscribed) {
+            setLoading(false);
+          }
+        }
         return;
       }
 
       try {
         const res = await dashboardApi.getBehaviorAnalytics();
+        if (!isSubscribed) return;
         if (res && res.success && res.data) {
           const apiData = res.data;
           setData({
             overview: apiData.overview,
-            engagementTrend: apiData.engagement_trend,
-            behaviorDistribution: apiData.behavior_distribution.map(d => ({
-              type: d.type as any,
-              count: d.count
+            engagementTrend: apiData.engagement_trend || [],
+            behaviorDistribution: (apiData.behavior_distribution || []).map((d) => ({
+              type: normalizeBehaviorType(d.type),
+              count: d.count,
             })),
-            classroomComparison: apiData.classroom_comparison,
-            studentRanking: apiData.student_ranking,
-            attentionHeatmap: apiData.attention_heatmap,
-            recentAlerts: apiData.recent_alerts.map(a => ({
+            classroomComparison: apiData.classroom_comparison || [],
+            studentRanking: apiData.student_ranking || [],
+            attentionHeatmap: apiData.attention_heatmap || [],
+            recentAlerts: (apiData.recent_alerts || []).map((a) => ({
               id: a.id,
               studentId: a.student_id,
               studentName: a.student_name,
-              behaviorType: a.behavior_type as any,
-              severity: a.severity as any,
-              confidence: a.confidence,
-              status: a.status as any,
+              behaviorType: normalizeBehaviorType(a.behavior_type),
+              severity: a.severity || "INFO",
+              confidence: a.confidence || 0.9,
+              status: a.status || "ACTIVE",
               acknowledgedBy: a.acknowledged_by,
-              createdAt: a.created_at
+              createdAt: a.created_at,
             })),
-            topEvents: apiData.top_events,
-            studentTimeline: apiData.student_timeline
+            topEvents: apiData.top_events || [],
+            studentTimeline: apiData.student_timeline || [],
           });
-          setAlerts(apiData.recent_alerts.map(a => ({
-            id: a.id,
-            studentId: a.student_id,
-            studentName: a.student_name,
-            behaviorType: a.behavior_type as any,
-            severity: a.severity as any,
-            confidence: a.confidence,
-            status: a.status as any,
-            acknowledgedBy: a.acknowledged_by,
-            createdAt: a.created_at
-          })));
+          setAlerts(
+            (apiData.recent_alerts || []).map((a) => ({
+              id: a.id,
+              studentId: a.student_id,
+              studentName: a.student_name,
+              behaviorType: normalizeBehaviorType(a.behavior_type),
+              severity: a.severity || "INFO",
+              confidence: a.confidence || 0.9,
+              status: a.status || "ACTIVE",
+              acknowledgedBy: a.acknowledged_by,
+              createdAt: a.created_at,
+            }))
+          );
         } else {
-          console.warn("Behavior Analytics API returned failure. Falling back to mocks.");
-          getBehaviorAnalytics().then((d) => {
-            setData(d);
-            setAlerts(d.recentAlerts);
-          });
+          setError(res?.error || "Behavior analytics service returned an unexpected response.");
         }
-      } catch (err) {
-        console.error("Failed to fetch live behavior analytics. Falling back to mocks.", err);
-        getBehaviorAnalytics().then((d) => {
-          setData(d);
-          setAlerts(d.recentAlerts);
-        });
+      } catch (err: unknown) {
+        if (!isSubscribed) return;
+        const msg = err instanceof Error ? err.message : "Failed to connect to behavior analytics backend service.";
+        setError(msg);
       } finally {
-        setLoading(false);
+        if (isSubscribed) {
+          setLoading(false);
+        }
       }
     }
-    load();
-  }, []);
 
-  const handleAcknowledge = (id: string) => {
+    load();
+
+    return () => {
+      isSubscribed = false;
+    };
+  }, [refreshTrigger]);
+
+  const handleRetry = () => {
+    setLoading(true);
+    setError(null);
+    setRefreshTrigger((prev) => prev + 1);
+  };
+
+  const handleAcknowledge = async (id: string) => {
     setAlerts((prev) =>
       prev.map((a) => (a.id === id ? { ...a, status: "ACKNOWLEDGED" as const } : a))
     );
-    setAcknowledgedIds((prev) => new Set(prev).add(id));
+    try {
+      await api.patch(`/behavior/alerts/${id}/acknowledge`, {});
+    } catch (e) {
+      console.warn("Failed to acknowledge alert on backend:", e);
+    }
   };
 
   if (loading) {
     return (
-      <>
-        <div className="flex items-center justify-center h-64">
-          <div className="h-4 w-4 border-2 border-ai-blue border-t-transparent rounded-full animate-spin" />
-        </div>
-      </>
+      <div className="flex items-center justify-center h-64">
+        <div className="h-4 w-4 border-2 border-ai-blue border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6">
+        <GlassCard className="p-8 text-center max-w-lg mx-auto">
+          <div className="text-warning text-2xl mb-2">⚠️</div>
+          <h3 className="text-sm font-semibold text-text-primary mb-1">Analytics Service Offline or Empty</h3>
+          <p className="text-xs text-text-muted mb-4">{error}</p>
+          <Button size="sm" onClick={handleRetry}>
+            Retry Connection
+          </Button>
+        </GlassCard>
+      </div>
     );
   }
 
@@ -187,7 +245,7 @@ export default function BehaviorAnalyticsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <div>
           <h2 className="text-lg font-semibold text-text-primary">Classroom Intelligence</h2>
-          <p className="text-xs text-text-muted">Real-time behavioral analysis and engagement monitoring</p>
+          <p className="text-xs text-text-muted">Real-time behavioral observation indicators. Engagement scores are computed estimates based on posture and gaze cues; they do not represent cognitive learning or direct academic capability.</p>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="secondary" size="sm">Export Report</Button>
@@ -219,7 +277,7 @@ export default function BehaviorAnalyticsPage() {
           {/* KPI Cards */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
             <GlassCard subtle>
-              <p className="text-[10px] text-text-muted mb-1">Average Engagement</p>
+              <p className="text-[10px] text-text-muted mb-1">Estimated Engagement</p>
               <p className="text-2xl font-bold text-ai-cyan">{data.overview.averageEngagement}%</p>
               <div className="mt-2 h-1 rounded-full bg-glass-light overflow-hidden">
                 <div className="h-full rounded-full bg-gradient-to-r from-ai-cyan to-ai-blue" style={{ width: `${data.overview.averageEngagement}%` }} />
@@ -250,46 +308,59 @@ export default function BehaviorAnalyticsPage() {
             <GlassCard>
               <h3 className="text-sm font-semibold text-text-primary mb-4">Engagement Trend (Today)</h3>
               <div className="overflow-x-auto">
-                <div className="flex items-end justify-between gap-1 h-48 pt-4 min-w-[400px]">
-                  {data.engagementTrend.map((point, i) => (
-                    <div key={point.time} className="flex flex-col items-center gap-1 flex-1">
-                      <span className="text-[8px] text-text-muted">{point.score}%</span>
-                      <div
-                        className="w-full rounded-t-sm bg-gradient-to-t from-ai-cyan to-ai-blue transition-all hover:opacity-80"
-                        style={{ height: `${point.score * 0.48}%` }}
-                      />
-                      {i % 2 === 0 && <span className="text-[7px] text-text-muted whitespace-nowrap">{point.time}</span>}
-                    </div>
-                  ))}
-                </div>
+                {data.engagementTrend.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-center text-text-muted">
+                    <p className="text-xs">No engagement data recorded for this period.</p>
+                    <p className="text-[10px] mt-1 text-text-muted/70">Start a classroom monitoring session to begin telemetry.</p>
+                  </div>
+                ) : (
+                  <div className="flex items-end justify-between gap-1 h-48 pt-4 min-w-[400px]">
+                    {data.engagementTrend.map((point, i) => (
+                      <div key={point.time} className="flex flex-col items-center gap-1 flex-1">
+                        <span className="text-[8px] text-text-muted">{point.score}%</span>
+                        <div
+                          className="w-full rounded-t-sm bg-gradient-to-t from-ai-cyan to-ai-blue transition-all hover:opacity-80"
+                          style={{ height: `${point.score * 0.48}%` }}
+                        />
+                        {i % 2 === 0 && <span className="text-[7px] text-text-muted whitespace-nowrap">{point.time}</span>}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </GlassCard>
 
             {/* Behavior Distribution */}
             <GlassCard>
               <h3 className="text-sm font-semibold text-text-primary mb-4">Behavior Distribution</h3>
-              <div className="space-y-3">
-                {data.behaviorDistribution.map((b) => {
-                  const total = data.behaviorDistribution.reduce((s, d) => s + d.count, 0);
-                  const pct = Math.round((b.count / total) * 100);
-                  return (
-                    <div key={b.type} className="flex items-center gap-3">
-                      <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: BEHAVIOR_COLORS[b.type] || "#6B7280" }} />
-                      <span className="text-[10px] text-text-muted w-24 truncate">{b.type.replace(/_/g, " ")}</span>
-                      <div className="flex-1 h-2 rounded-full bg-glass-light overflow-hidden">
-                        <motion.div
-                          className="h-full rounded-full"
-                          style={{ backgroundColor: BEHAVIOR_COLORS[b.type] || "#6B7280" }}
-                          initial={{ width: 0 }}
-                          animate={{ width: `${pct}%` }}
-                          transition={{ duration: 0.8, delay: 0.1 }}
-                        />
+              {data.behaviorDistribution.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-48 text-center text-text-muted">
+                  <p className="text-xs">No behavioral events detected in this session.</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {data.behaviorDistribution.map((b) => {
+                    const total = data.behaviorDistribution.reduce((s, d) => s + d.count, 0);
+                    const pct = total > 0 ? Math.round((b.count / total) * 100) : 0;
+                    return (
+                      <div key={b.type} className="flex items-center gap-3">
+                        <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: BEHAVIOR_COLORS[b.type] || "#6B7280" }} />
+                        <span className="text-[10px] text-text-muted w-24 truncate">{b.type.replace(/_/g, " ")}</span>
+                        <div className="flex-1 h-2 rounded-full bg-glass-light overflow-hidden">
+                          <motion.div
+                            className="h-full rounded-full"
+                            style={{ backgroundColor: BEHAVIOR_COLORS[b.type] || "#6B7280" }}
+                            initial={{ width: 0 }}
+                            animate={{ width: `${pct}%` }}
+                            transition={{ duration: 0.8, delay: 0.1 }}
+                          />
+                        </div>
+                        <span className="text-[10px] font-medium text-text-primary tabular-nums w-8 text-right">{pct}%</span>
                       </div>
-                      <span className="text-[10px] font-medium text-text-primary tabular-nums w-8 text-right">{pct}%</span>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </GlassCard>
           </div>
 
@@ -298,41 +369,47 @@ export default function BehaviorAnalyticsPage() {
             {/* Student Ranking */}
             <GlassCard>
               <h3 className="text-sm font-semibold text-text-primary mb-4">Student Engagement Ranking</h3>
-              <div className="space-y-1.5">
-                {data.studentRanking.map((s, i) => (
-                  <motion.div
-                    key={s.studentId}
-                    className="flex items-center gap-3 p-2 rounded-lg hover:bg-glass-light/30 transition-colors"
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.05 }}
-                  >
-                    <span className={cn(
-                      "w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0",
-                      i === 0 ? "bg-warning/20 text-warning" :
-                      i < 3 ? "bg-ai-blue/20 text-ai-blue" :
-                      "bg-glass-light text-text-muted"
-                    )}>
-                      {i + 1}
-                    </span>
-                    <span className="text-xs text-text-primary flex-1 truncate">{s.studentName}</span>
-                    <div className="flex items-center gap-2">
-                      <div className="w-20 h-1.5 rounded-full bg-glass-light overflow-hidden">
-                        <div
-                          className={cn("h-full rounded-full transition-all", s.score >= 75 ? "bg-success" : s.score >= 50 ? "bg-warning" : "bg-error")}
-                          style={{ width: `${s.score}%` }}
-                        />
-                      </div>
+              {data.studentRanking.length === 0 ? (
+                <div className="py-8 text-center text-text-muted text-xs">
+                  No student rankings recorded for this period.
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  {data.studentRanking.map((s, i) => (
+                    <motion.div
+                      key={s.studentId}
+                      className="flex items-center gap-3 p-2 rounded-lg hover:bg-glass-light/30 transition-colors"
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.05 }}
+                    >
                       <span className={cn(
-                        "text-[10px] font-medium tabular-nums w-8 text-right",
-                        s.score >= 75 ? "text-success" : s.score >= 50 ? "text-warning" : "text-error"
+                        "w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0",
+                        i === 0 ? "bg-warning/20 text-warning" :
+                        i < 3 ? "bg-ai-blue/20 text-ai-blue" :
+                        "bg-glass-light text-text-muted"
                       )}>
-                        {s.score}%
+                        {i + 1}
                       </span>
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
+                      <span className="text-xs text-text-primary flex-1 truncate">{s.studentName}</span>
+                      <div className="flex items-center gap-2">
+                        <div className="w-20 h-1.5 rounded-full bg-glass-light overflow-hidden">
+                          <div
+                            className={cn("h-full rounded-full transition-all", s.score >= 75 ? "bg-success" : s.score >= 50 ? "bg-warning" : "bg-error")}
+                            style={{ width: `${s.score}%` }}
+                          />
+                        </div>
+                        <span className={cn(
+                          "text-[10px] font-medium tabular-nums w-8 text-right",
+                          s.score >= 75 ? "text-success" : s.score >= 50 ? "text-warning" : "text-error"
+                        )}>
+                          {s.score}%
+                        </span>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
             </GlassCard>
 
             {/* Recent Alerts */}
@@ -374,33 +451,41 @@ export default function BehaviorAnalyticsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-glass-border">
-                  {data.topEvents.slice(0, 8).map((event) => (
-                    <tr key={event.id} className="text-xs text-text-primary hover:bg-glass-light/20 transition-colors">
-                      <td className="py-2 pr-4">{event.studentName}</td>
-                      <td className="py-2 pr-4">
-                        <span className={cn(
-                          "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium",
-                          "border",
-                          event.behaviorType === "ATTENTIVE" ? "text-success border-success/30 bg-success/10" :
-                          event.behaviorType === "PHONE_USAGE" ? "text-error border-error/30 bg-error/10" :
-                          event.behaviorType === "SLEEPING" ? "text-indigo-400 border-indigo-400/30 bg-indigo-400/10" :
-                          event.behaviorType === "DISTRACTED" ? "text-warning border-warning/30 bg-warning/10" :
-                          "text-text-muted border-glass-border bg-glass-light"
-                        )}>
-                          <span className={cn("h-1 w-1 rounded-full", {
-                            "bg-success": event.behaviorType === "ATTENTIVE",
-                            "bg-error": event.behaviorType === "PHONE_USAGE",
-                            "bg-indigo-400": event.behaviorType === "SLEEPING",
-                            "bg-warning": event.behaviorType === "DISTRACTED",
-                          })} />
-                          {event.behaviorType.replace(/_/g, " ")}
-                        </span>
+                  {data.topEvents.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="py-6 text-center text-text-muted text-xs">
+                        No recent behavior events recorded.
                       </td>
-                      <td className="py-2 pr-4 tabular-nums">{(event.confidence * 100).toFixed(0)}%</td>
-                      <td className="py-2 pr-4 text-text-muted">{Math.floor(event.duration / 60)}m {event.duration % 60}s</td>
-                      <td className="py-2 text-text-muted">{new Date(event.timestamp).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}</td>
                     </tr>
-                  ))}
+                  ) : (
+                    data.topEvents.slice(0, 8).map((event) => (
+                      <tr key={event.id} className="text-xs text-text-primary hover:bg-glass-light/20 transition-colors">
+                        <td className="py-2 pr-4">{event.studentName}</td>
+                        <td className="py-2 pr-4">
+                          <span className={cn(
+                            "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium",
+                            "border",
+                            event.behaviorType === "ATTENTIVE" ? "text-success border-success/30 bg-success/10" :
+                            event.behaviorType === "PHONE_USAGE" ? "text-error border-error/30 bg-error/10" :
+                            event.behaviorType === "SLEEPING" ? "text-indigo-400 border-indigo-400/30 bg-indigo-400/10" :
+                            event.behaviorType === "DISTRACTED" ? "text-warning border-warning/30 bg-warning/10" :
+                            "text-text-muted border-glass-border bg-glass-light"
+                          )}>
+                            <span className={cn("h-1 w-1 rounded-full", {
+                              "bg-success": event.behaviorType === "ATTENTIVE",
+                              "bg-error": event.behaviorType === "PHONE_USAGE",
+                              "bg-indigo-400": event.behaviorType === "SLEEPING",
+                              "bg-warning": event.behaviorType === "DISTRACTED",
+                            })} />
+                            {event.behaviorType.replace(/_/g, " ")}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-4 tabular-nums">{(event.confidence * 100).toFixed(0)}%</td>
+                        <td className="py-2 pr-4 text-text-muted">{Math.floor(event.duration / 60)}m {event.duration % 60}s</td>
+                        <td className="py-2 text-text-muted">{new Date(event.timestamp).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -488,7 +573,7 @@ export default function BehaviorAnalyticsPage() {
               <div className="space-y-4">
                 {data.behaviorDistribution.map((b) => {
                   const total = data.behaviorDistribution.reduce((s, d) => s + d.count, 0);
-                  const pct = Math.round((b.count / total) * 100);
+                  const pct = total > 0 ? Math.round((b.count / total) * 100) : 0;
                   return (
                     <div key={b.type}>
                       <div className="flex items-center justify-between mb-1">
@@ -532,7 +617,6 @@ export default function BehaviorAnalyticsPage() {
                     let cumulativePct = 0;
                     return segs.map((seg) => {
                       const pct = seg.value / total;
-                      const offset = circumference - pct * circumference;
                       const dashOffset = cumulativePct * circumference;
                       cumulativePct += pct;
                       return (

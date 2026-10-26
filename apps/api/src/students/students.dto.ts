@@ -1,5 +1,13 @@
-import { IsString, IsOptional, IsEmail, IsNumber, IsDateString, Min, Max } from "class-validator";
-import { Type } from "class-transformer";
+import {
+  IsString,
+  IsOptional,
+  IsEmail,
+  IsNumber,
+  IsDateString,
+  Min,
+  Max,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class CreateStudentDto {
   @IsString() institutionId: string;
@@ -41,7 +49,12 @@ export class StudentQueryDto {
   @IsOptional() @IsString() status?: string;
   @IsOptional() @IsString() search?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) page?: number;
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) @Max(1000) limit?: number;
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  @Max(1000)
+  limit?: number;
   @IsOptional() @IsString() sortBy?: string;
-  @IsOptional() @IsString() sortOrder?: "asc" | "desc";
+  @IsOptional() @IsString() sortOrder?: 'asc' | 'desc';
 }

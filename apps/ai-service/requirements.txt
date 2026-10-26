@@ -4,7 +4,7 @@ opencv-python==4.10.0.84
 opencv-python-headless==4.10.0.84
 insightface==0.7.3
 onnxruntime==1.19.2
-onnxruntime-gpu==1.19.2; sys_platform != "darwin"
+onnxruntime-gpu==1.19.2; sys_platform == "linux" and platform_machine == "x86_64"
 numpy==1.26.4
 scikit-learn==1.5.2
 hdbscan==0.8.39
@@ -22,3 +22,4 @@ websockets==13.1
 SQLAlchemy>=2.0.0
 psycopg2-binary>=2.9.0
 faiss-cpu>=1.7.0
+cryptography>=42.0.0

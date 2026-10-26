@@ -1,8 +1,8 @@
-import { Injectable, NotFoundException, Logger } from "@nestjs/common";
-import { Request, Response } from "express";
-import * as fs from "fs";
-import { PrismaService } from "../prisma/prisma.service";
-import { StorageService } from "../storage/storage.service";
+import { Injectable, NotFoundException, Logger } from '@nestjs/common';
+import { Request, Response } from 'express';
+import * as fs from 'fs';
+import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 
 @Injectable()
 export class VideosService {
@@ -16,19 +16,29 @@ export class VideosService {
   /**
    * Resiliently streams a video file by its EnrollmentVideo database ID with HTTP 206 Range support.
    */
-  async streamEnrollmentVideo(videoId: string, req: Request, res: Response): Promise<void> {
+  async streamEnrollmentVideo(
+    videoId: string,
+    req: Request,
+    res: Response,
+  ): Promise<void> {
     const video = await this.prisma.enrollmentVideo.findUnique({
       where: { id: videoId },
     });
 
     if (!video) {
-      throw new NotFoundException(`Video record with ID '${videoId}' not found`);
+      throw new NotFoundException(
+        `Video record with ID '${videoId}' not found`,
+      );
     }
 
     const resolvedPath = this.storage.resolveFilePath(video.filePath);
     if (!resolvedPath || !fs.existsSync(resolvedPath)) {
-      this.logger.warn(`Video file not found on disk: id=${videoId}, filePath=${video.filePath}`);
-      throw new NotFoundException(`Video file '${video.fileName}' is unavailable on storage`);
+      this.logger.warn(
+        `Video file not found on disk: id=${videoId}, filePath=${video.filePath}`,
+      );
+      throw new NotFoundException(
+        `Video file '${video.fileName}' is unavailable on storage`,
+      );
     }
 
     return this.pipeVideoRange(resolvedPath, req, res);
@@ -37,11 +47,17 @@ export class VideosService {
   /**
    * Streams a video by storage key, relative path, or filename with HTTP 206 Range support.
    */
-  async streamVideoByKey(keyOrPath: string, req: Request, res: Response): Promise<void> {
+  async streamVideoByKey(
+    keyOrPath: string,
+    req: Request,
+    res: Response,
+  ): Promise<void> {
     const resolvedPath = this.storage.resolveFilePath(keyOrPath);
     if (!resolvedPath || !fs.existsSync(resolvedPath)) {
       this.logger.warn(`Video key not found on disk: ${keyOrPath}`);
-      throw new NotFoundException(`Requested video '${keyOrPath}' is unavailable`);
+      throw new NotFoundException(
+        `Requested video '${keyOrPath}' is unavailable`,
+      );
     }
 
     return this.pipeVideoRange(resolvedPath, req, res);
@@ -61,7 +77,9 @@ export class VideosService {
 
     const resolvedPath = this.storage.resolveFilePath(video.filePath);
     const exists = Boolean(resolvedPath && fs.existsSync(resolvedPath));
-    const fileSize = exists ? fs.statSync(resolvedPath!).size : (video.fileSize || 0);
+    const fileSize = exists
+      ? fs.statSync(resolvedPath).size
+      : video.fileSize || 0;
 
     return {
       id: video.id,
@@ -98,7 +116,7 @@ export class VideosService {
     try {
       stat = fs.statSync(filePath);
     } catch {
-      throw new NotFoundException("Unable to inspect video file");
+      throw new NotFoundException('Unable to inspect video file');
     }
 
     const fileSize = stat.size;
@@ -106,13 +124,19 @@ export class VideosService {
     const range = req.headers.range;
 
     if (range) {
-      const parts = range.replace(/bytes=/, "").split("-");
+      const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
-      if (isNaN(start) || start >= fileSize || (parts[1] && isNaN(end)) || end >= fileSize || start > end) {
+      if (
+        isNaN(start) ||
+        start >= fileSize ||
+        (parts[1] && isNaN(end)) ||
+        end >= fileSize ||
+        start > end
+      ) {
         res.status(416);
-        res.setHeader("Content-Range", `bytes */${fileSize}`);
+        res.setHeader('Content-Range', `bytes */${fileSize}`);
         res.end();
         return;
       }
@@ -121,17 +145,17 @@ export class VideosService {
       const fileStream = fs.createReadStream(filePath, { start, end });
 
       res.status(206);
-      res.setHeader("Content-Range", `bytes ${start}-${end}/${fileSize}`);
-      res.setHeader("Accept-Ranges", "bytes");
-      res.setHeader("Content-Length", chunkSize);
-      res.setHeader("Content-Type", mimeType);
-      res.setHeader("Cache-Control", "no-cache, private");
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${fileSize}`);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Length', chunkSize);
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Cache-Control', 'no-cache, private');
 
-      req.on("close", () => {
+      req.on('close', () => {
         fileStream.destroy();
       });
 
-      fileStream.on("error", (err) => {
+      fileStream.on('error', (err) => {
         this.logger.error(`Stream error for ${filePath}: ${err.message}`);
         if (!res.headersSent) {
           res.status(500).end();
@@ -141,18 +165,18 @@ export class VideosService {
       fileStream.pipe(res);
     } else {
       res.status(200);
-      res.setHeader("Content-Length", fileSize);
-      res.setHeader("Content-Type", mimeType);
-      res.setHeader("Accept-Ranges", "bytes");
-      res.setHeader("Cache-Control", "no-cache, private");
+      res.setHeader('Content-Length', fileSize);
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Cache-Control', 'no-cache, private');
 
       const fileStream = fs.createReadStream(filePath);
 
-      req.on("close", () => {
+      req.on('close', () => {
         fileStream.destroy();
       });
 
-      fileStream.on("error", (err) => {
+      fileStream.on('error', (err) => {
         this.logger.error(`Stream error for ${filePath}: ${err.message}`);
         if (!res.headersSent) {
           res.status(500).end();

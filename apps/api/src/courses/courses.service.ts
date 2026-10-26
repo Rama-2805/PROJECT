@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
-import { CreateCourseDto, UpdateCourseDto } from "./courses.dto";
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { CreateCourseDto, UpdateCourseDto } from './courses.dto';
 
 @Injectable()
 export class CoursesService {
@@ -12,16 +12,23 @@ export class CoursesService {
     if (departmentId) where.departmentId = departmentId;
     return this.prisma.course.findMany({
       where,
-      include: { department: true, _count: { select: { students: true, subjects: true } } },
+      include: {
+        department: true,
+        _count: { select: { students: true, subjects: true } },
+      },
     });
   }
 
   async findById(id: string) {
     const course = await this.prisma.course.findUnique({
       where: { id },
-      include: { department: true, subjects: { include: { teacher: true } }, _count: { select: { students: true } } },
+      include: {
+        department: true,
+        subjects: { include: { teacher: true } },
+        _count: { select: { students: true } },
+      },
     });
-    if (!course) throw new NotFoundException("Course not found");
+    if (!course) throw new NotFoundException('Course not found');
     return course;
   }
 
@@ -37,13 +44,17 @@ export class CoursesService {
 
   async update(id: string, dto: UpdateCourseDto) {
     const course = await this.prisma.course.findUnique({ where: { id } });
-    if (!course) throw new NotFoundException("Course not found");
-    return this.prisma.course.update({ where: { id }, data: dto, include: { department: true } });
+    if (!course) throw new NotFoundException('Course not found');
+    return this.prisma.course.update({
+      where: { id },
+      data: dto,
+      include: { department: true },
+    });
   }
 
   async remove(id: string) {
     const course = await this.prisma.course.findUnique({ where: { id } });
-    if (!course) throw new NotFoundException("Course not found");
+    if (!course) throw new NotFoundException('Course not found');
     return this.prisma.course.delete({ where: { id } });
   }
 }

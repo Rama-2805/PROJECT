@@ -1,4 +1,10 @@
-import { IsString, IsOptional, IsNumber, IsBoolean, IsArray } from "class-validator";
+import {
+  IsString,
+  IsOptional,
+  IsNumber,
+  IsBoolean,
+  IsArray,
+} from 'class-validator';
 
 export class CreateEnrollmentJobDto {
   @IsString() institutionId: string;
@@ -71,6 +77,11 @@ export class CreateAutomaticSessionDto {
   @IsOptional() @IsString() subject?: string;
   @IsOptional() @IsString() teacher?: string;
   @IsOptional() @IsString() classroomId?: string;
+  @IsOptional() @IsString() classNumber?: string;
+  @IsOptional() @IsString() roomNumber?: string;
+  @IsOptional() @IsString() building?: string;
+  @IsOptional() @IsNumber() floor?: number;
+  @IsOptional() @IsNumber() capacity?: number;
   @IsOptional() @IsString() lectureDate?: string;
   @IsOptional() @IsString() lectureTime?: string;
 }
@@ -96,6 +107,9 @@ export class AssignClusterStudentDto {
   @IsOptional() @IsString() section?: string;
   @IsOptional() @IsString() email?: string;
   @IsOptional() @IsString() phone?: string;
+  @IsOptional() @IsString() bestImagePath?: string;
+  @IsOptional() @IsString() bestImageUrl?: string;
+  @IsOptional() @IsNumber() sampleCount?: number;
 }
 
 export class FinalizeSessionDto {

@@ -83,6 +83,9 @@ class EngagementRecord(BaseModel):
     phone_usage_penalty: float = 0.0
     activity_score: float = 0.0
     timestamp: float = 0.0
+    scoring_version: Optional[str] = "v1.2-hybrid"
+    is_sufficient_data: bool = True
+    withheld_reason: Optional[str] = None
 
 
 class BehaviorAlert(BaseModel):

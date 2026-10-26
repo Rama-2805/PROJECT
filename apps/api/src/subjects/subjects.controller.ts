@@ -1,29 +1,51 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards } from "@nestjs/common";
-import { SubjectsService } from "./subjects.service";
-import { CreateSubjectDto, UpdateSubjectDto } from "./subjects.dto";
-import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
-import { RolesGuard } from "../common/guards/roles.guard";
-import { Roles } from "../common/decorators/roles.decorator";
-import { RoleName } from "../_shared/enums/roles";
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { SubjectsService } from './subjects.service';
+import { CreateSubjectDto, UpdateSubjectDto } from './subjects.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RoleName } from '../_shared/enums/roles';
 
-@Controller("subjects")
+@Controller('subjects')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class SubjectsController {
   constructor(private subjects: SubjectsService) {}
 
   @Get()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.TEACHER,
+    RoleName.HOD,
+    RoleName.STUDENT,
+  )
   findAll(
-    @Query("institutionId") institutionId?: string,
-    @Query("courseId") courseId?: string,
-    @Query("departmentId") departmentId?: string,
+    @Query('institutionId') institutionId?: string,
+    @Query('courseId') courseId?: string,
+    @Query('departmentId') departmentId?: string,
   ) {
     return this.subjects.findAll(institutionId, courseId, departmentId);
   }
 
-  @Get(":id")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
-  findById(@Param("id") id: string) {
+  @Get(':id')
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.TEACHER,
+    RoleName.HOD,
+    RoleName.STUDENT,
+  )
+  findById(@Param('id') id: string) {
     return this.subjects.findById(id);
   }
 
@@ -33,15 +55,15 @@ export class SubjectsController {
     return this.subjects.create(dto);
   }
 
-  @Patch(":id")
+  @Patch(':id')
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
-  update(@Param("id") id: string, @Body() dto: UpdateSubjectDto) {
+  update(@Param('id') id: string, @Body() dto: UpdateSubjectDto) {
     return this.subjects.update(id, dto);
   }
 
-  @Delete(":id")
+  @Delete(':id')
   @Roles(RoleName.SUPER_ADMIN)
-  remove(@Param("id") id: string) {
+  remove(@Param('id') id: string) {
     return this.subjects.remove(id);
   }
 }

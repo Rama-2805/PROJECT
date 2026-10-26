@@ -24,10 +24,10 @@ const nextConfig: NextConfig = {
   // Rewrites to proxy AI service storage images & backend API camera/video endpoints
   async rewrites() {
     return [
-      // Camera stream & frame proxied to AI service
+      // Camera stream & control proxied through authenticated NestJS API gateway
       {
         source: "/api/camera/:path*",
-        destination: `${AI_SERVICE_URL}/api/v1/camera/:path*`,
+        destination: `${NESTJS_API_URL}/api/camera/:path*`,
       },
       // Video streaming (HTTP 206 Range) proxied through NestJS API backend
       {
@@ -39,10 +39,29 @@ const nextConfig: NextConfig = {
         source: "/storage/:path*",
         destination: `${AI_SERVICE_URL}/storage/:path*`,
       },
-      // AI service REST & WebSocket endpoints
+      // Restricted AI service endpoints (playground & health only - session/attendance control endpoints require internal service auth)
       {
-        source: "/api/v1/:path*",
-        destination: `${AI_SERVICE_URL}/api/v1/:path*`,
+        source: "/api/v1/health",
+        destination: `${AI_SERVICE_URL}/api/v1/health`,
+      },
+      {
+        source: "/api/v1/grounding/:path*",
+        destination: `${AI_SERVICE_URL}/api/v1/grounding/:path*`,
+      },
+      // Proxy AI service behavior endpoints (live telemetry, session start/stop/status)
+      {
+        source: "/api/v1/behavior/:path*",
+        destination: `${AI_SERVICE_URL}/api/v1/behavior/:path*`,
+      },
+      // Proxy AI service attendance session endpoints
+      {
+        source: "/api/v1/attendance/:path*",
+        destination: `${AI_SERVICE_URL}/api/v1/attendance/:path*`,
+      },
+      // Proxy AI service session endpoints
+      {
+        source: "/api/v1/sessions/:path*",
+        destination: `${AI_SERVICE_URL}/api/v1/sessions/:path*`,
       },
     ];
   },
@@ -57,6 +76,8 @@ const nextConfig: NextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "X-XSS-Protection", value: "1; mode=block" },
+          { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
+          { key: "Permissions-Policy", value: "camera=(self), microphone=(), geolocation=()" },
         ],
       },
     ];

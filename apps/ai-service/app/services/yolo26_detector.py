@@ -93,17 +93,18 @@ class YOLO26FaceDetector:
         if self._resolved_model_path and self._resolved_model_path.exists():
             return self._resolved_model_path
 
+        parents = Path(__file__).resolve().parents
         candidates = [
             Path(self.model_path_str),
-            Path(__file__).resolve().parents[2] / self.model_path_str,
-            Path(__file__).resolve().parents[2] / "models" / "yolo26s-face.pt",
-            Path(__file__).resolve().parents[4] / "apps" / "ai-service" / "models" / "yolo26s-face.pt",
+            parents[2] / self.model_path_str if len(parents) > 2 else None,
+            parents[2] / "models" / "yolo26s-face.pt" if len(parents) > 2 else None,
+            parents[4] / "apps" / "ai-service" / "models" / "yolo26s-face.pt" if len(parents) > 4 else None,
             Path("apps/ai-service/models/yolo26s-face.pt"),
             Path("models/yolo26s-face.pt"),
         ]
 
         for p in candidates:
-            if p.exists() and p.is_file():
+            if p and p.exists() and p.is_file():
                 self._resolved_model_path = p.resolve()
                 return self._resolved_model_path
 
@@ -139,7 +140,7 @@ class YOLO26FaceDetector:
     def _validate_detection(
         self, bbox: List[int], confidence: float, frame_w: int, frame_h: int, crop: np.ndarray
     ) -> Tuple[bool, str]:
-        """Validate detection confidence, bounding box geometry, aspect ratio, and lighting."""
+        """Validate detection confidence, bounding box geometry, aspect ratio, lighting, and texture."""
         if confidence < self.confidence_threshold:
             return False, "low_confidence"
 
@@ -149,23 +150,49 @@ class YOLO26FaceDetector:
         if cw <= 0 or ch <= 0:
             return False, "invalid_geometry"
 
-        if cw < settings.min_face_width or ch < settings.min_face_height:
+        if x1 < 0 or y1 < 0 or x2 > frame_w or y2 > frame_h:
+            return False, "out_of_bounds"
+
+        min_w = getattr(settings, "min_face_width", 16)
+        min_h = getattr(settings, "min_face_height", 16)
+        if cw < min_w or ch < min_h:
             return False, "too_small"
 
         aspect_ratio = max(cw / float(ch), ch / float(cw))
-        if aspect_ratio > settings.max_face_aspect_ratio:
+        max_ar = getattr(settings, "max_face_aspect_ratio", 2.0)
+        if aspect_ratio > max_ar:
             return False, "invalid_aspect_ratio"
 
         area_ratio = (cw * ch) / float(frame_w * frame_h)
         if area_ratio < settings.min_face_area_ratio:
             return False, "too_small_area"
 
+        # Edge boundary check: reject faces cut off by the camera boundary (half faces)
+        touches_border = (x1 <= 1 or y1 <= 1 or x2 >= frame_w - 1 or y2 >= frame_h - 1)
+        if touches_border:
+            if cw / float(ch) < 0.75 or ch / float(cw) < 0.75:
+                return False, "half_face_boundary_clipped"
+
         if crop is None or crop.size == 0:
             return False, "empty_crop"
 
-        mean_val = float(np.mean(crop))
-        if mean_val < settings.min_brightness or mean_val > settings.max_brightness:
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
+
+        mean_val = float(np.mean(gray))
+        if mean_val < 30.0 or mean_val > 230.0:
             return False, "extreme_lighting"
+
+        std_val = float(np.std(gray))
+        if std_val < 14.0:
+            return False, "blank_or_uniform_crop"
+
+        sat_white = float(np.mean(gray >= 245))
+        if sat_white > 0.35:
+            return False, "saturated_white_glare"
+
+        blur_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        if blur_var < 20.0:
+            return False, "blurry"
 
         return True, "valid"
 

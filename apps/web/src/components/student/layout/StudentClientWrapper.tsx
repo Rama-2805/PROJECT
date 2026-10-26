@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useSyncExternalStore } from "react";
 import { useUIStore } from "@/store/uiStore";
 import { useIsMobile } from "@/lib/hooks/useMediaQuery";
 import { usePathname } from "next/navigation";
@@ -10,6 +10,7 @@ import { CommandPalette } from "../../dashboard/CommandPalette";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
 import { ProgressiveFluxLoader } from "@/components/ui/progressive-flux-loader";
+import { useAuthStore } from "@/lib/store/auth";
 
 export function StudentClientWrapper({ children }: { children: React.ReactNode }) {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
@@ -17,8 +18,11 @@ export function StudentClientWrapper({ children }: { children: React.ReactNode }
   const theme = useUIStore((s) => s.theme);
   const isMobile = useIsMobile();
   const pathname = usePathname();
-  const [mounted, setMounted] = useState(false);
-  const [showIntro, setShowIntro] = useState(false);
+  const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
+  const [showIntro, setShowIntro] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return !sessionStorage.getItem("student-intro-shown");
+  });
 
   // Close mobile sidebar on route change
   useEffect(() => {
@@ -27,14 +31,32 @@ export function StudentClientWrapper({ children }: { children: React.ReactNode }
     }
   }, [pathname, isMobile, setSidebarOpen]);
 
-  // Avoid hydration mismatch by waiting for mount
+  const user = useAuthStore((s) => s.user);
+  const isLoading = useAuthStore((s) => s.isLoading);
+
+  // Enforce student role guard
   useEffect(() => {
-    setMounted(true);
-    const hasShown = sessionStorage.getItem("student-intro-shown");
-    if (!hasShown) {
-      setShowIntro(true);
+    if (isLoading) return;
+    if (user) {
+      const roles = user.roles || [];
+      const isStudent = roles.includes("STUDENT");
+      const isTeacher = roles.includes("TEACHER");
+      const isHod = roles.includes("HOD");
+      const isAdmin = roles.some((r) =>
+        ["SUPER_ADMIN", "INSTITUTION_ADMIN", "COLLEGE_SUPER_ADMIN", "COLLEGE_ADMIN"].includes(r),
+      );
+
+      if (!isStudent && !isAdmin) {
+        if (isTeacher) {
+          window.location.href = "/teacher/dashboard";
+        } else if (isHod) {
+          window.location.href = "/dashboard/hod";
+        } else {
+          window.location.href = "/dashboard";
+        }
+      }
     }
-  }, []);
+  }, [user, isLoading]);
 
   // Synchronize theme with documentElement to resolve global CSS variables correctly
   useEffect(() => {

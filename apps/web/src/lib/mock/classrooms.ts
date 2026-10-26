@@ -1,3 +1,5 @@
+import { api } from "@/lib/api/client";
+
 export interface Classroom {
   id: string;
   roomNumber: string;
@@ -14,55 +16,21 @@ export interface Classroom {
   availability: "available" | "occupied" | "maintenance";
 }
 
-const BUILDINGS = ["Main Block", "Engineering Block", "Science Block", "Library", "Innovation Hub"];
-const ROOM_TYPES = ["LAB", "Lecture Hall", "Seminar Room", "Smart Classroom", "Conference Room"];
-
-function generateMockClassrooms(): Classroom[] {
-  const classrooms: Classroom[] = [];
-  let id = 1;
-  for (const building of BUILDINGS) {
-    const floors = building === "Library" ? 3 : building === "Innovation Hub" ? 2 : 4;
-    for (let floor = 1; floor <= floors; floor++) {
-      const roomsPerFloor = building === "Library" ? 2 : 3 + Math.floor(Math.random() * 3);
-      for (let r = 1; r <= roomsPerFloor; r++) {
-        const type = ROOM_TYPES[Math.floor(Math.random() * ROOM_TYPES.length)];
-        const deptNames = ["CSE", "ISE", "ECE", "EEE", "AIML", "CSE(AI)", "MECH", "CIVIL"];
-        const dept = deptNames[Math.floor(Math.random() * deptNames.length)];
-        const deviceCount = Math.floor(Math.random() * 4) + 2;
-        const deviceNames = ["Camera", "Smart Board", "Projector", "Speaker", "Edge Node", "WiFi AP"];
-        const devices = Array.from({ length: deviceCount }, (_, i) => deviceNames[i % deviceNames.length]);
-        const online = Math.floor(deviceCount * (0.7 + Math.random() * 0.3));
-
-        classrooms.push({
-          id: `room-${String(id).padStart(3, "0")}`,
-          roomNumber: `${building === "Main Block" ? "MB" : building === "Engineering Block" ? "EB" : building === "Science Block" ? "SB" : building === "Library" ? "LB" : "IH"}-${floor}${String(r).padStart(2, "0")}`,
-          building,
-          floor,
-          capacity: type === "Lecture Hall" ? 60 + Math.floor(Math.random() * 40) : type === "LAB" ? 30 + Math.floor(Math.random() * 20) : 20 + Math.floor(Math.random() * 20),
-          departmentId: `dept-${dept.toLowerCase()}`,
-          departmentName: dept,
-          devices,
-          deviceOnline: online,
-          deviceTotal: deviceCount,
-          isActive: true,
-          currentSession: Math.random() > 0.4 ? "Data Structures" : undefined,
-          availability: Math.random() > 0.5 ? "available" : Math.random() > 0.5 ? "occupied" : "maintenance",
-        });
-        id++;
-      }
-    }
-  }
-  return classrooms;
-}
-
 const CLASSROOM_STORE_KEY = "smartcampus-classrooms";
 
 export function initializeClassrooms() {
   if (typeof window === "undefined") return;
   const existing = localStorage.getItem(CLASSROOM_STORE_KEY);
-  if (!existing) {
-    const defaults = generateMockClassrooms();
-    localStorage.setItem(CLASSROOM_STORE_KEY, JSON.stringify(defaults));
+  if (existing) {
+    try {
+      const parsed = JSON.parse(existing);
+      // Cleanse any legacy mock rooms (e.g. MB-101, EB-xxx) from the client's storage
+      if (Array.isArray(parsed) && parsed.some((r: any) => r.roomNumber?.startsWith("MB-") || r.id?.startsWith("room-0"))) {
+        localStorage.removeItem(CLASSROOM_STORE_KEY);
+      }
+    } catch {
+      localStorage.removeItem(CLASSROOM_STORE_KEY);
+    }
   }
 }
 
@@ -78,47 +46,135 @@ export function saveClassroomsToStorage(rooms: Classroom[]) {
   localStorage.setItem(CLASSROOM_STORE_KEY, JSON.stringify(rooms));
 }
 
-export function getClassrooms(departmentId?: string): Promise<Classroom[]> {
-  const rooms = getClassroomsFromStorage();
-  const filtered = departmentId
-    ? rooms.filter((c) => c.departmentId === departmentId || c.departmentName === departmentId)
-    : rooms;
-  return Promise.resolve(filtered);
+function mapApiClassroom(c: any): Classroom {
+  let devicesList: string[] = ["Camera", "Smart Board"];
+  if (c.devices) {
+    try {
+      devicesList = typeof c.devices === "string" ? JSON.parse(c.devices) : c.devices;
+    } catch {
+      devicesList = ["Camera", "Smart Board"];
+    }
+  }
+
+  return {
+    id: c.id,
+    roomNumber: c.roomNumber,
+    building: c.building || "Main Block",
+    floor: c.floor || 1,
+    capacity: c.capacity || 40,
+    departmentId: c.departmentId || "",
+    departmentName: c.department?.code || c.department?.name || "CSE",
+    devices: devicesList,
+    deviceOnline: Math.max(1, devicesList.length),
+    deviceTotal: Math.max(1, devicesList.length),
+    isActive: c.isActive ?? true,
+    currentSession: undefined,
+    availability: "available",
+  };
 }
 
-export function getClassroomById(id: string): Promise<Classroom | undefined> {
-  const rooms = getClassroomsFromStorage();
-  return Promise.resolve(rooms.find((c) => c.id === id));
+export async function getClassrooms(departmentId?: string): Promise<Classroom[]> {
+  try {
+    const res = await api.get<any[]>("/classrooms");
+    if (res.success && Array.isArray(res.data)) {
+      const realRooms = res.data.map(mapApiClassroom);
+      saveClassroomsToStorage(realRooms);
+      return departmentId
+        ? realRooms.filter((c) => c.departmentId === departmentId || c.departmentName === departmentId)
+        : realRooms;
+    }
+  } catch {
+    /* Fallback to local storage if API is unreachable */
+  }
+
+  const stored = getClassroomsFromStorage();
+  return departmentId
+    ? stored.filter((c) => c.departmentId === departmentId || c.departmentName === departmentId)
+    : stored;
 }
 
-export function createClassroom(room: Omit<Classroom, "id" | "deviceOnline" | "deviceTotal">): Promise<Classroom> {
+export async function getClassroomById(id: string): Promise<Classroom | undefined> {
+  try {
+    const res = await api.get<any>(`/classrooms/${id}`);
+    if (res.success && res.data) {
+      return mapApiClassroom(res.data);
+    }
+  } catch {
+    /* Fallback */
+  }
   const rooms = getClassroomsFromStorage();
-  const nextId = `room-${String(rooms.length + 1).padStart(3, "0")}`;
+  return rooms.find((c) => c.id === id);
+}
+
+export async function createClassroom(room: Omit<Classroom, "id" | "deviceOnline" | "deviceTotal">): Promise<Classroom> {
+  try {
+    const res = await api.post<any>("/classrooms", {
+      roomNumber: room.roomNumber,
+      building: room.building,
+      floor: room.floor,
+      capacity: room.capacity,
+      departmentId: room.departmentId?.startsWith("dept-") ? undefined : room.departmentId,
+      devices: room.devices,
+    });
+
+    if (res.success && res.data) {
+      const created = mapApiClassroom(res.data);
+      const rooms = getClassroomsFromStorage().filter((r) => r.id !== created.id);
+      rooms.unshift(created);
+      saveClassroomsToStorage(rooms);
+      return created;
+    }
+  } catch (err) {
+    console.warn("API classroom create fallback:", err);
+  }
+
+  // Local storage fallback
+  const rooms = getClassroomsFromStorage();
+  const nextId = `room-${Date.now()}`;
   const newRoom: Classroom = {
     ...room,
     id: nextId,
-    deviceOnline: 3,
-    deviceTotal: 3,
+    deviceOnline: 2,
+    deviceTotal: 2,
   };
-  rooms.push(newRoom);
+  rooms.unshift(newRoom);
   saveClassroomsToStorage(rooms);
-  return Promise.resolve(newRoom);
+  return newRoom;
 }
 
-export function updateClassroom(id: string, updated: Partial<Classroom>): Promise<Classroom> {
+export async function updateClassroom(id: string, updated: Partial<Classroom>): Promise<Classroom> {
+  try {
+    await api.patch<any>(`/classrooms/${id}`, {
+      roomNumber: updated.roomNumber,
+      building: updated.building,
+      floor: updated.floor,
+      capacity: updated.capacity,
+      isActive: updated.isActive,
+      devices: updated.devices,
+    });
+  } catch {
+    /* Fallback */
+  }
+
   const rooms = getClassroomsFromStorage();
   const idx = rooms.findIndex((c) => c.id === id);
-  if (idx === -1) {
-    return Promise.reject(new Error("Classroom not found"));
+  if (idx !== -1) {
+    rooms[idx] = { ...rooms[idx], ...updated };
+    saveClassroomsToStorage(rooms);
+    return rooms[idx];
   }
-  rooms[idx] = { ...rooms[idx], ...updated };
-  saveClassroomsToStorage(rooms);
-  return Promise.resolve(rooms[idx]);
+  throw new Error("Classroom not found");
 }
 
-export function deleteClassroom(id: string): Promise<boolean> {
+export async function deleteClassroom(id: string): Promise<boolean> {
+  try {
+    await api.delete(`/classrooms/${id}`);
+  } catch {
+    /* Fallback */
+  }
+
   const rooms = getClassroomsFromStorage();
   const filtered = rooms.filter((c) => c.id !== id);
   saveClassroomsToStorage(filtered);
-  return Promise.resolve(true);
+  return true;
 }

@@ -32,10 +32,13 @@ from .face_tracker import IoUTracker, TrackedFace
 from .image_storage import image_storage
 from .face_clustering import face_clustering_service
 from ..api.websocket import websocket_manager
-from ..behavior.models import BehaviorType, BehaviorEvent
+import httpx
+from ..behavior.models import BehaviorType, BehaviorEvent, EngagementRecord
 from ..behavior.detector.pose_detector import PoseDetector, ObjectDetector
 from ..behavior.alerts.alert_engine import alert_engine
 from ..behavior.analytics.behavior_analytics import behavior_analytics
+from ..behavior.persistence import behavior_event_store
+from ..behavior.scoring.engagement_scorer import engagement_scorer
 
 logger = logging.getLogger("smartcampus.attendance")
 
@@ -68,18 +71,46 @@ class AttendanceEngine:
         self._behavior_worker_thread = None
         self._behavior_worker_running = False
 
-    def start_attendance_session(self, camera_id: str, class_id: str, source_path: str = "0") -> bool:
-        """Start a real-time attendance session on a camera feed."""
+    def start_attendance_session(
+        self,
+        camera_id: str,
+        class_id: str,
+        source_path: str = "0",
+        mode: str = "attendance",
+        session_id: Optional[str] = None,
+        enrolled_usns: Optional[List[str]] = None,
+    ) -> bool:
+        """Start a real-time monitoring session on a camera feed.
+
+        Args:
+            camera_id: Camera identifier.
+            class_id: Target class/lecture identifier.
+            source_path: USB Webcam index string or RTSP live stream URL.
+            mode: "attendance" (face recognition + attendance marking) or
+                  "behavior" (behavioural pipeline only — attendance is never marked).
+            session_id: Optional persisted attendance session identifier (e.g. SESS_xxx).
+            enrolled_usns: Optional roster of student USNs enrolled in this session.
+        """
         self._start_behavior_worker()
         # Override source_path with environment variable if configured
         if settings.rtsp_stream_url and source_path == "0":
             logger.info(f"Overriding camera source_path '0' with configured RTSP URL from settings: {settings.rtsp_stream_url}")
             source_path = settings.rtsp_stream_url
 
+        effective_session_id = session_id or f"SESS_{class_id}_{int(time.time())}"
+        norm_roster = {u.strip().upper() for u in enrolled_usns if u} if enrolled_usns is not None else None
+
         with self._lock:
             if camera_id in self.active_sessions:
-                logger.warning(f"Attendance session for camera {camera_id} is already running.")
-                return True
+                existing_mode = self.active_sessions[camera_id].get("mode", "attendance")
+                if existing_mode == mode:
+                    logger.warning(f"{mode} session for camera {camera_id} is already running.")
+                    return True
+                logger.error(
+                    f"Camera {camera_id} already runs a '{existing_mode}' session; "
+                    f"refusing to start a conflicting '{mode}' session."
+                )
+                return False
 
             # Start camera capture with a small buffer size (e.g. 3) to minimize delay for live streaming
             success = camera_service.start_camera(camera_id, source_path, buffer_size=3)
@@ -87,24 +118,101 @@ class AttendanceEngine:
                 logger.error(f"Failed to start camera capture for session on {camera_id}")
                 return False
 
+            self.session_recognized_students.clear()
             self.active_sessions[camera_id] = {
                 "class_id": class_id,
+                "session_id": effective_session_id,
+                "enrolled_usns": norm_roster,
                 "tracker": IoUTracker(iou_threshold=0.22, max_lost_frames=90),
                 "running": True,
-                "thread": None
+                "thread": None,
+                "mode": mode,
+                "started_at": time.time(),
+                "marked_students": set(),
+                "in_flight_students": set(),
             }
+
+        if mode == "behavior":
+            # Fresh temporal state per behavioural session — prevents evidence accumulated
+            # in a previous session from leaking into this one.
+            self._reset_behavior_state()
+            logger.info(f"Behavioral monitoring session started for camera {camera_id} (class: {class_id}, session: {effective_session_id})")
 
         thread = threading.Thread(
             target=self._session_loop,
             args=(camera_id,),
-            name=f"AttendancePipeline-{camera_id}",
+            name=f"{mode.capitalize()}Pipeline-{camera_id}",
             daemon=True
         )
         self.active_sessions[camera_id]["thread"] = thread
         thread.start()
         
-        logger.info(f"Started attendance session for camera {camera_id} (class: {class_id})")
+        logger.info(f"Started {mode} session for camera {camera_id} (class: {class_id}, session: {effective_session_id})")
         return True
+
+    def start_behavior_session(
+        self,
+        camera_id: str,
+        class_id: str,
+        source_path: str = "0",
+        session_id: Optional[str] = None,
+    ) -> bool:
+        """Start the behavioural monitoring pipeline only (attendance is NOT marked)."""
+        return self.start_attendance_session(
+            camera_id=camera_id,
+            class_id=class_id,
+            source_path=source_path,
+            mode="behavior",
+            session_id=session_id,
+        )
+
+    def stop_behavior_session(self, camera_id: str) -> bool:
+        """Stop the behavioural monitoring pipeline and resolve open behavioural events."""
+        stopped = self.stop_attendance_session(camera_id)
+        if stopped:
+            self._reset_behavior_state(resolve_reason="session_stopped")
+        return stopped
+
+    def _reset_behavior_state(self, resolve_reason: str = "session_started"):
+        """Clear temporal behavioural state and close any open behavioural events."""
+        try:
+            from ..behavior.detector.hybrid_behavior_pipeline import hybrid_behavior_pipeline
+            from ..behavior.tracker.behavior_tracker import behavior_tracker_service
+            behavior_event_store.resolve_all(resolve_reason)
+            behavior_tracker_service.reset()
+            hybrid_behavior_pipeline.reset_person_tracks()
+            engagement_scorer.reset()
+            self.student_behavior_states.clear()
+        except Exception as reset_err:
+            logger.warning(f"Failed to reset behavioral state: {reset_err}")
+
+    def get_behavior_session_status(self) -> Dict[str, Any]:
+        """Truthful behavioural session status for the monitoring interface."""
+        with self._lock:
+            sessions = [
+                {
+                    "camera_id": cam,
+                    "class_id": s.get("class_id"),
+                    "mode": s.get("mode", "attendance"),
+                    "started_at": s.get("started_at"),
+                    "running": bool(s.get("running")),
+                }
+                for cam, s in self.active_sessions.items()
+                if s.get("mode", "attendance") == "behavior"
+            ]
+
+        for s in sessions:
+            state = camera_service.get_camera_state(s["camera_id"])
+            s["camera_state"] = state.value if hasattr(state, "value") else str(state)
+            latest = camera_service.get_latest_frame(s["camera_id"])
+            s["last_frame_age_sec"] = round(time.time() - latest[0], 2) if latest else None
+            s["frame_available"] = latest is not None
+        return {
+            "sessions": sessions,
+            "active": len(sessions) > 0,
+            "persistence": behavior_event_store.stats(),
+            "timestamp": time.time(),
+        }
 
     def stop_attendance_session(self, camera_id: str) -> bool:
         """Stop capturing and terminate session loop.
@@ -120,6 +228,7 @@ class AttendanceEngine:
             if not session:
                 return False
             session["running"] = False
+            session_mode = session.get("mode", "attendance")
 
         camera_service.stop_camera(camera_id)
         
@@ -130,7 +239,10 @@ class AttendanceEngine:
         with self._lock:
             self.active_sessions.pop(camera_id, None)
 
-        logger.info(f"Stopped attendance session for camera {camera_id}")
+        if session_mode == "behavior":
+            self._reset_behavior_state(resolve_reason="session_stopped")
+
+        logger.info(f"Stopped {session_mode} session for camera {camera_id}")
         return True
 
     def _session_loop(self, camera_id: str):
@@ -138,6 +250,7 @@ class AttendanceEngine:
         try:
             tracker = self.active_sessions[camera_id]["tracker"]
             class_id = self.active_sessions[camera_id]["class_id"]
+            mode = self.active_sessions[camera_id].get("mode", "attendance")
 
             last_process_time = 0.0
             last_behavior_enqueue = 0.0
@@ -191,7 +304,14 @@ class AttendanceEngine:
                             continue
 
                         # Perform Face Recognition & Decision Logic
-                        recognized = self._process_tracked_face(db, camera_id, class_id, track, crop)
+                        recognized = self._process_tracked_face(
+                            db,
+                            camera_id,
+                            class_id,
+                            track,
+                            crop,
+                            allow_attendance=(mode != "behavior"),
+                        )
                         if recognized:
                             any_recognized = True
 
@@ -203,7 +323,10 @@ class AttendanceEngine:
                     )
 
                     # 4. Asynchronous Non-Blocking Behavior Queue Enqueue (controlled ~1.0s sample rate)
-                    if current_time - last_behavior_enqueue >= 1.0 and active_tracks:
+                    #    Behavioural mode always samples frames: Stage-1 person detection is evaluated
+                    #    even when no face track exists for a person in the frame.
+                    should_sample_behavior = bool(active_tracks) or mode == "behavior"
+                    if current_time - last_behavior_enqueue >= 1.0 and should_sample_behavior:
                         last_behavior_enqueue = current_time
                         track_snapshots = []
                         for t in active_tracks:
@@ -314,20 +437,27 @@ class AttendanceEngine:
                 cv2.putText(annotated, badge_text, (tx1 + 4, badge_y - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (255, 255, 255), 1, cv2.LINE_AA)
                 cv2.putText(annotated, sub_text, (tx1 + 4, badge_y - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.30, box_color, 1, cv2.LINE_AA)
             else:
-                # Unassigned / Unknown Face: Sleek tech corner brackets without solid black clutter
+                # Unassigned / Unknown Face: Sleek tech corner brackets with amber unknown badge
                 bw = tx2 - tx1
                 bh = ty2 - ty1
                 if bw >= 20 and bh >= 20:
-                    bracket_color = (180, 140, 40)
-                    b_len = max(4, min(10, bw // 4))
-                    cv2.line(annotated, (tx1, ty1), (tx1 + b_len, ty1), bracket_color, 1)
-                    cv2.line(annotated, (tx1, ty1), (tx1, ty1 + b_len), bracket_color, 1)
-                    cv2.line(annotated, (tx2, ty1), (tx2 - b_len, ty1), bracket_color, 1)
-                    cv2.line(annotated, (tx2, ty1), (tx2, ty1 + b_len), bracket_color, 1)
-                    cv2.line(annotated, (tx1, ty2), (tx1 + b_len, ty2), bracket_color, 1)
-                    cv2.line(annotated, (tx1, ty2), (tx1, ty2 - b_len), bracket_color, 1)
-                    cv2.line(annotated, (tx2, ty2), (tx2 - b_len, ty2), bracket_color, 1)
-                    cv2.line(annotated, (tx2, ty2), (tx2 - b_len, ty2), bracket_color, 1)
+                    bracket_color = (40, 160, 240)  # Amber / Warm Gold in BGR
+                    b_len = max(6, min(14, bw // 3))
+                    cv2.line(annotated, (tx1, ty1), (tx1 + b_len, ty1), bracket_color, 2)
+                    cv2.line(annotated, (tx1, ty1), (tx1, ty1 + b_len), bracket_color, 2)
+                    cv2.line(annotated, (tx2, ty1), (tx2 - b_len, ty1), bracket_color, 2)
+                    cv2.line(annotated, (tx2, ty1), (tx2, ty1 + b_len), bracket_color, 2)
+                    cv2.line(annotated, (tx1, ty2), (tx1 + b_len, ty2), bracket_color, 2)
+                    cv2.line(annotated, (tx1, ty2), (tx1, ty2 - b_len), bracket_color, 2)
+                    cv2.line(annotated, (tx2, ty2), (tx2 - b_len, ty2), bracket_color, 2)
+                    cv2.line(annotated, (tx2, ty2), (tx2 - b_len, ty2), bracket_color, 2)
+
+                    badge_text = f"? UNKNOWN (Track {t.track_id})"
+                    badge_y = max(hud_h + 22, ty1 - 6)
+                    badge_w = len(badge_text) * 7 + 10
+                    cv2.rectangle(annotated, (tx1 - 2, badge_y - 20), (tx1 + badge_w, badge_y), (15, 15, 20), -1)
+                    cv2.rectangle(annotated, (tx1 - 2, badge_y - 20), (tx1 + badge_w, badge_y), bracket_color, 1)
+                    cv2.putText(annotated, badge_text, (tx1 + 4, badge_y - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200, 220, 255), 1, cv2.LINE_AA)
 
         return annotated
 
@@ -380,20 +510,20 @@ class AttendanceEngine:
             sleep_dur = beh.get("accumulated_sleeping_duration", 0.0) if beh else 0.0
 
             # Color coding based on behavioral temporal state
-            if beh_state == "ALERTED":
-                if sleep_dur >= 10.0:
+            if beh_state in ("ALERTED", "PROBABLE_SLEEPING"):
+                if sleep_dur >= 30.0:
                     box_color = (0, 0, 255)       # Red
-                    pill_text = f"💤 POSSIBLE SLEEPING ({sleep_dur:.1f}s)"
+                    pill_text = f"💤 PROBABLE SLEEPING ({sleep_dur:.1f}s)"
                 else:
                     box_color = (0, 165, 255)     # Amber
                     pill_text = f"📱 PHONE USAGE ({phone_dur:.1f}s)"
             elif beh_state in ("POSSIBLE_PHONE_USAGE", "OBSERVING_PHONE"):
                 box_color = (0, 190, 240)         # Amber/Orange
                 pill_text = f"📱 OBSERVING PHONE ({phone_dur:.1f}s)"
-            elif beh_state in ("POSSIBLE_SLEEPING", "OBSERVING_POSTURE"):
+            elif beh_state in ("POSSIBLE_SLEEPING", "POSSIBLE_INATTENTION", "OBSERVING_POSTURE", "OBSERVING"):
                 box_color = (80, 80, 230)         # Soft Red
-                pill_text = f"⏳ SLUMPED POSTURE ({sleep_dur:.1f}s)"
-            elif beh_state == "INSUFFICIENT_VISUAL_EVIDENCE":
+                pill_text = f"⏳ OBSERVING ({sleep_dur:.1f}s)" if sleep_dur > 0 else "👀 INATTENTION"
+            elif beh_state in ("INSUFFICIENT_VISUAL_EVIDENCE", "INSUFFICIENT_EVIDENCE"):
                 box_color = (120, 120, 120)       # Gray
                 pill_text = "⚪ INSUFFICIENT EVIDENCE"
             else:
@@ -403,8 +533,14 @@ class AttendanceEngine:
             # Render bounding box
             cv2.rectangle(annotated, (tx1, ty1), (tx2, ty2), box_color, 2)
 
-            # Identification Header (Tracking ID / Student Name)
-            header_text = f"TRACK #{t.track_id}: {student_name}" if is_rec else f"TRACK #{t.track_id} (Unidentified)"
+            # Identification Header: Verified student name or clean anonymous UNKNOWN
+            import re
+            digits = re.findall(r'\d+', str(t.track_id))
+            anon_num = int(digits[-1]) if digits else 1
+            if is_rec and student_name:
+                header_text = f"{student_name} ({t.student_usn})"
+            else:
+                header_text = f"UNKNOWN (Track P-{anon_num:03d})"
             header_y = max(hud_h + 18, ty1 - 6)
             cv2.rectangle(annotated, (tx1 - 1, header_y - 18), (tx1 + len(header_text) * 7 + 6, header_y), (10, 15, 20), -1)
             cv2.rectangle(annotated, (tx1 - 1, header_y - 18), (tx1 + len(header_text) * 7 + 6, header_y), box_color, 1)
@@ -438,7 +574,7 @@ class AttendanceEngine:
             if bind.dialect.name == "postgresql":
                 from sqlalchemy import text
                 row = db.execute(
-                    text('SELECT id, "fullName" FROM "Student" WHERE "studentId" = :u OR usn = :u LIMIT 1'),
+                    text('SELECT id, "fullName" FROM "Student" WHERE "studentId" = :u OR usn = :u OR "rollNumber" = :u OR UPPER("fullName") = :u LIMIT 1'),
                     {"u": clean_usn}
                 ).fetchone()
                 if row:
@@ -464,12 +600,12 @@ class AttendanceEngine:
         if not hasattr(self, "_section_usn_cache"):
             self._section_usn_cache = {}
 
-        # Determine target section from class_id (e.g. "room-023", "CSE_6A", "Section A", "CSE_7A")
+        # Determine target section from class_id (e.g. "room-023", "CSE_6A", "Section A", "CSE_7A", "7th Sem - Section B")
         target_sec = "A"
         clean_cid = (class_id or "").upper()
-        if "SEC_B" in clean_cid or "SECTION_B" in clean_cid or "-B" in clean_cid or "024" in clean_cid:
+        if any(b_pattern in clean_cid for b_pattern in ["SEC_B", "SECTION_B", "SECTION B", "SEC B", "SEC-B", "-B", "— B", "—B", " 7B", "7-B", "024"]):
             target_sec = "B"
-        elif "SEC_A" in clean_cid or "SECTION_A" in clean_cid or "-A" in clean_cid or "023" in clean_cid or "7A" in clean_cid or "6A" in clean_cid:
+        elif any(a_pattern in clean_cid for a_pattern in ["SEC_A", "SECTION_A", "SECTION A", "SEC A", "SEC-A", "-A", "— A", "—A", " 7A", "7-A", "023", "7A", "6A"]):
             target_sec = "A"
 
         cache_key = f"SEC_{target_sec}"
@@ -502,10 +638,9 @@ class AttendanceEngine:
         except Exception:
             pass
 
-        # If still empty (e.g. in test env), generate default Section A range
-        if not usns and target_sec == "A":
-            for i in range(1, 65):
-                usns.add(f"1VI23CS{i:03d}")
+        # If no students enrolled in target section, do not synthesize fake identities
+        if not usns:
+            logger.warning(f"No enrolled students found for section filter '{target_sec}'. Roster is unpopulated.")
 
         if usns:
             self._section_usn_cache[cache_key] = usns
@@ -514,8 +649,14 @@ class AttendanceEngine:
 
         return None
 
-    def _process_tracked_face(self, db: Session, camera_id: str, class_id: str, track: TrackedFace, crop: np.ndarray):
-        """Evaluates a tracked face and executes matching, attendance, or learning candidates."""
+    def _process_tracked_face(self, db: Session, camera_id: str, class_id: str, track: TrackedFace, crop: np.ndarray, allow_attendance: bool = True):
+        """Evaluates a tracked face and executes matching, attendance, or learning candidates.
+
+        Args:
+            allow_attendance: When False (behavioural monitoring mode) the person may still be
+                identified so behavioural events can be attributed, but attendance is never
+                marked, broadcast, or persisted.
+        """
         # If track has already been marked for attendance and candidate captured, skip redundant re-inference
         if getattr(track, "attendance_marked", False) and getattr(track, "candidate_processed", False):
             return True
@@ -541,28 +682,88 @@ class AttendanceEngine:
 
         # Query FAISS Index with classroom threshold and section whitelist
         rec_thresh = max(0.60, float(getattr(settings, "recognition_confidence_threshold", 0.60)))
-        allowed_usns = self._get_section_usns(db, class_id)
-            
-        match = faiss_service.search_face(emb, threshold=rec_thresh, allowed_usns=allowed_usns)
-        
+        margin_thresh = float(getattr(settings, "margin_ambiguity_threshold", 0.10))
+
+        # Restrict candidate matching strictly to active session's enrolled students
+        active_sess = self.active_sessions.get(camera_id, {})
+        allowed_usns = active_sess.get("enrolled_usns")
+        if allowed_usns is None:
+            allowed_usns = self._get_section_usns(db, class_id)
+
+        norm_allowed = {u.strip().upper() for u in allowed_usns if u} if allowed_usns else set()
+
+        # Strict safety check: If no enrolled students are authorized for this session,
+        # live recognition must reject all faces as UNKNOWN. Never fall back to global FAISS or prototypes.
+        if not norm_allowed:
+            quality_val = float(getattr(track, "quality_score", 0.85))
+            self._save_unknown_face(db, crop, emb, quality_val, camera_id, class_id)
+            return False
+
+        # Check section-scoped candidates for a suggested match hint on unknown faces (no global leakage)
+        sugg_usn = None
+        sugg_conf = 0.0
+        try:
+            scoped_match = faiss_service.search_face(emb, threshold=0.55, allowed_usns=norm_allowed)
+            if scoped_match:
+                sugg_usn, sugg_conf = scoped_match
+        except Exception:
+            pass
+
+        # Retrieve top candidates strictly within allowed enrolled roster
+        top_candidates = []
+        candidates = faiss_service.search_top_k(emb, k=10, threshold=rec_thresh, allowed_usns=norm_allowed)
+        top_candidates = [(u, s) for u, s in candidates if u.strip().upper() in norm_allowed]
+
+        # Group and deduplicate candidates by distinct student USN
+        unique_candidates = []
+        seen_usns = set()
+        for cand_usn, cand_sim in top_candidates:
+            u_clean = cand_usn.strip().upper()
+            if u_clean not in seen_usns:
+                seen_usns.add(u_clean)
+                unique_candidates.append((cand_usn, cand_sim))
+
         confidence = 0.0
         matched_usn = None
-        
-        if match:
-            cand_usn, cand_conf = match
-            if cand_usn:
-                matched_usn = cand_usn
-                confidence = cand_conf
+        is_ambiguous = False
 
-        # Self-improving online prototype matching: compare with running student prototypes
-        if hasattr(self, "_student_prototypes") and self._student_prototypes and emb is not None:
-            norm_allowed = {u.strip().upper() for u in allowed_usns} if allowed_usns else None
-            for p_usn, p_vec in self._student_prototypes.items():
-                if norm_allowed and p_usn.strip().upper() not in norm_allowed:
-                    continue
+        if len(unique_candidates) >= 2:
+            (top1_usn, top1_sim), (top2_usn, top2_sim) = unique_candidates[0], unique_candidates[1]
+            margin = top1_sim - top2_sim
+            if margin < margin_thresh:
+                is_ambiguous = True
+                logger.warning(
+                    f"Ambiguous identity: Top-1 {top1_usn} (sim={top1_sim:.3f}) vs Top-2 {top2_usn} (sim={top2_sim:.3f}), "
+                    f"margin={margin:.3f} < threshold={margin_thresh}. Rejecting automated attendance confirmation."
+                )
+                now = time.time()
+                active_sess = self.active_sessions.get(camera_id, {})
+                eff_sess_id = active_sess.get("session_id") or class_id
+                if now - self.broadcast_cooldowns.get(f"amb_{top1_usn}_{top2_usn}", 0) > 8.0:
+                    self.broadcast_cooldowns[f"amb_{top1_usn}_{top2_usn}"] = now
+                    websocket_manager.broadcast_sync("AMBIGUOUS_RECOGNITION", {
+                        "candidate1": {"usn": top1_usn, "confidence": round(float(top1_sim), 3)},
+                        "candidate2": {"usn": top2_usn, "confidence": round(float(top2_sim), 3)},
+                        "margin": round(float(margin), 3),
+                        "camera_id": camera_id,
+                        "session_id": eff_sess_id,
+                        "class_id": class_id,
+                        "track_id": track.track_id,
+                        "time": datetime.now().strftime("%I:%M:%S %p"),
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+            else:
+                matched_usn = top1_usn
+                confidence = top1_sim
+        elif len(unique_candidates) == 1:
+            matched_usn, confidence = unique_candidates[0]
+
+        # Self-improving online prototype matching: refine similarity for verified matched student
+        if matched_usn and not is_ambiguous and hasattr(self, "_student_prototypes") and self._student_prototypes and emb is not None:
+            p_vec = self._student_prototypes.get(matched_usn)
+            if p_vec is not None:
                 proto_sim = float(np.dot(emb, p_vec))
-                if proto_sim > confidence and proto_sim >= rec_thresh:
-                    matched_usn = p_usn
+                if proto_sim > confidence:
                     confidence = proto_sim
 
         if not hasattr(track, "confidence_history"):
@@ -601,29 +802,54 @@ class AttendanceEngine:
                 "time": datetime.now().strftime("%I:%M:%S %p")
             }
 
-            # Broadcast ATTENDANCE_MARKED and STUDENT_RECOGNIZED events
+            # Broadcast live recognition telemetry (STUDENT_RECOGNIZED)
+            # ATTENDANCE_MARKED is strictly held until verified backend persistence
             now = time.time()
+            active_sess = self.active_sessions.get(camera_id, {})
+            eff_sess_id = active_sess.get("session_id") or class_id
             if now - self.broadcast_cooldowns.get(matched_usn, 0) > 8.0:
-                self.broadcast_cooldowns[matched_usn] = now
                 event_data = {
                     "attendance_id": f"att_{int(time.time()*1000)}_{matched_usn}",
                     "usn": matched_usn,
                     "studentId": matched_usn,
                     "name": student_name,
                     "studentName": student_name,
+                    "session_id": eff_sess_id,
                     "class_id": class_id,
+                    "match_status": "RECOGNIZED",
                     "time": datetime.now().strftime("%I:%M:%S %p"),
+                    "timestamp": datetime.utcnow().isoformat(),
                     "confidence": round(float(confidence), 3),
-                    "camera_id": camera_id
+                    "camera_id": camera_id,
+                    "track_id": track.track_id,
                 }
-                websocket_manager.broadcast_sync("ATTENDANCE_MARKED", event_data)
                 websocket_manager.broadcast_sync("STUDENT_RECOGNIZED", event_data)
 
             # Rule: Visibility >= 5.0s AND average confidence >= threshold
             track_duration = time.time() - getattr(track, "first_seen", time.time())
-            if track_duration >= 5.0 and avg_conf >= rec_thresh:
-                self._mark_student_attendance(db, matched_usn, class_id, avg_conf, camera_id)
+            marked_in_session = matched_usn in active_sess.get("marked_students", set())
+            in_flight = matched_usn in active_sess.get("in_flight_students", set())
+            if marked_in_session:
                 track.attendance_marked = True
+
+            if (allow_attendance and
+                not getattr(track, "attendance_marked", False) and
+                not marked_in_session and
+                not in_flight and
+                track_duration >= 5.0 and
+                avg_conf >= rec_thresh):
+
+                if "in_flight_students" in active_sess:
+                    active_sess["in_flight_students"].add(matched_usn)
+                try:
+                    marked = self._mark_student_attendance(db, matched_usn, class_id, avg_conf, camera_id)
+                    if marked:
+                        track.attendance_marked = True
+                        if "marked_students" in active_sess:
+                            active_sess["marked_students"].add(matched_usn)
+                finally:
+                    if "in_flight_students" in active_sess:
+                        active_sess["in_flight_students"].discard(matched_usn)
 
             # Continuous learning check
             quality_score = float(getattr(track, "quality_score", 0.0))
@@ -654,6 +880,10 @@ class AttendanceEngine:
             return True
 
         # Save unrecognized face detections below recognition threshold
+        track.student_usn = None
+        track.student_name = None
+        track.recognition_confidence = 0.0
+
         quality_val = float(getattr(track, "quality_score", 0.85))
         self._save_unknown_face(
             db, 
@@ -662,54 +892,25 @@ class AttendanceEngine:
             quality_val, 
             camera_id, 
             class_id, 
-            suggestion_usn=matched_usn if matched_usn else None, 
-            suggestion_conf=confidence if matched_usn else 0.0
+            suggestion_usn=sugg_usn or (matched_usn if matched_usn else None), 
+            suggestion_conf=sugg_conf or (confidence if matched_usn else 0.0)
         )
         return False
 
     def _mark_student_attendance(self, db: Session, usn: str, class_id: str, confidence: float, camera_id: str = None):
-        """Mark student attendance in the PostgreSQL/SQLite database if not already marked today."""
+        """Marks attendance by dispatching to the NestJS backend and local legacy store.
+
+        Note: Agent 1 / NestJS is the sole owner of attendance persistence and PostgreSQL contracts.
+        """
         st_id, st_name = self._get_student_details(db, usn)
-        if not st_id:
-            return
+        effective_name = st_name or usn
 
         today = datetime.now().strftime("%Y-%m-%d")
         now_dt = datetime.now()
+        active_sess = self.active_sessions.get(camera_id, {})
+        effective_session_id = active_sess.get("session_id") or getattr(self, "current_session_id", None) or class_id
 
-        # 1. Upsert into PostgreSQL AttendanceRecord (if dialect is postgresql)
-        try:
-            bind = db.get_bind()
-            if bind.dialect.name == "postgresql":
-                from sqlalchemy import text
-                session_id = getattr(self, "current_session_id", None) or class_id or "default_session"
-                rec_id = f"att_{int(time.time() * 1000)}_{usn}"
-                db.execute(
-                    text('''
-                        INSERT INTO "AttendanceRecord" 
-                        ("id", "sessionId", "studentId", "studentName", "confidence", "cameraId", "method", "isVerified", "markedAt", "statusEnum")
-                        VALUES (:id, :sessionId, :studentId, :studentName, :confidence, :cameraId, 'FACE_RECOGNITION', true, :markedAt, 'PRESENT')
-                        ON CONFLICT ("sessionId", "studentId") DO UPDATE 
-                        SET "confidence" = EXCLUDED."confidence", "markedAt" = EXCLUDED."markedAt"
-                    '''),
-                    {
-                        "id": rec_id,
-                        "sessionId": session_id,
-                        "studentId": st_id,
-                        "studentName": st_name,
-                        "confidence": float(confidence),
-                        "cameraId": camera_id or "webcam",
-                        "markedAt": now_dt
-                    }
-                )
-                db.commit()
-        except Exception as p_err:
-            logger.debug(f"AttendanceRecord insert notice: {p_err}")
-            try:
-                db.rollback()
-            except Exception:
-                pass
-
-        # 2. Also record in legacy Attendance table if present
+        # 1. Record in local SQLite attendance table for offline/standalone operation if present
         try:
             legacy_student = db.query(Student).filter(Student.usn == usn).first()
             if legacy_student:
@@ -733,30 +934,58 @@ class AttendanceEngine:
                     db.add(att)
                     db.commit()
         except Exception as l_err:
-            logger.debug(f"Legacy attendance record error: {l_err}")
+            logger.debug(f"Local legacy attendance record notice: {l_err}")
 
-        # 3. Call NestJS backend /api/attendance/ingest
+        # 2. Call NestJS backend /api/attendance/ingest with authoritative persisted session ID
+        persisted = False
         try:
             import httpx
-            session_id = getattr(self, "current_session_id", None) or class_id or "default_session"
             url = f"{settings.backend_api_url.rstrip('/')}/api/attendance/ingest"
             headers = {
                 "Content-Type": "application/json",
-                "x-api-key": settings.encryption_key
+                "x-api-key": settings.internal_api_key
             }
             payload_ingest = {
-                "sessionId": session_id,
+                "sessionId": effective_session_id,
                 "studentId": usn,
-                "studentName": st_name,
+                "studentName": effective_name,
                 "confidence": float(round(confidence, 3)),
                 "cameraId": camera_id or "webcam",
                 "method": "FACE_RECOGNITION"
             }
             r = httpx.post(url, json=payload_ingest, headers=headers, timeout=3.0)
             if r.status_code in (200, 201):
-                logger.info(f"Successfully ingested attendance to NestJS for student {st_name} ({usn})")
+                logger.info(f"Successfully ingested attendance to NestJS for student {effective_name} ({usn}) in session {effective_session_id}")
+                persisted = True
+            else:
+                logger.warning(f"NestJS attendance ingestion returned {r.status_code}: {r.text}")
         except Exception as e:
-            logger.debug(f"Notice calling NestJS /api/attendance/ingest: {e}")
+            logger.warning(f"Notice calling NestJS /api/attendance/ingest: {e}")
+
+        # Broadcast ATTENDANCE_MARKED ONLY after verified persistence in PostgreSQL backend
+        if persisted:
+            if "marked_students" in active_sess:
+                active_sess["marked_students"].add(usn)
+            now = time.time()
+            if now - self.broadcast_cooldowns.get(usn, 0) > 8.0:
+                self.broadcast_cooldowns[usn] = now
+                event_data = {
+                    "attendance_id": f"att_{int(time.time()*1000)}_{usn}",
+                    "usn": usn,
+                    "studentId": usn,
+                    "name": effective_name,
+                    "studentName": effective_name,
+                    "session_id": effective_session_id,
+                    "class_id": class_id,
+                    "match_status": "CONFIRMED",
+                    "time": datetime.now().strftime("%I:%M:%S %p"),
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "confidence": round(float(confidence), 3),
+                    "camera_id": camera_id,
+                }
+                websocket_manager.broadcast_sync("ATTENDANCE_MARKED", event_data)
+
+        return persisted
 
     def _process_learning_candidate(self, db: Session, usn: str, crop: np.ndarray, embedding: np.ndarray, quality_score: float, similarity_score: float):
         """Validates duplicate rules and logs high-quality learning samples in CandidateImage queue."""
@@ -798,9 +1027,50 @@ class AttendanceEngine:
             db.commit()
             logger.info(f"New learning candidate captured for {student.name} ({usn}) - Quality: {quality_score}, Similarity: {similarity_score}")
 
+            # Actively improve cluster representation from live stream:
+            # 1. Enrich FAISS index with high-quality live stream vector using bounded profile samples
+            if quality_score >= 85.0 and embedding is not None and len(embedding) == 512:
+                try:
+                    added = faiss_service.add_profile_sample(usn, embedding, max_samples=10, dup_threshold=0.95)
+                    if added:
+                        faiss_service.save_index()
+                        logger.info(f"Continuous learning: Enriched FAISS index for {usn} with live stream vector (quality: {quality_score:.1f}%)")
+                except Exception as f_err:
+                    logger.debug(f"FAISS dynamic enrichment notice: {f_err}")
+
+            # 2. Update student profile photo in NestJS backend if high quality
+            try:
+                import httpx
+                best_rel = img_path
+                if "storage/" in best_rel:
+                    best_rel = best_rel[best_rel.find("storage/"):]
+                with httpx.Client(timeout=1.5) as client:
+                    client.post(
+                        f"{settings.backend_api_url}/api/students/sync-enrollment",
+                        headers={"x-api-key": settings.internal_api_key},
+                        json={
+                            "usn": usn,
+                            "profilePhoto": best_rel,
+                        }
+                    )
+            except Exception as sync_err:
+                logger.debug(f"Background profile photo sync notice: {sync_err}")
+
     def _save_unknown_face(self, db: Session, crop: np.ndarray, embedding: np.ndarray, quality_score: float,
                           camera_id: str, class_id: str, suggestion_usn: str = None, suggestion_conf: float = 0.0):
         """Save unrecognized face crops and trigger teacher alerts."""
+        if crop is None or not isinstance(crop, np.ndarray) or crop.size == 0:
+            return
+        ch, cw = crop.shape[:2]
+        if cw < 20 or ch < 20:
+            return
+        gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
+        mean_val = float(np.mean(gray))
+        sat_white = float(np.mean(gray >= 245))
+        if sat_white > 0.35 or mean_val > 240.0 or mean_val < 15.0:
+            logger.debug(f"Rejected invalid/glare unknown crop: mean={mean_val:.1f}, sat_white={sat_white:.2f}")
+            return
+
         # Run duplicate filter for unassigned unknown profiles
         matched_cluster = face_clustering_service.duplicate_unknown_filter(db, embedding)
         
@@ -846,7 +1116,11 @@ class AttendanceEngine:
             "quality_score": unknown_face.quality_score,
             "classroom": class_id,
             "camera": camera_id,
-            "timestamp": unknown_face.created_at.isoformat(),
+            "timestamp": (
+                unknown_face.created_at.isoformat()
+                if getattr(unknown_face, "created_at", None) is not None
+                else datetime.utcnow().isoformat()
+            ),
             "possible_match": {
                 "usn": suggestion_usn,
                 "confidence": round(suggestion_conf, 3)
@@ -863,10 +1137,14 @@ class AttendanceEngine:
         confidence_threshold: float = 0.58,
         required_confirmations: int = 3,
         max_frames: Optional[int] = None,
+        session_id: Optional[str] = None,
+        enrolled_usns: Optional[List[str]] = None,
     ) -> dict:
         """Process a classroom video file for attendance recognition against FAISS."""
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
+
+        target_allowed = {u.strip().upper() for u in enrolled_usns if u} if enrolled_usns is not None else None
 
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -934,7 +1212,7 @@ class AttendanceEngine:
                     if emb is None:
                         continue
 
-                    match = faiss_service.search_face(emb, threshold=confidence_threshold)
+                    match = faiss_service.search_face(emb, threshold=confidence_threshold, allowed_usns=target_allowed)
                     if match:
                         usn, conf = match
                         faces_matched += 1
@@ -961,8 +1239,6 @@ class AttendanceEngine:
                     else:
                         unknown_faces += 1
 
-            frame_idx += 1
-
         cap.release()
 
         confirmed_records = []
@@ -984,6 +1260,7 @@ class AttendanceEngine:
 
                 confirmed_records.append({
                     "usn": usn,
+                    "session_id": session_id,
                     "status": "PRESENT",
                     "confidence": round(avg_conf, 3),
                     "observation_count": len(confs),
@@ -996,6 +1273,7 @@ class AttendanceEngine:
 
         return {
             "video_path": video_path,
+            "session_id": session_id,
             "class_id": class_id,
             "video_metadata": {
                 "resolution": f"{width}x{height}",
@@ -1032,6 +1310,7 @@ class AttendanceEngine:
         from ..behavior.tracker.behavior_tracker import behavior_tracker_service
 
         logger.info("Two-Stage Hybrid Behavioral Worker Loop started.")
+        last_engagement_push: Dict[str, float] = {}
 
         while self._behavior_worker_running:
             try:
@@ -1041,6 +1320,7 @@ class AttendanceEngine:
 
             try:
                 camera_id, class_id, frame, tracks_snapshot, timestamp = item
+                actual_session_id = self.active_sessions.get(camera_id, {}).get("session_id", class_id)
 
                 # 1. Execute Two-Stage Hybrid Behavioral Pipeline
                 generated_alerts = hybrid_behavior_pipeline.process_frame(
@@ -1049,11 +1329,40 @@ class AttendanceEngine:
                     timestamp=timestamp
                 )
 
-                # 2. Update real-time state telemetry for all active tracked persons
+                # 2. Update real-time state telemetry & compute genuine engagement scores
                 for person in behavior_tracker_service.get_all_tracks():
                     p_dict = person.to_dict()
                     p_dict["camera_id"] = camera_id
                     p_dict["class_id"] = class_id
+                    p_dict["session_id"] = actual_session_id
+
+                    # Genuine Engagement Scoring (no placeholder/fabricated scores)
+                    eng_record = engagement_scorer.compute_score_from_track(
+                        person=person,
+                        session_id=actual_session_id,
+                        frame_time=timestamp,
+                    )
+                    if eng_record is not None:
+                        p_dict["engagement"] = {
+                            "score": eng_record.score,
+                            "level": eng_record.level.value if hasattr(eng_record.level, "value") else str(eng_record.level),
+                            "attention_score": eng_record.attention_score,
+                            "posture_score": eng_record.posture_score,
+                            "phone_penalty": eng_record.phone_usage_penalty,
+                            "activity_score": eng_record.activity_score,
+                            "scoring_version": eng_record.scoring_version,
+                        }
+                        # Periodically persist verified student engagement (15s interval)
+                        if person.is_verified_identity and person.student_id:
+                            last_push = last_engagement_push.get(person.student_id, 0.0)
+                            if timestamp - last_push >= 15.0:
+                                last_engagement_push[person.student_id] = timestamp
+                                success = self._push_engagement_record(eng_record)
+                                if not success:
+                                    # Safe retry delay (5s) without unbounded memory queue or duplicate flood
+                                    last_engagement_push[person.student_id] = timestamp - 10.0
+                    else:
+                        p_dict["engagement"] = None
                     
                     # Store by primary key (USN or Track ID)
                     key = person.student_id if (person.is_verified_identity and person.student_id) else f"TRACK_{person.track_id}"
@@ -1067,20 +1376,90 @@ class AttendanceEngine:
                         BehaviorType.PHONE_USAGE if alert["event_type"] == "PHONE_USAGE"
                         else BehaviorType.SLEEPING
                     )
+                    is_verified = bool(alert.get("is_verified_identity") and alert.get("student_id"))
+                    s_usn = alert.get("student_id") if is_verified else None
+                    s_name = alert.get("student_name") if is_verified else f"UNKNOWN (Track P-{str(alert['track_id']).zfill(3)})"
                     self._trigger_confirmed_behavior_alert(
-                        student_usn=alert.get("student_id") or f"TRK-{alert['track_id']}",
-                        student_name=alert.get("student_name") or f"Student (Track {alert['track_id']})",
+                        student_usn=s_usn or f"TRK-{alert['track_id']}",
+                        student_name=s_name,
                         class_id=class_id,
                         camera_id=camera_id,
                         behavior_type=b_type,
-                        confidence=alert.get("confidence", 0.85),
+                        confidence=alert.get("confidence", 0.90),
                         duration=alert.get("duration", 0.0),
                         title=alert.get("title", ""),
-                        description=alert.get("description", "")
+                        description=alert.get("description", ""),
+                        track_id=str(alert.get("track_id")),
+                        timestamp=timestamp,
+                        identified=is_verified,
                     )
+
+                # 4. Close episodes whose evidence has ended (prevents stale open events)
+                self._sync_behavior_events(camera_id=camera_id, class_id=class_id, timestamp=timestamp)
 
             except Exception as item_err:
                 logger.error(f"Error in hybrid behavior worker: {item_err}")
+
+    def _push_engagement_record(self, record: EngagementRecord) -> bool:
+        """Asynchronously dispatch verified student engagement record to backend API."""
+        base = settings.backend_api_url.rstrip("/")
+        url = f"{base}/api/behavior/engagement"
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": settings.internal_api_key,
+        }
+        payload = {
+            "studentId": record.student_id,
+            "sessionId": record.session_id,
+            "score": record.score,
+            "level": record.level.value if hasattr(record.level, "value") else str(record.level),
+            "attentionScore": record.attention_score,
+            "postureScore": record.posture_score,
+            "phonePenalty": record.phone_usage_penalty,
+            "activityScore": record.activity_score,
+        }
+        try:
+            with httpx.Client(timeout=3.0) as client:
+                resp = client.post(url, json=payload, headers=headers)
+            if resp.status_code in (200, 201):
+                return True
+            else:
+                logger.warning(f"Failed to persist engagement record: HTTP {resp.status_code} - {resp.text}")
+                return False
+        except Exception as exc:
+            logger.warning(f"Could not connect to backend for engagement persistence: {exc}")
+            return False
+
+    def _sync_behavior_events(self, camera_id: str, class_id: str, timestamp: float):
+        """Resolve persisted behavioural episodes once their supporting evidence ends.
+
+        An episode is closed when the person's temporal state no longer supports the
+        behaviour (posture normalised, phone evidence interrupted), when the track was
+        lost, or when the track disappeared entirely.
+        """
+        from ..behavior.tracker.behavior_tracker import behavior_tracker_service, BehaviorTemporalState
+
+        still_supported = set()
+        for person in behavior_tracker_service.get_all_tracks():
+            tid = str(person.track_id)
+            if person.phone_evidence_start is not None:
+                still_supported.add(("PHONE_USAGE", tid))
+            if person.sleeping_evidence_start is not None:
+                still_supported.add(("PROBABLE_SLEEPING", tid))
+                still_supported.add(("POSSIBLE_SLEEPING_POSTURE", tid))
+            # Track lost for longer than the tracker timeout: close everything for it
+            if person.current_state == BehaviorTemporalState.TRACK_LOST:
+                still_supported.discard(("PHONE_USAGE", tid))
+                still_supported.discard(("PROBABLE_SLEEPING", tid))
+                still_supported.discard(("POSSIBLE_SLEEPING_POSTURE", tid))
+
+        for ev in behavior_event_store.active_events():
+            if ev.camera_id != camera_id:
+                continue
+            if (ev.event_type, ev.track_id) not in still_supported:
+                behavior_event_store.resolve_event(
+                    ev.event_type, ev.track_id, reason="evidence_cleared", timestamp=timestamp
+                )
 
     def _trigger_confirmed_behavior_alert(
         self,
@@ -1092,22 +1471,24 @@ class AttendanceEngine:
         confidence: float,
         duration: float = 0.0,
         title: str = "",
-        description: str = ""
+        description: str = "",
+        track_id: Optional[str] = None,
+        timestamp: Optional[float] = None,
+        identified: bool = False,
     ):
-        """Emit behavioral alert and persist to NestJS backend with cooldown deduplication."""
-        cooldown_key = f"{student_usn}_{behavior_type.value}"
-        now = time.time()
-        last_alert_time = self.behavior_alert_cooldowns.get(cooldown_key, 0.0)
-        if now - last_alert_time < 60.0:  # 60s cooldown prevents duplicate alerts
-            return
-        self.behavior_alert_cooldowns[cooldown_key] = now
+        """Emit a behavioral alert and persist it through the event lifecycle (idempotent)."""
+        now = timestamp if timestamp is not None else time.time()
+        event_type = "PHONE_USAGE" if behavior_type == BehaviorType.PHONE_USAGE else "PROBABLE_SLEEPING"
+        tid = str(track_id or student_usn)
+        actual_session_id = self.active_sessions.get(camera_id, {}).get("session_id", class_id)
 
         # 1. Record in local AI analytics
         event = BehaviorEvent(
-            student_id=student_usn,
+            student_id=student_usn if identified else None,
+            track_id=tid,
             behavior_type=behavior_type,
             confidence=confidence,
-            start_time=now,
+            start_time=now - duration,
             duration=duration,
             classroom_id=class_id,
             camera_id=camera_id,
@@ -1116,50 +1497,43 @@ class AttendanceEngine:
         behavior_analytics.record_behavior(event)
         alert_engine.process_behavior(event)
 
-        # 2. Broadcast via WebSocket to teacher and live portals
+        # 2. Persist through the deduplicating event lifecycle (one DB row per continuous episode)
+        behavior_event_store.record_alert(
+            event_type=event_type,
+            track_id=tid,
+            class_id=class_id,
+            session_id=actual_session_id,
+            camera_id=camera_id,
+            timestamp=now,
+            duration=duration,
+            confidence=confidence,
+            student_id=student_usn if identified else None,
+            student_name=student_name,
+            identified=identified,
+            metadata={"title": title, "description": description},
+        )
+
+        # 3. Broadcast via WebSocket to teacher and live portals (throttled per person/type)
+        cooldown_key = f"{tid}_{behavior_type.value}"
+        if now - self.behavior_alert_cooldowns.get(cooldown_key, 0.0) < 60.0:
+            return
+        self.behavior_alert_cooldowns[cooldown_key] = now
+
         websocket_manager.broadcast_sync("BEHAVIOR_ALERT", {
-            "student_id": student_usn,
+            "student_id": student_usn if identified else None,
             "student_name": student_name,
+            "identified": identified,
+            "track_id": tid,
             "behavior_type": behavior_type.value,
+            "event_type": event_type,
             "confidence": confidence,
             "duration": round(duration, 1),
-            "title": title or ("Mobile Phone Usage Detected" if behavior_type == BehaviorType.PHONE_USAGE else "Possible sleeping posture"),
+            "title": title or ("Mobile Phone Usage Detected" if behavior_type == BehaviorType.PHONE_USAGE else f"Sleeping — {student_name}"),
             "description": description,
             "class_id": class_id,
             "camera_id": camera_id,
             "time": datetime.now().strftime("%I:%M:%S %p"),
         })
-
-        # 3. Post to NestJS API /api/behavior/ingest
-        try:
-            import httpx
-            url = f"{settings.backend_api_url.rstrip('/')}/api/behavior/ingest"
-            headers = {
-                "Content-Type": "application/json",
-                "x-api-key": settings.encryption_key
-            }
-            payload = {
-                "studentId": student_usn if not student_usn.startswith("TRK-") else None,
-                "sessionId": class_id,
-                "behaviorType": behavior_type.value,
-                "confidence": confidence,
-                "duration": duration,
-                "classroomId": class_id,
-                "metadata": {
-                    "studentName": student_name,
-                    "studentUsn": student_usn,
-                    "cameraId": camera_id,
-                    "title": title,
-                    "description": description
-                }
-            }
-            resp = httpx.post(url, json=payload, headers=headers, timeout=4.0)
-            if resp.status_code in (200, 201):
-                logger.info(f"Persisted behavior alert {behavior_type.value} for {student_name} ({student_usn}) to NestJS")
-            else:
-                logger.warning(f"NestJS behavior ingest returned status {resp.status_code}: {resp.text}")
-        except Exception as e:
-            logger.error(f"Error posting behavior event to NestJS: {e}")
 
     def get_live_behavior_metrics(self, camera_id: Optional[str] = None) -> Dict[str, Any]:
         """Retrieve live backend-derived behavioral telemetry for active classroom session."""

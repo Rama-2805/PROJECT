@@ -124,10 +124,16 @@ class FaceClusteringService:
         # Cosine distance = 1.0 - cosine_similarity.
         dist_matrix = (1.0 - np.clip(np.dot(X, X.T), -1.0, 1.0)).astype(np.float64)
         
-        # Fit HDBSCAN
+        # Fit HDBSCAN with distance threshold to prevent identity over-merging
         import hdbscan
         min_c_size = max(2, self.min_cluster_size)
-        clusterer = hdbscan.HDBSCAN(metric="precomputed", min_cluster_size=min_c_size, min_samples=1, allow_single_cluster=True)
+        clusterer = hdbscan.HDBSCAN(
+            metric="precomputed",
+            min_cluster_size=min_c_size,
+            min_samples=1,
+            cluster_selection_epsilon=settings.cluster_selection_epsilon,
+            allow_single_cluster=True,
+        )
         labels = clusterer.fit_predict(dist_matrix)
 
         # Group faces by their predicted labels
@@ -168,9 +174,9 @@ class FaceClusteringService:
                 if l2 in merge_map:
                     continue
                 similarity = float(np.dot(centroids[l1], centroids[l2]))
-                if similarity >= 0.80:
+                if similarity >= settings.duplicate_cluster_threshold:
                     merge_map[l2] = l1
-                    logger.info(f"HDBSCAN auto-merge: merging cluster label {l2} into {l1} (similarity: {similarity:.3f})")
+                    logger.info(f"HDBSCAN auto-merge: merging cluster label {l2} into {l1} (similarity: {similarity:.3f} >= {settings.duplicate_cluster_threshold})")
 
         # Assign stable cluster IDs to database records
         cluster_counts = {}

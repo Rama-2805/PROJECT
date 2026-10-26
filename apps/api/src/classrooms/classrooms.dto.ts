@@ -1,8 +1,14 @@
-import { IsString, IsOptional, IsNumber, IsBoolean, Min } from "class-validator";
+import {
+  IsString,
+  IsOptional,
+  IsNumber,
+  IsBoolean,
+  Min,
+} from 'class-validator';
 
 export class CreateClassroomDto {
-  @IsString() institutionId: string;
-  @IsString() departmentId: string;
+  @IsOptional() @IsString() institutionId?: string;
+  @IsOptional() @IsString() departmentId?: string;
   @IsString() roomNumber: string;
   @IsOptional() @IsString() building?: string;
   @IsOptional() @IsNumber() floor?: number;

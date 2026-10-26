@@ -220,7 +220,13 @@ function StudentBiometricsModal({
   }, [student.id]);
 
   useEffect(() => {
-    fetchBiometrics();
+    let isMounted = true;
+    Promise.resolve().then(() => {
+      if (isMounted) fetchBiometrics();
+    });
+    return () => {
+      isMounted = false;
+    };
   }, [fetchBiometrics]);
 
   const usn = student.studentId || student.rollNumber || "USN";

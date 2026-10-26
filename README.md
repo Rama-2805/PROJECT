@@ -14,11 +14,11 @@ This section provides an exhaustive record of every architectural milestone, fea
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │                                          SMARTCAMPUS AI ROADMAP TIMELINE                                         │
 ├──────────────┬──────────────────┬───────────────────┬────────────────────┬────────────────────────┬──────────────┤
-│   PHASE 1    │     PHASE 2      │      PHASE 3      │      PHASE 4       │        PHASE 5         │   PHASE 6    │
-│  (Jun 2026)  │    (Aug 2026)    │    (Sep 2026)     │     (Oct 2026)     │       (Oct 2026)       │  (Oct 2026)  │
-│ Foundation & │  Computer Vision │  Real Classroom   │  Real Data Ingest  │   Student Assignment   │ Headcount &  │
-│ Enterprise   │   & Clustering   │    Benchmark      │  & Production Live │   & FAISS Vector Sync  │  Behavioral  │
-│ Architecture │     Pipeline     │    (Room 408)     │     (Vemana IT)    │   Conflict Prevention  │  Analytics   │
+│   PHASE 1    │     PHASE 2      │      PHASE 3      │      PHASE 4       │        PHASE 5        │   PHASE 6        │
+│  (Jun 2026)  │    (Aug 2026)    │    (Sep 2026)     │     (Oct 2026)     │       (Oct 2026)          │  (Oct 2026)      │
+│ Foundation & │  Computer Vision │  Real Classroom   │  Real Data Ingest  │   Student Assignment     │ Headcount &      │
+│ Enterprise   │   & Clustering   │    Benchmark      │  & Production Live │   & FAISS Vector Sync    │  Behavioral      │
+│ Architecture │     Pipeline     │    (Room 408)     │     (Vemana IT)    │   Conflict Prevention     │  Analytics       │
 └──────────────┴──────────────────┴───────────────────┴────────────────────┴────────────────────────┴──────────────┘
 ```
 

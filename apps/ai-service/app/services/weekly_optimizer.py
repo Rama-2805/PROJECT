@@ -158,12 +158,16 @@ class WeeklyFaceOptimizer:
 
                 # 7. Create next FaceProfile in Database
                 new_quality = float(np.mean([s["quality"] for s in retained_samples]))
+                # Calculate genuine intra-cluster sample cohesion as accuracy estimate
+                sample_sims = [float(np.dot(s["embedding"], avg_emb)) for s in retained_samples]
+                mean_cohesion = float(np.mean(sample_sims)) if sample_sims else 1.0
+                cohesion_pct = round(max(0.0, min(100.0, mean_cohesion * 100.0)), 1)
                 
                 new_profile = FaceProfile(
                     student_id=student.id,
                     version=next_version,
                     quality_score=round(new_quality, 1),
-                    accuracy_estimate=round(min(100.0, 95.0 + next_version * 0.5), 1), # mock accuracy improvement
+                    accuracy_estimate=cohesion_pct,
                     is_active=True
                 )
                 db.add(new_profile)

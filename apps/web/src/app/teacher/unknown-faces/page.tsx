@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
@@ -110,7 +110,26 @@ export default function UnknownFacesDashboard() {
   const [rollbackVersion, setRollbackVersion] = useState(1);
   const [rollbackStatus, setRollbackStatus] = useState<string | null>(null);
 
-  const fetchClusters = async () => {
+  const handleSelectCluster = useCallback(async (cluster: UnknownCluster) => {
+    setSelectedCluster(cluster);
+    setClusterDetails(null);
+    if (isDemoMode()) {
+      return;
+    }
+    setDetailsLoading(true);
+    try {
+      const res = await api.get<any>(`/clusters/${cluster.cluster_id}`);
+      if (res.success && res.data) {
+        setClusterDetails(res.data);
+      }
+    } catch (err) {
+      console.error("Error fetching cluster details:", err);
+    } finally {
+      setDetailsLoading(false);
+    }
+  }, []);
+
+  const fetchClusters = useCallback(async () => {
     setLoading(true);
     try {
       const res = await api.get<UnknownCluster[]>("/clusters");
@@ -144,30 +163,11 @@ export default function UnknownFacesDashboard() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleSelectCluster = async (cluster: UnknownCluster) => {
-    setSelectedCluster(cluster);
-    setClusterDetails(null);
-    if (isDemoMode()) {
-      return;
-    }
-    setDetailsLoading(true);
-    try {
-      const res = await api.get<any>(`/clusters/${cluster.cluster_id}`);
-      if (res.success && res.data) {
-        setClusterDetails(res.data);
-      }
-    } catch (err) {
-      console.error("Error fetching cluster details:", err);
-    } finally {
-      setDetailsLoading(false);
-    }
-  };
+  }, [handleSelectCluster]);
 
   useEffect(() => {
     fetchClusters();
-  }, []);
+  }, [fetchClusters]);
 
   const handleApproveMatch = async () => {
     if (!selectedCluster || !selectedCluster.suggested_match) return;

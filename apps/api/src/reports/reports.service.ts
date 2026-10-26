@@ -1,12 +1,20 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
-import { GenerateReportDto, ReportHistoryQueryDto, ScheduledReportDto } from "./reports.dto";
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import {
+  GenerateReportDto,
+  ReportHistoryQueryDto,
+  ScheduledReportDto,
+} from './reports.dto';
 
 @Injectable()
 export class ReportsService {
   constructor(private prisma: PrismaService) {}
 
-  async generateReport(dto: GenerateReportDto, userId: string, institutionId: string = "inst-001") {
+  async generateReport(
+    dto: GenerateReportDto,
+    userId: string,
+    institutionId: string = 'inst-001',
+  ) {
     const report = await this.prisma.report.create({
       data: {
         institutionId,
@@ -14,7 +22,7 @@ export class ReportsService {
         type: dto.type,
         format: dto.format,
         parameters: JSON.stringify(dto.parameters || {}),
-        status: "GENERATING",
+        status: 'GENERATING',
         generatedById: userId,
       },
     });
@@ -24,7 +32,7 @@ export class ReportsService {
     const completedReport = await this.prisma.report.update({
       where: { id: report.id },
       data: {
-        status: "COMPLETED",
+        status: 'COMPLETED',
         fileUrl: `/reports/download/${report.id}`,
         fileSize: BigInt(Math.floor(Math.random() * 500000) + 10000),
         completedAt: new Date(),
@@ -34,12 +42,17 @@ export class ReportsService {
     return completedReport;
   }
 
-  async getReportHistory(query: ReportHistoryQueryDto, institutionId: string = "inst-001") {
+  async getReportHistory(
+    query: ReportHistoryQueryDto,
+    institutionId: string = 'inst-001',
+  ) {
     const where: any = { institutionId };
     if (query.type) where.type = query.type;
     if (query.status) where.status = query.status;
-    if (query.fromDate) where.createdAt = { ...where.createdAt, gte: new Date(query.fromDate) };
-    if (query.toDate) where.createdAt = { ...where.createdAt, lte: new Date(query.toDate) };
+    if (query.fromDate)
+      where.createdAt = { ...where.createdAt, gte: new Date(query.fromDate) };
+    if (query.toDate)
+      where.createdAt = { ...where.createdAt, lte: new Date(query.toDate) };
 
     const page = query.page || 1;
     const limit = query.limit || 20;
@@ -50,7 +63,7 @@ export class ReportsService {
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
         include: { generatedBy: { select: { fullName: true } } },
       }),
       this.prisma.report.count({ where }),
@@ -64,11 +77,15 @@ export class ReportsService {
       where: { id: reportId },
       include: { generatedBy: { select: { fullName: true } } },
     });
-    if (!report) throw new NotFoundException("Report not found");
+    if (!report) throw new NotFoundException('Report not found');
     return report;
   }
 
-  async scheduleReport(dto: ScheduledReportDto, userId: string, institutionId: string = "inst-001") {
+  async scheduleReport(
+    dto: ScheduledReportDto,
+    userId: string,
+    institutionId: string = 'inst-001',
+  ) {
     // In production, this would create a cron job or scheduled task
     return {
       id: `sched-${Date.now()}`,

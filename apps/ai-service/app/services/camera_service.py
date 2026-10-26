@@ -256,64 +256,31 @@ class MockVideoCapture:
         
         # Live status blinking indicator
         blink = (self._frame_count // 8) % 2 == 0
-        status_color = (0, 0, 255) if blink else (0, 0, 100)
+        status_color = (0, 165, 255) if blink else (0, 80, 150)
         cv2.circle(frame, (40, 40), 6, status_color, -1)
         cv2.putText(
             frame,
-            "LIVE SIMULATED FEED (WEBCAM BYPASSED)",
+            "SIMULATED TEST PATTERN — NO REAL CAMERA / NO INFERENCE",
             (55, 45),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
+            0.42,
             (200, 200, 200),
             1,
             cv2.LINE_AA
         )
-        
-        # Render a face shape
-        face_x = int(self.width / 2 + 30 * np.sin(self._frame_count * 0.05))
-        face_y = int(self.height / 2 + 15 * np.cos(self._frame_count * 0.05))
-        cv2.ellipse(frame, (face_x, face_y), (60, 80), 0, 0, 360, (100, 100, 100), 1, cv2.LINE_AA)
-        
-        # Eyes
-        cv2.circle(frame, (face_x - 20, face_y - 20), 4, (100, 100, 100), -1, cv2.LINE_AA)
-        cv2.circle(frame, (face_x + 20, face_y - 20), 4, (100, 100, 100), -1, cv2.LINE_AA)
-        
-        # Mouth
-        cv2.ellipse(frame, (face_x, face_y + 30), (20, 10), 0, 0, 180, (100, 100, 100), 1, cv2.LINE_AA)
-        
-        # Bounding box around simulated face
-        bx1, by1 = face_x - 70, face_y - 95
-        bx2, by2 = face_x + 70, face_y + 95
-        
-        len_corner = 15
-        box_color = (0, 255, 0)
-        cv2.line(frame, (bx1, by1), (bx1 + len_corner, by1), box_color, 2)
-        cv2.line(frame, (bx1, by1), (bx1, by1 + len_corner), box_color, 2)
-        cv2.line(frame, (bx2, by1), (bx2 - len_corner, by1), box_color, 2)
-        cv2.line(frame, (bx2, by1), (bx2, by1 + len_corner), box_color, 2)
-        cv2.line(frame, (bx1, by2), (bx1 + len_corner, by2), box_color, 2)
-        cv2.line(frame, (bx1, by2), (bx1, by2 - len_corner), box_color, 2)
-        cv2.line(frame, (bx2, by2), (bx2 - len_corner, by2), box_color, 2)
-        cv2.line(frame, (bx2, by2), (bx2, by2 - len_corner), box_color, 2)
-        
-        # Recognition metadata overlay
+
+        # Crosshair center calibration mark (test pattern)
+        cx, cy = self.width // 2, self.height // 2
+        cv2.drawMarker(frame, (cx, cy), (100, 100, 100), cv2.MARKER_CROSS, 30, 1)
+
+        # Test pattern notification
         cv2.putText(
             frame,
-            "student@collegename.edu.in",
-            (bx1, by1 - 25),
+            "HARDWARE WEBCAM UNATTACHED — LIVE INFERENCE BYPASSED",
+            (self.width // 2 - 200, self.height - 30),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.4,
-            (0, 255, 0),
-            1,
-            cv2.LINE_AA
-        )
-        cv2.putText(
-            frame,
-            "ID: student (MATCH: 98.7%)",
-            (bx1, by1 - 8),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.45,
-            (0, 255, 0),
+            0.40,
+            (120, 120, 120),
             1,
             cv2.LINE_AA
         )

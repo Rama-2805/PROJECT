@@ -30,14 +30,16 @@ router = APIRouter(prefix=f"{settings.api_prefix}/unknown-faces", tags=["Teacher
 def get_relative_storage_path(absolute_path: str) -> str:
     if not absolute_path:
         return ""
-    abs_norm = os.path.normpath(absolute_path)
+    abs_norm = os.path.normpath(str(absolute_path))
     idx = abs_norm.find("storage" + os.sep)
     if idx != -1:
-        return abs_norm[idx:].replace(os.sep, "/")
+        rel = abs_norm[idx:].replace(os.sep, "/")
+        return "/" + rel.lstrip("/")
     idx_slash = abs_norm.find("storage/")
     if idx_slash != -1:
-        return abs_norm[idx_slash:]
-    return absolute_path
+        rel = abs_norm[idx_slash:]
+        return "/" + rel.lstrip("/")
+    return "/" + absolute_path.lstrip("/")
 
 
 # Schemas

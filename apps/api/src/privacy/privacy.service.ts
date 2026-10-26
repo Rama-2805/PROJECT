@@ -1,18 +1,21 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
+import { Injectable, NotFoundException } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class PrivacyService {
   constructor(private prisma: PrismaService) {}
 
   async getPrivacySummary(institutionId: string) {
-    const [totalStudents, enrolledStudents, totalEmbeddings] = await Promise.all([
-      this.prisma.student.count({ where: { institutionId } }),
-      this.prisma.student.count({ where: { institutionId, faceEnrolled: true } }),
-      this.prisma.faceEmbedding.count({
-        where: { student: { institutionId } },
-      }),
-    ]);
+    const [totalStudents, enrolledStudents, totalEmbeddings] =
+      await Promise.all([
+        this.prisma.student.count({ where: { institutionId } }),
+        this.prisma.student.count({
+          where: { institutionId, faceEnrolled: true },
+        }),
+        this.prisma.faceEmbedding.count({
+          where: { student: { institutionId } },
+        }),
+      ]);
 
     return {
       totalStudents,
@@ -35,7 +38,7 @@ export class PrivacyService {
       },
     });
 
-    if (!student) throw new NotFoundException("Student not found");
+    if (!student) throw new NotFoundException('Student not found');
 
     return {
       personalInfo: {
@@ -64,14 +67,14 @@ export class PrivacyService {
     const student = await this.prisma.student.findFirst({
       where: { studentId },
     });
-    if (!student) throw new NotFoundException("Student not found");
+    if (!student) throw new NotFoundException('Student not found');
 
     // Queue deletion request (in production: async job)
     // Mark student for deletion
     await this.prisma.student.update({
       where: { id: student.id },
       data: {
-        status: "INACTIVE",
+        status: 'INACTIVE',
         faceEnrolled: false,
         faceSamples: 0,
         enrollmentConfidence: 0,
@@ -84,16 +87,20 @@ export class PrivacyService {
     });
 
     return {
-      message: "Deletion request processed",
-      deletedData: ["Face embeddings", "Recognition history", "Biometric samples"],
-      retainedData: ["Attendance records (anonymized)", "Academic history"],
+      message: 'Deletion request processed',
+      deletedData: [
+        'Face embeddings',
+        'Recognition history',
+        'Biometric samples',
+      ],
+      retainedData: ['Attendance records (anonymized)', 'Academic history'],
     };
   }
 
   async getAccessHistory(studentId: string) {
     return this.prisma.auditLog.findMany({
-      where: { entity: "STUDENT", entityId: studentId },
-      orderBy: { createdAt: "desc" },
+      where: { entity: 'STUDENT', entityId: studentId },
+      orderBy: { createdAt: 'desc' },
       take: 50,
       include: { user: { select: { fullName: true } } },
     });
@@ -104,23 +111,26 @@ export class PrivacyService {
       faceEmbeddings: {
         retentionDays: 365,
         autoDeleteAfterDays: 730,
-        description: "Face embeddings are retained for 1 year after last recognition. Auto-deleted after 2 years.",
+        description:
+          'Face embeddings are retained for 1 year after last recognition. Auto-deleted after 2 years.',
       },
       attendanceRecords: {
         retentionDays: 3650,
-        description: "Attendance records retained for 10 years per institutional policy.",
+        description:
+          'Attendance records retained for 10 years per institutional policy.',
       },
       behaviorEvents: {
         retentionDays: 730,
-        description: "Behavior event data retained for 2 years.",
+        description: 'Behavior event data retained for 2 years.',
       },
       auditLogs: {
         retentionDays: 1825,
-        description: "Audit logs retained for 5 years for compliance.",
+        description: 'Audit logs retained for 5 years for compliance.',
       },
       rawVideo: {
         retentionDays: 30,
-        description: "Raw classroom video deleted after 30 days. Only metadata preserved.",
+        description:
+          'Raw classroom video deleted after 30 days. Only metadata preserved.',
       },
     };
   }
@@ -135,7 +145,7 @@ export class PrivacyService {
       },
     });
 
-    if (!student) throw new NotFoundException("Student not found");
+    if (!student) throw new NotFoundException('Student not found');
 
     return {
       exportDate: new Date().toISOString(),
@@ -146,12 +156,14 @@ export class PrivacyService {
           email: student.email,
           enrollmentDate: student.createdAt,
         },
-        biometricData: student.faceEnrolled ? {
-          enrolled: true,
-          samples: student.faceSamples,
-          enrollmentDate: student.faceEmbeddings[0]?.createdAt,
-          embeddingsCount: student.faceEmbeddings.length,
-        } : { enrolled: false },
+        biometricData: student.faceEnrolled
+          ? {
+              enrolled: true,
+              samples: student.faceSamples,
+              enrollmentDate: student.faceEmbeddings[0]?.createdAt,
+              embeddingsCount: student.faceEmbeddings.length,
+            }
+          : { enrolled: false },
         attendance: {
           overallPercentage: student.attendancePercentage,
           lastRecognition: student.lastRecognitionDate,

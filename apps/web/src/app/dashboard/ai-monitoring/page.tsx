@@ -101,7 +101,9 @@ export default function AIMonitoringPage() {
   const [loading, setLoading] = useState(true);
   const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState('');
+  const [lastUpdated, setLastUpdated] = useState(() =>
+    typeof window === "undefined" ? "" : new Date().toLocaleTimeString()
+  );
   const [accuracyHistory, setAccuracyHistory] = useState<number[]>([98.2, 98.5, 98.7, 98.9, 99.0, 99.1, 99.1, 99.0, 99.1, 98.9, 99.2, 99.1]);
   const [latencyHistory, setLatencyHistory] = useState<number[]>([135, 128, 122, 118, 125, 120, 115, 110, 118, 122, 116, 120]);
 
@@ -109,7 +111,6 @@ export default function AIMonitoringPage() {
 
   // Simulate live events
   useEffect(() => {
-    setLastUpdated(new Date().toLocaleTimeString());
     const interval = setInterval(() => {
       setLiveEvents(prev => [generateEvent(), ...prev].slice(0, 30));
       setLastUpdated(new Date().toLocaleTimeString());
@@ -133,9 +134,12 @@ export default function AIMonitoringPage() {
   return (
     <>
       {/* Header */}
-      <div className="flex items-center gap-2 mb-6">
+      <div className="flex flex-wrap items-center gap-2 mb-6">
         <span className="h-2 w-2 rounded-full bg-success animate-glow-pulse" />
         <span className="text-[10px] font-medium text-success uppercase tracking-wider">All AI Systems Operational</span>
+        <span className="px-2 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/20 text-[10px] font-semibold text-amber-300">
+          Prototype Telemetry (Live MLOps Stream Pending)
+        </span>
         <span className="text-[10px] text-text-muted ml-auto">Last updated: {lastUpdated || '--:--:--'}</span>
       </div>
 

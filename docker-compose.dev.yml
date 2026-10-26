@@ -74,3 +74,28 @@ services:
     ports:
       - "9000:9000"
       - "9002:9001"
+
+  ai-engine:
+    build:
+      context: ./apps/ai-service
+      dockerfile: Dockerfile
+    image: smartcampus-ai-engine:latest
+    container_name: smartcampus-dev-ai-engine
+    restart: unless-stopped
+    networks: [dev-net]
+    depends_on:
+      redis: { condition: service_healthy }
+    volumes:
+      - ${INSIGHTFACE_MODEL_DIR:-/Users/rama/.insightface/models}:/root/.insightface/models:ro
+    environment:
+      PYTHONUNBUFFERED: "1"
+      REDIS_URL: redis://:smartcampus_dev@redis:6379/0
+      BACKEND_API_URL: http://host.docker.internal:4000
+      INTERNAL_API_KEY: sc-internal-service-key-dev-only
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3

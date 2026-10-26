@@ -1,13 +1,12 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { Cloud, ArrowRight, GraduationCap, ShieldCheck, Key } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { initializeUserStore, getUsers, hashPassword, updateUserPassword } from "@/lib/userStore";
-import { api, setAccessToken } from "@/lib/api/client";
-import { isDemoMode } from "@/lib/demo-mode";
+import { useAuthStore } from "@/lib/store/auth";
+import { api } from "@/lib/api/client";
 
 function LoginContent() {
   const router = useRouter();
@@ -16,7 +15,7 @@ function LoginContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
 
   // Compulsory Password Reset States
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -36,126 +35,40 @@ function LoginContent() {
     );
   };
 
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.origin !== window.location.origin) return;
-      
-      if (event.data.type === "login-success") {
-        const loggedInEmail = event.data.email;
-        if (!loggedInEmail) return;
-        
-        try {
-          const users = getUsers();
-          const user = users[loggedInEmail];
-          
-          if (!user) {
-            setError("SSOError");
-            return;
-          }
-          
-          document.cookie = "refreshToken=mock-token-123; path=/";
-          localStorage.setItem("user-role", user.role);
-          localStorage.setItem("currentUserEmail", loggedInEmail);
-          
-          if (user.role === "admin" || user.role === "hod") {
-            router.push("/dashboard");
-          } else if (user.role === "teacher") {
-            router.push("/teacher/dashboard");
-          } else {
-            router.push("/student/dashboard");
-          }
-        } catch (err) {
-          setError("UnknownError");
-        }
-      } else if (event.data.type === "login-error") {
-        setError("SSOError");
-      }
-    };
-    
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [router]);
-
-  useEffect(() => {
-    setMounted(true);
-    // Initialize the user database on load
-    initializeUserStore();
-  }, []);
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
 
-    // Domain validation removed to allow seeded accounts like @smartcampus.edu
-
     try {
-      const users = getUsers();
-      const normalizedEmail = email.trim().toLowerCase();
-      const user = users[normalizedEmail] || users[email];
+      await useAuthStore.getState().login(email, password);
+      const user = useAuthStore.getState().user;
+      const userRoles = (user?.roles || []).map((r: string) => r.toUpperCase());
+      const isTeacherOrHod = userRoles.includes("TEACHER") || userRoles.includes("HOD");
 
-      if (user) {
-        const inputHash = await hashPassword(password);
-        if (inputHash === user.passwordHash) {
-          if (user.role !== "teacher" && user.role !== "hod") {
-            setIsLoading(false);
-            setError("IncorrectPortal");
-            return;
-          }
-          if (user.passwordNeedsChange) {
-            setIsLoading(false);
-            setShowChangePassword(true);
-            return;
-          }
-
-          setIsLoading(false);
-          document.cookie = "refreshToken=mock-token-123; path=/";
-          localStorage.setItem("user-role", user.role);
-          localStorage.setItem("currentUserEmail", email);
-          if (user.fullName) localStorage.setItem("currentUserName", user.fullName);
-          router.push("/teacher/dashboard");
-          return;
-        }
-      }
-
-      // Fallback to API
-      try {
-        const res = await api.post<any>("/auth/login", { email, password });
-        if (res.success && res.data) {
-          const { user: apiUser, tokens } = res.data;
-          const userRoles = apiUser.roles || [];
-          const isTeacherOrHod = userRoles.includes("TEACHER") || userRoles.includes("HOD");
-
-          if (!isTeacherOrHod) {
-            setIsLoading(false);
-            setError("IncorrectPortal");
-            return;
-          }
-
-          setIsLoading(false);
-          setAccessToken(tokens.accessToken);
-          document.cookie = `refreshToken=${tokens.refreshToken}; path=/; max-age=${7 * 24 * 60 * 60}`;
-          localStorage.setItem("user-role", "teacher");
-          localStorage.setItem("currentUserEmail", email);
-          if (apiUser.fullName) localStorage.setItem("currentUserName", apiUser.fullName);
-
-          if (apiUser.mustChangePassword) {
-            setShowChangePassword(true);
-            return;
-          }
-
-          router.push("/teacher/dashboard");
-          return;
-        }
-      } catch (apiErr) {
-        // API offline
+      if (!isTeacherOrHod) {
+        await useAuthStore.getState().logout();
+        setIsLoading(false);
+        setError("IncorrectPortal");
+        return;
       }
 
       setIsLoading(false);
-      setError("IncorrectCredentials");
-    } catch (err) {
+      if ((user as any)?.mustChangePassword) {
+        setShowChangePassword(true);
+        return;
+      }
+
+      const redirectTarget = searchParams.get("redirect") || "/teacher/dashboard";
+      router.push(redirectTarget.startsWith("/") ? redirectTarget : "/teacher/dashboard");
+    } catch (err: any) {
       setIsLoading(false);
-      setError("UnknownError");
+      const msg = err?.message || "";
+      if (msg.includes("Invalid credentials") || msg.includes("credentials")) {
+        setError("IncorrectCredentials");
+      } else {
+        setError(msg || "UnknownError");
+      }
     }
   };
 
@@ -183,16 +96,18 @@ function LoginContent() {
     }
 
     try {
-      const newHash = await hashPassword(newPassword);
-      await updateUserPassword(email, newHash, false);
+      const res = await api.post<any>("/auth/change-password", {
+        currentPassword: password,
+        newPassword,
+      });
 
       setIsLoading(false);
-      // Automatically log in after password change
-      document.cookie = "refreshToken=mock-token-123; path=/";
-      localStorage.setItem("user-role", "teacher");
-      localStorage.setItem("currentUserEmail", email);
-      router.push("/teacher/dashboard");
-    } catch (err) {
+      if (res.success) {
+        router.push("/teacher/dashboard");
+      } else {
+        setError(res.error || "UpdateFailed");
+      }
+    } catch {
       setIsLoading(false);
       setError("UpdateFailed");
     }
@@ -245,11 +160,17 @@ function LoginContent() {
 
                 {error && (
                   <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-xl mb-4">
-                    {error === "AccessDenied" && "Access Denied: Your email is not registered in the university database."}
-                    {error === "IncorrectPortal" && "Access Denied: This is the Teacher portal. Students/Admins should use their specific logins."}
-                    {error === "IncorrectCredentials" && "Authentication failed: Incorrect password."}
-                    {error === "UnknownError" && "An unexpected error occurred. Please try again."}
-                    {error === "SSOError" && "SSO Login failed: Your Microsoft account is not registered."}
+                    {error === "AccessDenied"
+                      ? "Access Denied: Your email is not registered in the university database."
+                      : error === "IncorrectPortal"
+                      ? "Access Denied: This is the Teacher portal. Students/Admins should use their specific logins."
+                      : error === "IncorrectCredentials"
+                      ? "Authentication failed: Incorrect password or credentials."
+                      : error === "SSOError"
+                      ? "SSO Login failed: Your Microsoft account is not registered."
+                      : error === "UnknownError"
+                      ? "An unexpected error occurred. Please try again."
+                      : error}
                   </div>
                 )}
 

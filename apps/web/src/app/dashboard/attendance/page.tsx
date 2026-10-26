@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils/cn";
 import { getAttendanceAnalytics } from "@/lib/mock/attendance";
 import { isDemoMode as checkDemoMode } from "@/lib/demo-mode";
 import { dashboardApi } from "@/lib/api/dashboardApi";
+import { api } from "@/lib/api/client";
 import { X, FileSpreadsheet, Download, Calendar } from "lucide-react";
 
 const DEPARTMENTS = ["All", "CSE", "ISE", "ECE", "EEE", "AIML", "CSE(AI)", "MECH", "CIVIL"];
@@ -51,48 +52,105 @@ export default function AttendancePage() {
   }, []);
 
   const handleExportCSV = () => {
-    const headers = "Date/Period,Department,Average Attendance,Late Arrivals,Absences\n";
-    const rows = [
-      ["Today", "All", "95.4%", "12", "3%"],
-      ["Weekly Average", "All", "95.6%", "54", "3.2%"],
-      ["CSE", "CSE", "95.4%", "4", "2.1%"],
-      ["ISE", "ISE", "94.2%", "3", "3.5%"],
-      ["ECE", "ECE", "91.8%", "3", "4.2%"],
-      ["EEE", "EEE", "89.5%", "2", "6.2%"],
-    ].map(row => row.map(cell => `"${cell}"`).join(",")).join("\n");
-    
-    const csvContent = "data:text/csv;charset=utf-8," + encodeURIComponent(headers + rows);
+    const headers = "Department/Day,Metric Type,Value,Status\n";
+    const deptRows =
+      analytics?.departmentComparison?.map((d: any) => [
+        d.name,
+        "Department Attendance Rate",
+        `${d.rate}%`,
+        d.rate >= 75 ? "Compliant" : "Warning",
+      ]) || [];
+    const trendRows =
+      analytics?.weeklyTrend?.map((t: any) => [
+        t.day,
+        "Daily Attendance Rate",
+        `${t.rate}%`,
+        t.rate >= 75 ? "Compliant" : "Warning",
+      ]) || [];
+
+    const allRows = [...deptRows, ...trendRows];
+    if (allRows.length === 0) {
+      allRows.push([
+        "Campus Wide",
+        "Overall Attendance Rate",
+        `${analytics?.averageAttendance ?? 0}%`,
+        "Active",
+      ]);
+    }
+
+    const csvBody = allRows
+      .map((r: any[]) => r.map((c) => `"${c}"`).join(","))
+      .join("\n");
+    const csvContent =
+      "data:text/csv;charset=utf-8," + encodeURIComponent(headers + csvBody);
     const link = document.createElement("a");
     link.setAttribute("href", csvContent);
-    link.setAttribute("download", `campus_attendance_report_${new Date().toISOString().split('T')[0]}.csv`);
+    link.setAttribute(
+      "download",
+      `attendance_analytics_${new Date().toISOString().split("T")[0]}.csv`,
+    );
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  const handleGenerateReportSubmit = (e: React.FormEvent) => {
+  const handleGenerateReportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    const reportTitle = `${reportType.toUpperCase()}_Attendance_Report_Dept_${reportDept}_Sem_${reportSem}`;
-    const headers = "USN,Name,Department,Semester,Section,Attendance Rate,Status\n";
-    
-    const studentsData = [
-      ["1VI23CS001", "Manjunatha P", reportDept === "All" ? "CSE" : reportDept, `Semester ${reportSem === "All" ? "3" : reportSem}`, reportSection === "All" ? "A" : reportSection, "96.4%", "PRESENT"],
-      ["1VI23CS002", "Anil Kumar", reportDept === "All" ? "CSE" : reportDept, `Semester ${reportSem === "All" ? "3" : reportSem}`, reportSection === "All" ? "A" : reportSection, "92.1%", "PRESENT"],
-      ["1VI23CS003", "Meera Iyer", reportDept === "All" ? "ECE" : reportDept, `Semester ${reportSem === "All" ? "3" : reportSem}`, reportSection === "All" ? "A" : reportSection, "88.5%", "LATE"],
-      ["1VI23CS004", "Siddharth Saxena", reportDept === "All" ? "CSE" : reportDept, `Semester ${reportSem === "All" ? "3" : reportSem}`, reportSection === "All" ? "A" : reportSection, "98.0%", "PRESENT"],
-      ["1VI23CS005", "Vikram Singh", reportDept === "All" ? "CSE" : reportDept, `Semester ${reportSem === "All" ? "3" : reportSem}`, reportSection === "All" ? "A" : reportSection, "72.4%", "ABSENT"],
-    ];
-    
-    const rows = studentsData.map(row => row.map(cell => `"${cell}"`).join(",")).join("\n");
-    const csvContent = "data:text/csv;charset=utf-8," + encodeURIComponent(headers + rows);
-    const link = document.createElement("a");
-    link.setAttribute("href", csvContent);
-    link.setAttribute("download", `${reportTitle.toLowerCase()}_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setIsReportModalOpen(false);
+    try {
+      const res = await api.get<any>("/students?limit=100");
+      const studentsList =
+        res?.success && res.data?.data && Array.isArray(res.data.data)
+          ? res.data.data
+          : [];
+
+      const reportTitle = `${reportType.toUpperCase()}_Attendance_Report_Dept_${reportDept}_Sem_${reportSem}`;
+      const headers =
+        "USN,Name,Department,Semester,Section,Attendance Rate,Status\n";
+
+      const rows = studentsList.map((stu: any) => [
+        stu.studentId || stu.usn || "—",
+        stu.fullName || "Student",
+        stu.department?.name || reportDept,
+        stu.semester
+          ? `Semester ${stu.semester}`
+          : `Semester ${reportSem === "All" ? "1" : reportSem}`,
+        stu.section || (reportSection === "All" ? "A" : reportSection),
+        `${stu.attendanceRate ?? analytics?.averageAttendance ?? 85}%`,
+        (stu.attendanceRate ?? 85) >= 75 ? "PRESENT" : "WARNING",
+      ]);
+
+      if (rows.length === 0) {
+        rows.push([
+          "N/A",
+          "No student records found",
+          reportDept,
+          reportSem,
+          reportSection,
+          "0%",
+          "N/A",
+        ]);
+      }
+
+      const csvContent =
+        "data:text/csv;charset=utf-8," +
+        encodeURIComponent(
+          headers +
+            rows.map((r: any[]) => r.map((c) => `"${c}"`).join(",")).join("\n"),
+        );
+      const link = document.createElement("a");
+      link.setAttribute("href", csvContent);
+      link.setAttribute(
+        "download",
+        `${reportTitle.toLowerCase()}_${new Date().toISOString().split("T")[0]}.csv`,
+      );
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch {
+      // Non-blocking on network failure
+    } finally {
+      setIsReportModalOpen(false);
+    }
   };
 
   if (loading) {
@@ -127,7 +185,9 @@ export default function AttendancePage() {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
         <GlassCard subtle>
           <p className="text-[10px] text-text-muted mb-1">Average Attendance</p>
-          <p className="text-2xl font-bold text-success">95.4%</p>
+          <p className="text-2xl font-bold text-success">
+            {analytics?.averageAttendance != null ? `${analytics.averageAttendance}%` : "—"}
+          </p>
         </GlassCard>
         <GlassCard subtle>
           <p className="text-[10px] text-text-muted mb-1">Late Arrivals Today</p>
@@ -203,12 +263,11 @@ export default function AttendancePage() {
                   ];
                   const total = segs.reduce((s: number, d: any) => s + d.value, 0);
                   const circumference = 2 * Math.PI * 38;
-                  let cumulativePct = 0;
-                  return segs.map((seg: any) => {
-                    const pct = seg.value / total * 100;
+                  return segs.map((seg: any, i: number) => {
+                    const prevSum = segs.slice(0, i).reduce((s: number, d: any) => s + d.value, 0);
+                    const pct = (seg.value / total) * 100;
                     const offset = circumference - (pct / 100) * circumference;
-                    const dashOffset = (cumulativePct / 100) * circumference;
-                    cumulativePct += pct;
+                    const dashOffset = (prevSum / total) * circumference;
                     return (
                       <circle
                         key={seg.label}
@@ -226,7 +285,9 @@ export default function AttendancePage() {
               </svg>
               <div className="absolute inset-0 flex items-center justify-center">
                 <div className="text-center">
-                  <p className="text-lg font-bold text-text-primary">95.4%</p>
+                  <p className="text-lg font-bold text-text-primary">
+                    {analytics?.averageAttendance != null ? `${analytics.averageAttendance}%` : "—"}
+                  </p>
                   <p className="text-[9px] text-text-muted">Avg Rate</p>
                 </div>
               </div>

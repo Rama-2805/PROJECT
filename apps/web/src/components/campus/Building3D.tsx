@@ -115,13 +115,14 @@ export function Building3D({ data }: { data: BuildingData }) {
           position={[data.position[0], data.position[1] + data.size[1] + 1.2, data.position[2]]}
           center
           style={{ pointerEvents: 'none' }}
+          zIndexRange={[0, 15]}
         >
-          <div className="flex flex-col items-center gap-0.5">
-            <span className="text-xs font-bold tracking-wider text-white drop-shadow-lg">
+          <div className="flex flex-col items-center gap-0.5 pointer-events-none select-none">
+            <span className="px-2 py-0.5 rounded-md bg-black/80 border border-white/20 text-[11px] font-bold tracking-wider text-white backdrop-blur-md shadow-md">
               {data.shortName}
             </span>
             {data.health !== 'normal' && (
-              <span className={`text-[10px] font-medium ${data.health === 'critical' ? 'text-red-400' : 'text-yellow-400'} drop-shadow-lg`}>
+              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded shadow ${data.health === 'critical' ? 'bg-red-500 text-white' : 'bg-amber-400 text-black'}`}>
                 {data.health.toUpperCase()}
               </span>
             )}

@@ -12,7 +12,11 @@ out/
 # NestJS build output
 dist/
 
-# Env files (keep template env files if needed, but ignore local configs)
+# Env files (keep template env files if needed, but ignore actual config files)
+.env
+.env.*
+!.env.example
+*.env
 .env*.local
 
 # OS files

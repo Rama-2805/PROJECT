@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils/cn";
 import type { AIModelStatus } from "@/lib/mock/dashboard";
 import { GlassCard } from "@/components/glass/GlassCard";
 import { useUIStore } from "@/store/uiStore";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 export interface AIStatusCardProps {
   models: AIModelStatus[];
@@ -31,11 +31,7 @@ function NeuralDot({ delay = 0 }: { delay?: number }) {
 
 export function AIStatusCard({ models }: AIStatusCardProps) {
   const theme = useUIStore((s) => s.theme);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
 
   const isLight = mounted && theme === "light";
   const glowColor = isLight ? "rgba(59, 130, 246, 0.08)" : "rgba(255, 255, 255, 0.08)";

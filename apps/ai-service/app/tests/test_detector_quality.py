@@ -9,7 +9,8 @@ from app.services.face_quality_service import face_quality_service
 
 def test_face_detector_filtering(monkeypatch):
     """Test that face detector filters out low-confidence faces."""
-    dummy_frame = np.full((480, 640, 3), 128, dtype=np.uint8)
+    rng = np.random.RandomState(42)
+    dummy_frame = rng.randint(80, 180, (480, 640, 3), dtype=np.uint8)
 
     from app.services.yolo26_detector import yolo26_detector
 

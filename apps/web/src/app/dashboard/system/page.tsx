@@ -35,8 +35,19 @@ const DEFAULT_SERVICES: ServiceStatus[] = [
   { name: "Storage Service", status: "ONLINE", latency: "10ms", uptime: "99.9%", version: "Encrypted Volume" },
 ];
 
+const generateHistoricalData = () => {
+  return Array.from({ length: 12 }, (_, i) => ({
+    time: `${i * 5}m ago`,
+    cpu: 25 + Math.floor(Math.random() * 25),
+    memory: 2.1 + (Math.random() * 0.4),
+    requests: 300 + Math.floor(Math.random() * 500),
+  })).reverse();
+};
+
 export default function SystemPage() {
-  const [lastChecked, setLastChecked] = useState("");
+  const [lastChecked, setLastChecked] = useState(() =>
+    typeof window === "undefined" ? "" : new Date().toLocaleTimeString()
+  );
   const [refreshing, setRefreshing] = useState(false);
   const [services, setServices] = useState<ServiceStatus[]>(DEFAULT_SERVICES);
   const [metrics, setMetrics] = useState<SystemMetric[]>([
@@ -68,21 +79,9 @@ export default function SystemPage() {
     vectorCount: 130,
   });
 
-  const [historicalMetrics, setHistoricalMetrics] = useState<any[]>([]);
-
-  const generateHistoricalData = () => {
-    return Array.from({ length: 12 }, (_, i) => ({
-      time: `${i * 5}m ago`,
-      cpu: 25 + Math.floor(Math.random() * 25),
-      memory: 2.1 + (Math.random() * 0.4),
-      requests: 300 + Math.floor(Math.random() * 500),
-    })).reverse();
-  };
+  const [historicalMetrics, setHistoricalMetrics] = useState<any[]>(() => generateHistoricalData());
 
   useEffect(() => {
-    setLastChecked(new Date().toLocaleTimeString());
-    setHistoricalMetrics(generateHistoricalData());
-
     const interval = setInterval(() => {
       if (!isDemoMode()) {
         api.get<any>("/mlops/overview").then((res) => {

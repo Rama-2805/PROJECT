@@ -8,52 +8,99 @@ import {
   Param,
   Query,
   UseGuards,
-} from "@nestjs/common";
-import { StudentsService } from "./students.service";
-import { CreateStudentDto, UpdateStudentDto, StudentQueryDto } from "./students.dto";
-import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
-import { RolesGuard } from "../common/guards/roles.guard";
-import { Roles } from "../common/decorators/roles.decorator";
-import { CurrentUser } from "../common/decorators/current-user.decorator";
-import { RoleName } from "../_shared/enums/roles";
+} from '@nestjs/common';
+import { StudentsService } from './students.service';
+import {
+  CreateStudentDto,
+  UpdateStudentDto,
+  StudentQueryDto,
+} from './students.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { JwtPayload } from '../_shared/types/jwt';
+import { RoleName } from '../_shared/enums/roles';
 
-@Controller("students")
+@Controller('students')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class StudentsController {
   constructor(private students: StudentsService) {}
 
   @Get()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT, RoleName.RESEARCH_ANALYST)
-  findAll(@Query() query: StudentQueryDto) {
-    return this.students.findAll(query);
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.TEACHER,
+    RoleName.HOD,
+    RoleName.RESEARCH_ANALYST,
+  )
+  findAll(@Query() query: StudentQueryDto, @CurrentUser() user: JwtPayload) {
+    return this.students.findAll(query, user);
   }
 
-  @Get("stats")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
-  getStats(@Query("institutionId") institutionId?: string) {
-    return this.students.getStats(institutionId);
+  @Get('stats')
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.TEACHER,
+    RoleName.HOD,
+    RoleName.STUDENT,
+  )
+  getStats(
+    @Query('institutionId') institutionId: string | undefined,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.students.getStats(institutionId, user);
   }
 
-  @Get(":id")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT, RoleName.RESEARCH_ANALYST)
-  findById(@Param("id") id: string) {
-    return this.students.findById(id);
+  @Get(':id')
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.TEACHER,
+    RoleName.HOD,
+    RoleName.STUDENT,
+    RoleName.RESEARCH_ANALYST,
+  )
+  findById(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.students.findById(id, user);
   }
 
-  @Get(":id/biometrics")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT, RoleName.RESEARCH_ANALYST)
-  getBiometrics(@Param("id") id: string) {
-    return this.students.getStudentBiometrics(id);
+  @Get(':id/biometrics')
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.TEACHER,
+    RoleName.HOD,
+    RoleName.STUDENT,
+    RoleName.RESEARCH_ANALYST,
+  )
+  getBiometrics(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.students.getStudentBiometrics(id, user);
   }
 
-  @Post("sync-enrollment")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.STUDENT)
-  syncEnrollment(@Body() dto: { usn: string; faceSamples?: number; profilePhoto?: string }) {
+  @Post('sync-enrollment')
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.TEACHER,
+  )
+  syncEnrollment(
+    @Body() dto: { usn: string; faceSamples?: number; profilePhoto?: string },
+  ) {
     return this.students.markStudentEnrolled(dto);
   }
 
-  @Post("update-photo")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT, RoleName.RESEARCH_ANALYST)
+  @Post('update-photo')
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.TEACHER,
+    RoleName.HOD,
+    RoleName.STUDENT,
+    RoleName.RESEARCH_ANALYST,
+  )
   updatePhoto(
     @Body() dto: { studentId?: string; usn?: string; photoData: string },
     @CurrentUser() user: any,
@@ -71,39 +118,62 @@ export class StudentsController {
     return this.students.create(dto);
   }
 
-  @Patch(":id")
+  @Patch(':id')
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
-  update(@Param("id") id: string, @Body() dto: UpdateStudentDto) {
+  update(@Param('id') id: string, @Body() dto: UpdateStudentDto) {
     return this.students.update(id, dto);
   }
 
-  @Delete(":id")
+  @Delete(':id')
   @Roles(RoleName.SUPER_ADMIN)
-  remove(@Param("id") id: string) {
+  remove(@Param('id') id: string) {
     return this.students.remove(id);
   }
 
-  @Post("reset-all-enrollment")
+  @Post('reset-all-enrollment')
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
-  resetAllEnrollment() {
-    return this.students.resetAllEnrolledStudents();
+  resetAllEnrollment(
+    @CurrentUser() user: JwtPayload,
+    @Query('institutionId') targetInstitutionId?: string,
+  ) {
+    return this.students.resetAllEnrolledStudents(user, targetInstitutionId);
   }
 
-  @Post(":id/reset-password")
+  @Post(':id/reset-password')
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
-  resetPassword(@Param("id") id: string, @Body("password") password?: string) {
-    return this.students.resetStudentPassword(id, password);
+  resetPassword(
+    @Param('id') id: string,
+    @Body('password') password?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return this.students.resetStudentPassword(id, password, user);
   }
 
-  @Delete(":id/face-enrollment")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD)
-  clearFaceEnrollment(@Param("id") id: string) {
-    return this.students.clearStudentFaceEnrollment(id);
+  @Delete(':id/face-enrollment')
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.TEACHER,
+    RoleName.HOD,
+  )
+  clearFaceEnrollment(
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return this.students.clearStudentFaceEnrollment(id, user);
   }
 
-  @Post(":id/clear-enrollment")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD)
-  clearFaceEnrollmentPost(@Param("id") id: string) {
-    return this.students.clearStudentFaceEnrollment(id);
+  @Post(':id/clear-enrollment')
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.TEACHER,
+    RoleName.HOD,
+  )
+  clearFaceEnrollmentPost(
+    @Param('id') id: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return this.students.clearStudentFaceEnrollment(id, user);
   }
 }

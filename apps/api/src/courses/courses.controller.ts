@@ -1,28 +1,50 @@
-import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards } from "@nestjs/common";
-import { CoursesService } from "./courses.service";
-import { CreateCourseDto, UpdateCourseDto } from "./courses.dto";
-import { JwtAuthGuard } from "../common/guards/jwt-auth.guard";
-import { RolesGuard } from "../common/guards/roles.guard";
-import { Roles } from "../common/decorators/roles.decorator";
-import { RoleName } from "../_shared/enums/roles";
+import {
+  Controller,
+  Get,
+  Post,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
+import { CoursesService } from './courses.service';
+import { CreateCourseDto, UpdateCourseDto } from './courses.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RoleName } from '../_shared/enums/roles';
 
-@Controller("courses")
+@Controller('courses')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class CoursesController {
   constructor(private courses: CoursesService) {}
 
   @Get()
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.TEACHER,
+    RoleName.HOD,
+    RoleName.STUDENT,
+  )
   findAll(
-    @Query("institutionId") institutionId?: string,
-    @Query("departmentId") departmentId?: string,
+    @Query('institutionId') institutionId?: string,
+    @Query('departmentId') departmentId?: string,
   ) {
     return this.courses.findAll(institutionId, departmentId);
   }
 
-  @Get(":id")
-  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER, RoleName.HOD, RoleName.STUDENT)
-  findById(@Param("id") id: string) {
+  @Get(':id')
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.TEACHER,
+    RoleName.HOD,
+    RoleName.STUDENT,
+  )
+  findById(@Param('id') id: string) {
     return this.courses.findById(id);
   }
 
@@ -32,15 +54,15 @@ export class CoursesController {
     return this.courses.create(dto);
   }
 
-  @Patch(":id")
+  @Patch(':id')
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
-  update(@Param("id") id: string, @Body() dto: UpdateCourseDto) {
+  update(@Param('id') id: string, @Body() dto: UpdateCourseDto) {
     return this.courses.update(id, dto);
   }
 
-  @Delete(":id")
+  @Delete(':id')
   @Roles(RoleName.SUPER_ADMIN)
-  remove(@Param("id") id: string) {
+  remove(@Param('id') id: string) {
     return this.courses.remove(id);
   }
 }

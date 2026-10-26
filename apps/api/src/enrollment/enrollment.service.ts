@@ -716,23 +716,23 @@ export class EnrollmentService {
 
   async assignClusterStudent(dto: any) {
     let cluster: any = null;
-    try {
-      cluster = await this.prisma.studentCluster.findUnique({
-        where: { id: dto.clusterId },
-        include: { session: true, images: true },
-      });
-    } catch {}
-
-    if (!cluster) {
-      const clusterNum = parseInt(String(dto.clusterId).replace(/\D/g, ""), 10);
-      if (!isNaN(clusterNum) && dto.sessionId) {
+    if (dto.clusterId) {
+      try {
         cluster = await this.prisma.studentCluster.findFirst({
-          where: { enrollmentSessionId: dto.sessionId, clusterNumber: clusterNum },
+          where: {
+            id: dto.clusterId,
+            ...(dto.sessionId ? { enrollmentSessionId: dto.sessionId } : {}),
+          },
           include: { session: true, images: true },
         });
-      } else if (!isNaN(clusterNum)) {
+      } catch {}
+    }
+
+    if (!cluster && dto.sessionId) {
+      const clusterNum = parseInt(String(dto.clusterId).replace(/\D/g, ""), 10);
+      if (!isNaN(clusterNum)) {
         cluster = await this.prisma.studentCluster.findFirst({
-          where: { clusterNumber: clusterNum },
+          where: { enrollmentSessionId: dto.sessionId, clusterNumber: clusterNum },
           include: { session: true, images: true },
         });
       }
@@ -743,29 +743,10 @@ export class EnrollmentService {
         await this.syncAiClusters(dto.sessionId);
         const clusterNum = parseInt(String(dto.clusterId).replace(/\D/g, ""), 10);
         cluster = await this.prisma.studentCluster.findFirst({
-          where: { enrollmentSessionId: dto.sessionId, ...(isNaN(clusterNum) ? {} : { clusterNumber: clusterNum }) },
+          where: { enrollmentSessionId: dto.sessionId, ...(isNaN(clusterNum) ? { id: dto.clusterId } : { clusterNumber: clusterNum }) },
           include: { session: true, images: true },
         });
       } catch {}
-    }
-
-    if (!cluster) {
-      const session = dto.sessionId ? await this.prisma.enrollmentSession.findUnique({ where: { id: dto.sessionId } }) : await this.prisma.enrollmentSession.findFirst();
-      if (session) {
-        const clusterNum = parseInt(String(dto.clusterId).replace(/\D/g, ""), 10) || 1;
-        cluster = await this.prisma.studentCluster.create({
-          data: {
-            enrollmentSessionId: session.id,
-            clusterNumber: clusterNum,
-            sampleCount: dto.sampleCount || 1,
-            qualityAvg: 85,
-            confidence: 0.95,
-            bestImagePath: dto.bestImagePath,
-            status: "ASSIGNED",
-          },
-          include: { session: true, images: true },
-        });
-      }
     }
 
     if (!cluster) throw new NotFoundException("Student cluster not found");
@@ -974,6 +955,49 @@ export class EnrollmentService {
       });
     }
 
+    // Handle Reassignment: If cluster was previously assigned to a different student, invalidate old state
+    const oldStudentId = cluster.assignedStudentId;
+    if (oldStudentId && oldStudentId !== studentId) {
+      await this.prisma.clusterAssignment.deleteMany({
+        where: { studentClusterId: cluster.id, studentId: oldStudentId },
+      });
+
+      await this.prisma.faceEmbedding.deleteMany({
+        where: {
+          studentId: oldStudentId,
+          metadata: { contains: cluster.id },
+        },
+      });
+
+      const remainingOldClusters = await this.prisma.studentCluster.count({
+        where: {
+          assignedStudentId: oldStudentId,
+          id: { not: cluster.id },
+          status: "ASSIGNED",
+        },
+      });
+
+      if (remainingOldClusters === 0) {
+        await this.prisma.student.update({
+          where: { id: oldStudentId },
+          data: { faceEnrolled: false, faceSamples: 0 },
+        });
+
+        try {
+          const oldStudent = await this.prisma.student.findUnique({ where: { id: oldStudentId } });
+          const oldUsn = oldStudent?.rollNumber || oldStudent?.studentId || oldStudent?.usn;
+          if (oldUsn) {
+            await fetch(`${AI_SERVICE_URL}/api/v1/sessions/purge-student-vectors`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ usn: oldUsn }),
+              signal: AbortSignal.timeout(3000),
+            }).catch(() => {});
+          }
+        } catch {}
+      }
+    }
+
     await this.prisma.studentCluster.update({
       where: { id: cluster.id },
       data: {
@@ -994,6 +1018,8 @@ export class EnrollmentService {
           data: {
             studentClusterId: cluster.id,
             studentId,
+            confidence: cluster.confidence || 0.95,
+            assignedBy: "MANUAL",
           },
         });
       }
@@ -1006,18 +1032,20 @@ export class EnrollmentService {
       const sId = cluster.session?.id || dto.sessionId;
 
       if (usn && sId) {
+        const aiCid = cluster.clusterNumber
+          ? `cluster_${String(cluster.clusterNumber).padStart(3, "0")}`
+          : (dto.clusterId?.startsWith("cluster_") ? dto.clusterId : "cluster_001");
+
         try {
-          const aiCid = cluster.clusterNumber
-            ? `cluster_${String(cluster.clusterNumber).padStart(3, "0")}`
-            : (dto.clusterId?.startsWith("cluster_") ? dto.clusterId : "cluster_001");
-          // 1. Assign in AI service with force=true to unassign prior session clusters
+          // 1. Assign in AI service
           await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sId}/clusters/${aiCid}/assign`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ usn, name: studentObj?.fullName || dto.fullName, studentId, force: true }),
             signal: AbortSignal.timeout(3000),
           });
-          // 2. Enroll in FAISS (AI service will purge old vectors for usn before adding new ones)
+
+          // 2. Enroll in FAISS
           await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sId}/enroll-cluster`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1026,6 +1054,53 @@ export class EnrollmentService {
           });
         } catch {
           /* non-critical FAISS sync fallback */
+        }
+
+        // 3. Persist FaceEmbedding in PostgreSQL
+        try {
+          const aiRes = await fetch(`${AI_SERVICE_URL}/api/v1/sessions/${sId}/clusters`, {
+            signal: AbortSignal.timeout(3000),
+          });
+          if (aiRes.ok) {
+            const aiData = await aiRes.json();
+            const clustersList = Array.isArray(aiData) ? aiData : (aiData.clusters || []);
+            const matchedAi = clustersList.find(
+              (c: any) =>
+                c.clusterId === aiCid ||
+                c.cluster_id === aiCid ||
+                String(c.clusterNumber) === String(cluster.clusterNumber),
+            );
+            if (matchedAi) {
+              const repEmb = matchedAi.representative_embedding || matchedAi.centroid_embedding || matchedAi.centroid;
+              if (Array.isArray(repEmb) && repEmb.length === 512) {
+                const vecStr = JSON.stringify(repEmb);
+                const existingEmb = await this.prisma.faceEmbedding.findFirst({
+                  where: {
+                    studentId,
+                    metadata: { contains: cluster.id },
+                  },
+                });
+                if (!existingEmb) {
+                  await this.prisma.faceEmbedding.create({
+                    data: {
+                      studentId,
+                      embeddingVector: vecStr,
+                      confidence: cluster.confidence || 0.95,
+                      thumbnailPath: dto.bestImagePath || cluster.bestImagePath,
+                      metadata: JSON.stringify({
+                        sessionId: sId,
+                        clusterId: cluster.id,
+                        clusterNumber: cluster.clusterNumber,
+                        source: "MANUAL_ASSIGNMENT",
+                      }),
+                    },
+                  });
+                }
+              }
+            }
+          }
+        } catch (e) {
+          Logger.warn(`Could not persist FaceEmbedding to PostgreSQL: ${e}`, "EnrollmentService");
         }
       }
     }
@@ -1037,6 +1112,80 @@ export class EnrollmentService {
       studentName: assignedStudentName,
       studentUsn: assignedStudentUsn,
     };
+  }
+
+  async confirmCluster(clusterId: string, dto: { sessionId?: string }) {
+    let cluster = await this.prisma.studentCluster.findFirst({
+      where: {
+        id: clusterId,
+        ...(dto?.sessionId ? { enrollmentSessionId: dto.sessionId } : {}),
+      },
+      include: { session: true, images: true },
+    });
+
+    if (!cluster && dto?.sessionId) {
+      const clusterNum = parseInt(String(clusterId).replace(/\D/g, ""), 10);
+      if (!isNaN(clusterNum)) {
+        cluster = await this.prisma.studentCluster.findFirst({
+          where: {
+            enrollmentSessionId: dto.sessionId,
+            clusterNumber: clusterNum,
+          },
+          include: { session: true, images: true },
+        });
+      }
+    }
+
+    if (!cluster) throw new NotFoundException("Student cluster not found");
+
+    const sId = dto?.sessionId || cluster.enrollmentSessionId;
+    const aiCid = cluster.clusterNumber
+      ? `cluster_${String(cluster.clusterNumber).padStart(3, "0")}`
+      : clusterId;
+
+    let aiConfirmedCluster: any = null;
+    try {
+      const aiRes = await fetch(
+        `${AI_SERVICE_URL}/api/v1/sessions/${sId}/clusters/${aiCid}/confirm`,
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(3000),
+        },
+      );
+      if (aiRes.ok) {
+        const body = await aiRes.json();
+        aiConfirmedCluster = body.cluster;
+      }
+    } catch {}
+
+    const targetUsn =
+      aiConfirmedCluster?.assignedUsn ||
+      aiConfirmedCluster?.usn ||
+      (aiConfirmedCluster?.assignedStudent && aiConfirmedCluster.assignedStudent.usn);
+    const targetName =
+      aiConfirmedCluster?.assignedStudentName ||
+      aiConfirmedCluster?.name ||
+      (aiConfirmedCluster?.assignedStudent && aiConfirmedCluster.assignedStudent.name);
+
+    if (targetUsn) {
+      return this.assignClusterStudent({
+        clusterId: cluster.id,
+        sessionId: sId,
+        usn: targetUsn,
+        fullName: targetName,
+        force: true,
+      });
+    }
+
+    if (cluster.assignedStudentId) {
+      const updated = await this.prisma.studentCluster.update({
+        where: { id: cluster.id },
+        data: { status: "ASSIGNED" },
+      });
+      return { success: true, cluster: updated };
+    }
+
+    throw new BadRequestException("Cannot confirm cluster without an identified student");
   }
 
   async finalizeEnrollmentSession(sessionId: string) {
@@ -1594,9 +1743,13 @@ export class EnrollmentService {
       }
 
       const isEnrolled = Boolean(c.isEnrolled || c.enrolled);
-      const clusterStatus = (c.identity_status === "CONFIRMED" || isEnrolled)
+      const isExplicitlyConfirmed =
+        c.identity_status === "CONFIRMED" || isEnrolled || c.status === "ASSIGNED";
+      const clusterStatus = isExplicitlyConfirmed
         ? "ASSIGNED"
-        : (c.identity_status === "REJECTED" ? "REJECTED" : (matchedStudentId ? "ASSIGNED" : "UNASSIGNED"));
+        : (c.identity_status === "REJECTED" ? "REJECTED" : "UNASSIGNED");
+
+      const finalStudentId = isExplicitlyConfirmed ? matchedStudentId : null;
 
       // Try to find existing cluster by clusterNumber
       let cluster = await this.prisma.studentCluster.findFirst({
@@ -1607,7 +1760,18 @@ export class EnrollmentService {
       });
 
       if (cluster) {
-        // Update existing
+        // Update existing - preserve manual assignment if already established in DB and not rejected
+        const preservedStudentId =
+          cluster.status === "ASSIGNED" && cluster.assignedStudentId
+            ? cluster.assignedStudentId
+            : finalStudentId;
+        const preservedStatus =
+          c.identity_status === "REJECTED"
+            ? "REJECTED"
+            : cluster.status === "ASSIGNED"
+              ? "ASSIGNED"
+              : clusterStatus;
+
         cluster = await this.prisma.studentCluster.update({
           where: { id: cluster.id },
           data: {
@@ -1617,8 +1781,8 @@ export class EnrollmentService {
             bestImagePath: c.bestImagePath,
             firstSeenTime: c.firstSeenTime,
             lastSeenTime: c.lastSeenTime,
-            assignedStudentId: matchedStudentId || cluster.assignedStudentId,
-            status: clusterStatus,
+            assignedStudentId: preservedStudentId,
+            status: preservedStatus,
           },
         });
       } else {
@@ -1633,17 +1797,18 @@ export class EnrollmentService {
             bestImagePath: c.bestImagePath,
             firstSeenTime: c.firstSeenTime,
             lastSeenTime: c.lastSeenTime,
-            assignedStudentId: matchedStudentId,
+            assignedStudentId: finalStudentId,
             status: clusterStatus,
           },
         });
       }
 
-      if (matchedStudentId) {
+      if (cluster.assignedStudentId && cluster.status === "ASSIGNED") {
+        const assignedSid = cluster.assignedStudentId;
         if (isEnrolled) {
           try {
             await this.prisma.student.update({
-              where: { id: matchedStudentId },
+              where: { id: assignedSid },
               data: {
                 faceEnrolled: true,
                 faceSamples: c.sampleCount || 1,
@@ -1655,15 +1820,15 @@ export class EnrollmentService {
         }
 
         const existingAss = await this.prisma.clusterAssignment.findFirst({
-          where: { studentClusterId: cluster.id, studentId: matchedStudentId },
+          where: { studentClusterId: cluster.id, studentId: assignedSid },
         });
         if (!existingAss) {
           await this.prisma.clusterAssignment.create({
             data: {
               studentClusterId: cluster.id,
-              studentId: matchedStudentId,
+              studentId: assignedSid,
               confidence: c.identity_mean_similarity || c.confidence || 0.85,
-              assignedBy: c.assignment_source || "AUTO",
+              assignedBy: c.assignment_source || "MANUAL",
             },
           });
         }

@@ -1,8 +1,17 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useSyncExternalStore, type ReactNode } from "react";
 
 // DEMO_MODE is determined after mount to avoid SSR/client hydration mismatch
+
+function getDemoSnapshot(): boolean {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  const envDemo = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+  const queryDemo = params.get("demo");
+  if (queryDemo === "false") return false;
+  return queryDemo === "true" || envDemo;
+}
 
 interface DemoEvent {
   type: string;
@@ -29,26 +38,11 @@ const DemoContext = createContext<DemoContextValue>({
 });
 
 export function DemoProvider({ children }: { children: ReactNode }) {
-  const [demoActive, setDemoActive] = useState(false);
+  const demoActive = useSyncExternalStore(() => () => {}, getDemoSnapshot, () => false);
   const [events, setEvents] = useState<DemoEvent[]>([]);
   const [activeSimulations, setActiveSimulations] = useState<string[]>([
     "attendance", "behavior", "heartbeat",
   ]);
-
-  // Detect demo mode after mount (avoids hydration mismatch from typeof window check)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const envDemo = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
-    const queryDemo = params.get("demo");
-
-    if (queryDemo === "false") {
-      setDemoActive(false);
-    } else if (queryDemo === "true" || envDemo) {
-      setDemoActive(true);
-    } else {
-      setDemoActive(false);
-    }
-  }, []);
 
   const simulateEvent = useCallback((type: string, data: Record<string, unknown> = {}) => {
     const event: DemoEvent = {

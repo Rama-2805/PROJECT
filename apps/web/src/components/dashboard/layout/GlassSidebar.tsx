@@ -4,7 +4,7 @@ import { useUIStore } from "@/store/uiStore";
 import { useIsMobile } from "@/lib/hooks/useMediaQuery";
 import { motion } from "framer-motion";
 import { usePathname } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import Link from "next/link";
 import { 
   LayoutDashboard, 
@@ -21,23 +21,35 @@ import {
   Activity,
   ScanFace,
   LogOut,
+  X,
   ShieldCheck,
-  X
+  FileText,
+  Radio,
+  Boxes,
+  Layers,
+  Eye,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
+import { useAuthStore } from "@/lib/store/auth";
 
-const NAV_ITEMS = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/dashboard/students", label: "Students", icon: Users },
-  { href: "/dashboard/teachers", label: "Teachers", icon: GraduationCap },
-  { href: "/dashboard/hod", label: "HODs", icon: ShieldCheck },
-  { href: "/dashboard/classrooms", label: "Classes", icon: BookOpen },
-  { href: "/dashboard/attendance", label: "Attendance", icon: CheckSquare },
-  { href: "/dashboard/live-monitoring", label: "Live Monitoring", icon: Activity },
-  { href: "/dashboard/face-enrollment", label: "AI Enrollment", icon: ScanFace },
-  { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/dashboard/system", label: "System Health", icon: Cpu },
-  { href: "/dashboard/settings", label: "Settings", icon: Settings },
+const ALL_NAV_ITEMS = [
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, roles: ["ALL"] },
+  { href: "/dashboard/students", label: "Students", icon: Users, roles: ["ADMIN", "HOD"] },
+  { href: "/dashboard/teachers", label: "Teachers", icon: GraduationCap, roles: ["ADMIN", "HOD"] },
+  { href: "/dashboard/hod", label: "HODs", icon: ShieldCheck, roles: ["ADMIN", "HOD"] },
+  { href: "/dashboard/departments", label: "Departments", icon: Layers, roles: ["ADMIN"] },
+  { href: "/dashboard/courses", label: "Courses", icon: BookOpen, roles: ["ADMIN", "HOD"] },
+  { href: "/dashboard/classrooms", label: "Classes", icon: BookOpen, roles: ["ADMIN", "HOD"] },
+  { href: "/dashboard/attendance", label: "Attendance", icon: CheckSquare, roles: ["ALL"] },
+  { href: "/dashboard/live-monitoring", label: "Live Monitoring", icon: Activity, roles: ["ALL"] },
+  { href: "/dashboard/behavior-analytics", label: "Behavior AI", icon: Eye, roles: ["ADMIN", "HOD"] },
+  { href: "/dashboard/face-enrollment", label: "AI Enrollment", icon: ScanFace, roles: ["ADMIN"] },
+  { href: "/dashboard/reports", label: "Reports", icon: FileText, roles: ["ADMIN", "HOD"] },
+  { href: "/dashboard/devices", label: "IoT Devices", icon: Radio, roles: ["ADMIN"] },
+  { href: "/dashboard/digital-twin", label: "Digital Twin", icon: Boxes, roles: ["ADMIN"] },
+  { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3, roles: ["ALL"] },
+  { href: "/dashboard/system", label: "System Health", icon: Cpu, roles: ["ADMIN"] },
+  { href: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["ALL"] },
 ];
 
 export function GlassSidebar() {
@@ -46,6 +58,29 @@ export function GlassSidebar() {
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const isMobile = useIsMobile();
   const pathname = usePathname();
+
+  const user = useAuthStore((s) => s.user);
+  const isHod = user?.roles?.includes("HOD");
+  const isAdmin =
+    user?.roles?.some((r) =>
+      [
+        "SUPER_ADMIN",
+        "INSTITUTION_ADMIN",
+        "COLLEGE_SUPER_ADMIN",
+        "COLLEGE_ADMIN",
+        "DEVICE_MANAGER",
+        "RESEARCH_ANALYST",
+      ].includes(r),
+    ) ?? true;
+
+  const navItems = useMemo(() => {
+    return ALL_NAV_ITEMS.filter((item) => {
+      if (item.roles.includes("ALL")) return true;
+      if (item.roles.includes("ADMIN") && isAdmin) return true;
+      if (item.roles.includes("HOD") && (isHod || isAdmin)) return true;
+      return false;
+    });
+  }, [isAdmin, isHod]);
 
   // Close drawer on Escape key when on mobile
   useEffect(() => {
@@ -107,7 +142,7 @@ export function GlassSidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-6 px-3 space-y-2.5 custom-scrollbar">
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const isActive = pathname === item.href || pathname.startsWith(item.href + '/');
           
           return (
@@ -172,15 +207,14 @@ export function GlassSidebar() {
             </Link>
           );
         })}
+
         {/* Explicit Sign Out item */}
         <Link 
           href="#"
-          onClick={(e) => {
+          onClick={async (e) => {
             e.preventDefault();
             if (isMobile) setSidebarOpen(false);
-            document.cookie = "refreshToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-            localStorage.removeItem("currentUserEmail");
-            localStorage.removeItem("user-role");
+            await useAuthStore.getState().logout();
             window.location.href = "/";
           }}
         >

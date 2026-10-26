@@ -54,9 +54,17 @@ export function useBehaviorAlerts() {
   }, [sectionFilter]);
 
   useEffect(() => {
-    fetchAlerts();
-    const interval = setInterval(fetchAlerts, 3500);
-    return () => clearInterval(interval);
+    let isMounted = true;
+    Promise.resolve().then(() => {
+      if (isMounted) fetchAlerts();
+    });
+    const interval = setInterval(() => {
+      if (isMounted) fetchAlerts();
+    }, 3500);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
   }, [fetchAlerts]);
 
   const acknowledgeAlert = async (alertId: string) => {

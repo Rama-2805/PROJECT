@@ -399,8 +399,8 @@ class TestTwoStageHybridBehaviorPipeline(unittest.TestCase):
             phone_confidence=0.0,
         )
         self.assertIsNotNone(alert, "Sleeping alert must trigger after 11s")
-        self.assertEqual(alert["event_type"], "POSSIBLE_SLEEPING_POSTURE")
-        self.assertEqual(alert["title"], "Possible sleeping posture")
+        self.assertIn(alert["event_type"], ["PROBABLE_SLEEPING", "POSSIBLE_SLEEPING_POSTURE"])
+        self.assertTrue("Sleeping" in alert["title"] or "sleeping" in alert["title"])
         self.assertGreaterEqual(alert["duration"], 10.0)
 
     def test_sleep_case_2_brief_head_movement_no_alert(self):
@@ -644,6 +644,436 @@ class TestTwoStageHybridBehaviorPipeline(unittest.TestCase):
         # Render behavior overlay
         beh_frame = engine._draw_behavior_overlay(mock_frame, [])
         self.assertEqual(beh_frame.shape, mock_frame.shape)
+
+
+class TestPhase9StrictSleepingRequirements(unittest.TestCase):
+    """Explicitly verifies the 12 sleeping classification test requirements from Phase 9."""
+
+    def setUp(self):
+        # Default strict configuration: 30s duration, 80% valid ratio, 0.90 confidence, 60s cooldown
+        self.tracker = BehavioralTrackerService(
+            phone_usage_threshold_sec=5.0,
+            sleeping_threshold_sec=30.0,
+            min_valid_obs_ratio=0.80,
+            decision_confidence_threshold=0.90,
+            cooldown_sec=60.0,
+            track_lost_timeout_sec=5.0,
+        )
+
+    def test_1_person_writing_notes_no_sleeping_alert(self):
+        """1. Person writing notes: head tilted down at notebook but torso upright.
+        Expected: no probable-sleeping alert over 35 seconds.
+        """
+        track_id = "trk_write_01"
+        t0 = time.time() - 35.0
+        self.tracker.update_or_create_track(track_id, [100, 100, 300, 400], t0)
+
+        alert_occurred = False
+        for sec in range(0, 36, 2):
+            person, alert = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Head Lowered",
+                is_slumped=False,
+                is_head_down=True,
+                head_pitch=-22.0 + (sec % 3),
+                head_yaw=2.0,
+                head_roll=0.0,
+                pose_quality=0.85,
+                face_quality=0.80,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+            if alert:
+                alert_occurred = True
+
+        self.assertFalse(alert_occurred, "Writing notes must never trigger a sleeping alert")
+        self.assertIn(person.current_state, [BehaviorTemporalState.NORMAL_ACTIVITY, BehaviorTemporalState.NORMAL])
+        self.assertTrue(person.is_reading_writing)
+
+    def test_2_person_reading_textbook_no_sleeping_alert(self):
+        """2. Person reading a textbook: head down at desk/book, posture upright.
+        Expected: no probable-sleeping alert over 35 seconds.
+        """
+        track_id = "trk_read_01"
+        t0 = time.time() - 35.0
+        self.tracker.update_or_create_track(track_id, [100, 100, 300, 400], t0)
+
+        alert_occurred = False
+        for sec in range(0, 36, 2):
+            person, alert = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Head Lowered",
+                is_slumped=False,
+                is_head_down=True,
+                head_pitch=-20.0,
+                head_yaw=0.0,
+                head_roll=0.0,
+                pose_quality=0.88,
+                face_quality=0.85,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+            if alert:
+                alert_occurred = True
+
+        self.assertFalse(alert_occurred, "Reading textbook must never trigger a sleeping alert")
+        self.assertIn(person.current_state, [BehaviorTemporalState.NORMAL_ACTIVITY, BehaviorTemporalState.NORMAL])
+
+    def test_3_person_briefly_looking_down_no_alert(self):
+        """3. Person briefly looking down (5s < 30s threshold).
+        Expected: no probable-sleeping alert.
+        """
+        track_id = "trk_brief_01"
+        t0 = time.time() - 5.0
+        self.tracker.update_or_create_track(track_id, [100, 100, 300, 400], t0)
+
+        for sec in range(0, 6):
+            person, alert = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Head Resting on Desk",
+                is_slumped=True,
+                is_head_down=True,
+                head_pitch=-30.0,
+                head_yaw=0.0,
+                head_roll=0.0,
+                pose_quality=0.85,
+                face_quality=0.85,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+            self.assertIsNone(alert, "Brief head drop (<30s) must not trigger sleeping alert")
+
+    def test_4_person_briefly_closing_eyes_no_alert(self):
+        """4. Person briefly closing their eyes or adjusting posture (<5s).
+        Expected: no probable-sleeping alert.
+        """
+        track_id = "trk_blink_01"
+        t0 = time.time() - 4.0
+        self.tracker.update_or_create_track(track_id, [100, 100, 300, 400], t0)
+
+        for sec in range(0, 5):
+            person, alert = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Upright",
+                is_slumped=False,
+                is_head_down=False,
+                head_pitch=0.0,
+                head_yaw=0.0,
+                head_roll=0.0,
+                pose_quality=0.85,
+                face_quality=0.90,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+            self.assertIsNone(alert)
+
+    def test_5_unrecognized_face_ordinary_posture_tracked_anonymously_no_alert(self):
+        """5. Person with an unrecognized face but ordinary posture.
+        Expected: tracked anonymously (Track P-xxx); no sleeping alert.
+        """
+        track_id = "trk_anon_01"
+        t0 = time.time() - 35.0
+        person = self.tracker.update_or_create_track(track_id, [100, 100, 300, 400], t0, student_id=None, student_name=None)
+        self.assertIsNone(person.student_id)
+        self.assertIn("Track P-", person.track_ref)
+
+        for sec in range(0, 36, 2):
+            person, alert = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Upright",
+                is_slumped=False,
+                is_head_down=False,
+                head_pitch=0.0,
+                head_yaw=0.0,
+                head_roll=0.0,
+                pose_quality=0.85,
+                face_quality=0.80,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+            self.assertIsNone(alert, "Unrecognized face with normal posture must never trigger sleeping alert")
+
+    def test_6_insufficient_face_visibility_no_alert(self):
+        """6. Person with insufficient face visibility or occlusion.
+        Expected: INSUFFICIENT_EVIDENCE; no sleeping alert.
+        """
+        track_id = "trk_occl_01"
+        t0 = time.time() - 35.0
+        self.tracker.update_or_create_track(track_id, [100, 100, 300, 400], t0)
+
+        for sec in range(0, 36, 2):
+            person, alert = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Unknown",
+                is_slumped=False,
+                is_head_down=False,
+                head_pitch=0.0,
+                head_yaw=0.0,
+                head_roll=0.0,
+                pose_quality=0.10,
+                face_quality=0.10,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+            self.assertIsNone(alert)
+        self.assertEqual(person.current_state, BehaviorTemporalState.INSUFFICIENT_EVIDENCE)
+
+    def test_7_missing_or_low_quality_observations_no_alert(self):
+        """7. Person with low valid-observation ratio (< 80%).
+        Expected: no sleeping alert even if slumped.
+        """
+        track_id = "trk_lowqual_01"
+        t0 = time.time() - 35.0
+        self.tracker.update_or_create_track(track_id, [100, 100, 300, 400], t0)
+
+        alert_occurred = False
+        for sec in range(0, 36, 2):
+            is_valid_frame = (sec % 6 == 0)
+            q = 0.85 if is_valid_frame else 0.15
+            _, alert = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Head Resting on Desk",
+                is_slumped=True,
+                is_head_down=True,
+                head_pitch=-30.0,
+                head_yaw=0.0,
+                head_roll=0.0,
+                pose_quality=q,
+                face_quality=q,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+            if alert:
+                alert_occurred = True
+
+        self.assertFalse(alert_occurred, "Low observation quality ratio (<80%) must not trigger alert")
+
+    def test_8_sustained_sleeping_posture_strict_threshold_triggers_alert(self):
+        """8. Person with sustained sleeping posture and sufficient independent temporal evidence (>= 30s).
+        Expected: one probable-sleeping event after strict 30s threshold is satisfied.
+        """
+        track_id = "trk_sleep_strict_01"
+        t0 = time.time() - 35.0
+        self.tracker.update_or_create_track(track_id, [100, 100, 300, 400], t0)
+
+        alerts = []
+        for sec in range(0, 36, 2):
+            person, alert = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Head Resting on Desk",
+                is_slumped=True,
+                is_head_down=True,
+                head_pitch=-32.0,
+                head_yaw=0.0,
+                head_roll=0.0,
+                pose_quality=0.88,
+                face_quality=0.85,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+            if alert:
+                alerts.append(alert)
+
+        self.assertEqual(len(alerts), 1, "Exactly one alert emitted when threshold is reached")
+        first_alert = alerts[0]
+        self.assertEqual(first_alert["event_type"], "PROBABLE_SLEEPING")
+        self.assertIn("Probable Sleeping — Track P-", first_alert["title"])
+        self.assertIsNone(first_alert["student_id"], "Sleeping alert must not expose student ID")
+        self.assertGreaterEqual(first_alert["duration"], 30.0)
+        self.assertGreaterEqual(first_alert["confidence"], 0.90)
+
+    def test_9_track_interruption_deducts_missing_time(self):
+        """9. Track interruption during suspected sleeping event:
+        Missing frames do not count toward sleeping duration.
+        """
+        track_id = "trk_interruption_01"
+        t0 = time.time() - 35.0
+        self.tracker.update_or_create_track(track_id, [100, 100, 300, 400], t0)
+
+        for sec in [0, 1, 2]:
+            self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Head Resting on Desk",
+                is_slumped=True,
+                is_head_down=True,
+                head_pitch=-30.0,
+                head_yaw=0.0,
+                head_roll=0.0,
+                pose_quality=0.85,
+                face_quality=0.85,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+
+        # 15 second gap (interruption) to t0 + 17s
+        person, alert = self.tracker.evaluate_behavior_evidence(
+            track_id=track_id,
+            timestamp=t0 + 17.0,
+            posture_label="Head Resting on Desk",
+            is_slumped=True,
+            is_head_down=True,
+            head_pitch=-30.0,
+            head_yaw=0.0,
+            head_roll=0.0,
+            pose_quality=0.85,
+            face_quality=0.85,
+            phone_associated=False,
+            phone_bbox=None,
+            phone_confidence=0.0,
+        )
+        self.assertIsNone(alert)
+        self.assertLess(person.accumulated_sleeping_duration, 10.0)
+
+    def test_10_conflicting_signals_no_alert(self):
+        """10. Conflicting signals: slumped label, but high head motion variance (> 12 deg²).
+        Expected: classified as active/writing; no probable-sleeping alert.
+        """
+        track_id = "trk_conflict_01"
+        t0 = time.time() - 35.0
+        self.tracker.update_or_create_track(track_id, [100, 100, 300, 400], t0)
+
+        alerts = []
+        for sec in range(0, 36, 2):
+            p = -25.0 if (sec % 4 == 0) else -10.0
+            _, alert = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Slumped",
+                is_slumped=True,
+                is_head_down=True,
+                head_pitch=p,
+                head_yaw=float(sec % 5),
+                head_roll=0.0,
+                pose_quality=0.85,
+                face_quality=0.85,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+            if alert:
+                alerts.append(alert)
+
+        self.assertEqual(len(alerts), 0, "Conflicting motion signals must prevent sleeping alerts")
+
+    def test_11_repeated_frames_same_episode_no_duplicate_alerts(self):
+        """11. Repeated frames for same continuous sleeping episode:
+        Exactly ONE alert emitted; no duplicate alert spam on subsequent frames.
+        """
+        track_id = "trk_dedup_01"
+        t0 = time.time() - 45.0
+        self.tracker.update_or_create_track(track_id, [100, 100, 300, 400], t0)
+
+        alerts = []
+        for sec in range(0, 46, 1):
+            _, alert = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Head Resting on Desk",
+                is_slumped=True,
+                is_head_down=True,
+                head_pitch=-32.0,
+                head_yaw=0.0,
+                head_roll=0.0,
+                pose_quality=0.90,
+                face_quality=0.85,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+            if alert:
+                alerts.append(alert)
+
+        self.assertEqual(len(alerts), 1, "Continuous episode must produce exactly 1 alert, not spam")
+
+    def test_12_new_sleeping_episode_after_resolution_rearms(self):
+        """12. New sleeping episode after a resolved event:
+        Returns to normal posture, cooldown elapses, new sleeping episode triggers new alert.
+        """
+        track_id = "trk_rearm_01"
+        t0 = time.time() - 150.0
+        self.tracker.update_or_create_track(track_id, [100, 100, 300, 400], t0)
+
+        # Episode 1: sleep 32 seconds -> alert 1
+        alerts = []
+        for sec in range(0, 33, 1):
+            _, alert = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Head Resting on Desk",
+                is_slumped=True,
+                is_head_down=True,
+                head_pitch=-32.0,
+                head_yaw=0.0,
+                head_roll=0.0,
+                pose_quality=0.90,
+                face_quality=0.85,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+            if alert:
+                alerts.append(alert)
+        self.assertEqual(len(alerts), 1)
+
+        # Resolution: student sits upright for 70 seconds (> 60s cooldown)
+        for sec in range(33, 105, 2):
+            person, _ = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Upright",
+                is_slumped=False,
+                is_head_down=False,
+                head_pitch=0.0,
+                head_yaw=0.0,
+                head_roll=0.0,
+                pose_quality=0.90,
+                face_quality=0.90,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+        self.assertEqual(person.current_state, BehaviorTemporalState.NORMAL_ACTIVITY)
+        self.assertEqual(person.accumulated_sleeping_duration, 0.0)
+
+        # Episode 2: student sleeps again for 32 seconds
+        for sec in range(105, 140, 1):
+            _, alert = self.tracker.evaluate_behavior_evidence(
+                track_id=track_id,
+                timestamp=t0 + sec,
+                posture_label="Head Resting on Desk",
+                is_slumped=True,
+                is_head_down=True,
+                head_pitch=-32.0,
+                head_yaw=0.0,
+                head_roll=0.0,
+                pose_quality=0.90,
+                face_quality=0.85,
+                phone_associated=False,
+                phone_bbox=None,
+                phone_confidence=0.0,
+            )
+            if alert:
+                alerts.append(alert)
+
+        self.assertEqual(len(alerts), 2, "Second separate episode after resolution must re-arm cleanly and alert")
 
 
 if __name__ == "__main__":

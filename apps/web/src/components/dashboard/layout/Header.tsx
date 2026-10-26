@@ -1,11 +1,30 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import { Bell, AlertTriangle, ShieldCheck, Siren, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
-import { getUsers } from "@/lib/userStore";
 import { apiRequest } from "@/lib/api/client";
-import { useBehaviorAlerts } from "@/lib/hooks/useBehaviorAlerts";
+import { useEmergencyAlerts } from "@/lib/hooks/useEmergencyAlerts";
+import { useAuthStore } from "@/lib/store/auth";
+
+const SEARCH_DATABASE = [
+  { type: "Student", name: "A Abhijith", usn: "1VI23CS001", info: "7th Sem - Section A • 92.4%", link: "/dashboard/reports" },
+  { type: "Student", name: "Aaliya Viquas", usn: "1VI23CS005", info: "7th Sem - Section A (Enrolled) • 96.8%", link: "/dashboard/reports" },
+  { type: "Student", name: "Abhiram N", usn: "1VI23CS006", info: "7th Sem - Section A (Enrolled) • 94.5%", link: "/dashboard/reports" },
+  { type: "Student", name: "Anvik C Shetty", usn: "1VI23CS012", info: "7th Sem - Section A • 94.2%", link: "/dashboard/reports" },
+  { type: "Student", name: "Manjunatha R", usn: "1VI23CS058", info: "7th Sem - Section A (Enrolled) • 95.0%", link: "/dashboard/reports" },
+  { type: "Student", name: "Prajwal R", usn: "1VI23CS066", info: "7th Sem - Section B • 89.4%", link: "/dashboard/reports" },
+  { type: "Student", name: "Rakshith M", usn: "1VI23CS070", info: "7th Sem - Section B (Enrolled) • 95.2%", link: "/dashboard/reports" },
+  { type: "Student", name: "Siddharth Saxena", usn: "CSE2026002", info: "7th Sem - Section A • 91.0%", link: "/dashboard/reports" },
+  { type: "Teacher", name: "Prof. Kalaiselvi S", info: "Class Teacher (7th Sem - Section A)", link: "/dashboard/teachers" },
+  { type: "Teacher", name: "Prof. Harish Kumar", info: "Class Teacher (7th Sem - Section B)", link: "/dashboard/teachers" },
+  { type: "HOD", name: "Dr. Ramakrishna", info: "Head of Department (CSE)", link: "/dashboard/hod" },
+  { type: "Classroom", name: "7th Sem - Section A (Room 701)", info: "Camera CAM-023-A Online", link: "/dashboard/live-monitoring" },
+  { type: "Classroom", name: "7th Sem - Section B (Room 702)", info: "Camera CAM-402-A Online", link: "/dashboard/live-monitoring" },
+  { type: "Report", name: "VTU 7th Sem Attendance Register", info: "Official VTU PDF format", link: "/dashboard/reports" },
+];
 
 /* ─── Header Component ─────────────────────────────────────────── */
 export interface HeaderProps {
@@ -14,7 +33,6 @@ export interface HeaderProps {
 }
 
 export function Header({ title, breadcrumbs }: HeaderProps) {
-  const [searchOpen, setSearchOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -41,19 +59,14 @@ export function Header({ title, breadcrumbs }: HeaderProps) {
           localStorage.setItem("currentUserName", displayName);
           return;
         }
-      } catch (e) {}
+      } catch {}
 
-      if (isMounted) {
-        const users = getUsers();
-        if (email && users[email]) {
-          setCurrentUser(users[email]);
-        } else {
-          setCurrentUser({
-            email: email || "admin@collegename.edu.in",
-            fullName: name || (role === "admin" ? "System Admin" : role === "teacher" ? "Dr. Sarah Jenkins" : "Student"),
-            role: role
-          });
-        }
+      if (isMounted && email) {
+        setCurrentUser({
+          email,
+          fullName: name || (role === "admin" ? "System Admin" : role === "teacher" ? "Faculty" : "Student"),
+          role,
+        });
       }
     }
     loadUser();
@@ -61,33 +74,16 @@ export function Header({ title, breadcrumbs }: HeaderProps) {
   }, []);
 
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<any[]>([]);
 
-  const SEARCH_DATABASE = [
-    { type: "Student", name: "Siddharth Saxena", usn: "CSE2026002", info: "CSE 5th Sem", link: "/dashboard/reports?tab=studentCard" },
-    { type: "Student", name: "Manish Bose", usn: "CSE2026001", info: "CSE 5th Sem", link: "/dashboard/reports?tab=studentCard" },
-    { type: "Student", name: "Karan Nair", usn: "CSE2026003", info: "CSE 5th Sem (Low Att)", link: "/dashboard/reports?tab=studentCard" },
-    { type: "Student", name: "Shreya Agarwal", usn: "CSE2026008", info: "CSE 5th Sem", link: "/dashboard/reports?tab=studentCard" },
-    { type: "Teacher", name: "Dr. Sarah Jenkins", info: "CSE Department Head", link: "/dashboard/teachers" },
-    { type: "Classroom", name: "CSE Lab 301", info: "Active session running", link: "/dashboard/live-monitoring" },
-    { type: "Classroom", name: "AI Research Lab", info: "CCTV active", link: "/dashboard/live-monitoring" },
-    { type: "Unknown Face", name: "CLUST-01 (8 detections)", info: "Suggested match: Karan Nair", link: "/teacher/unknown-faces" },
-    { type: "Report", name: "Daily Attendance Ledger - June 2026", info: "PDF format archive", link: "/dashboard/reports" },
-  ];
-
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
-      return;
-    }
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
     const q = searchQuery.toLowerCase();
-    const matches = SEARCH_DATABASE.filter(
+    return SEARCH_DATABASE.filter(
       (item) =>
         item.name.toLowerCase().includes(q) ||
         item.type.toLowerCase().includes(q) ||
         (item.usn && item.usn.toLowerCase().includes(q))
     );
-    setSearchResults(matches);
   }, [searchQuery]);
 
   useEffect(() => {
@@ -102,25 +98,37 @@ export function Header({ title, breadcrumbs }: HeaderProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const handleMenuClick = (item: string) => {
+  const router = useRouter();
+
+  const handleMenuClick = useCallback(async (item: string) => {
+    setUserMenuOpen(false);
     if (item === "Sign Out") {
-      document.cookie = "refreshToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+      try {
+        await useAuthStore.getState().logout();
+      } catch (e) {
+        console.error("Sign out error", e);
+      }
+      document.cookie = "smartcampus_access_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax";
+      document.cookie = "refreshToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/; SameSite=Lax";
       localStorage.removeItem("currentUserEmail");
+      localStorage.removeItem("currentUserName");
       localStorage.removeItem("user-role");
       window.location.href = "/";
+    } else if (item === "Profile" || item === "Settings") {
+      router.push("/dashboard/settings");
+    } else if (item === "Help") {
+      router.push("/features");
     }
-  };
+  }, [router]);
 
   const {
-    alerts,
-    unreadCount,
-    sectionFilter,
-    setSectionFilter,
-    acknowledgeAlert,
-    isTeacher,
-    isHod,
-    isAdmin,
-  } = useBehaviorAlerts();
+    emergencies,
+    unreadEmergencyCount,
+    acknowledgeEmergency,
+    resolveEmergency,
+    clearAllEmergencies,
+    triggerSimulatedEmergency,
+  } = useEmergencyAlerts();
 
   return (
     <header className="sticky top-0 z-30 bg-white/5 backdrop-blur-[40px] saturate-200 border-b border-white/10 h-16">
@@ -212,120 +220,146 @@ export function Header({ title, breadcrumbs }: HeaderProps) {
             </div>
           </a>
 
-          {/* Notification Bell */}
+          {/* Notification Bell (Emergencies & Critical System Alerts Only) */}
           <div className="relative">
             <button
               onClick={() => setNotifOpen(!notifOpen)}
               className="relative flex h-9 w-9 items-center justify-center rounded-lg glass hover:bg-glass-medium transition-colors cursor-pointer"
-              aria-label="Notifications"
+              aria-label="Emergency Notifications"
             >
-              <svg className="w-4 h-4 text-text-dim" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0" />
-              </svg>
-              {unreadCount > 0 ? (
-                <span className="absolute -top-0.5 -right-0.5 h-4 min-w-[16px] px-1 rounded-full bg-error text-[8px] font-bold text-white flex items-center justify-center animate-pulse">
-                  {unreadCount}
+              <Bell className="w-4 h-4 text-text-dim" />
+              {unreadEmergencyCount > 0 ? (
+                <span className="absolute -top-1 -right-1 h-4 min-w-[16px] px-1 rounded-full bg-red-600 text-[9px] font-bold text-white flex items-center justify-center animate-pulse shadow-sm">
+                  {unreadEmergencyCount}
                 </span>
               ) : (
-                <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-success"></span>
+                <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
               )}
             </button>
 
             <AnimatePresence>
               {notifOpen && (
                 <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 8 }}
-                  className="absolute right-0 top-full mt-2 w-88 sm:w-96 glass-heavy border border-glass-border rounded-xl p-3 shadow-xl z-50"
+                  initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                  className="absolute right-0 top-full mt-2 w-88 sm:w-96 glass-heavy border border-glass-border rounded-2xl p-4 shadow-2xl z-50 backdrop-blur-2xl"
                 >
-                  <div className="flex items-center justify-between mb-3 border-b border-glass-border pb-2">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-text-primary">Behavioral & Class Alerts</span>
-                      {unreadCount > 0 && (
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-error/20 text-error">
-                          {unreadCount} New
-                        </span>
+                  {/* Header */}
+                  <div className="flex items-center justify-between mb-3 border-b border-glass-border pb-2.5">
+                    <div className="flex items-center gap-2">
+                      {unreadEmergencyCount > 0 ? (
+                        <Siren className="w-4 h-4 text-red-500 animate-pulse" />
+                      ) : (
+                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
                       )}
+                      <span className="text-xs font-bold text-text-primary tracking-wide">
+                        Emergency Dispatch
+                      </span>
                     </div>
-                    {(isHod || isAdmin) && (
-                      <div className="flex items-center gap-1 bg-black/40 p-0.5 rounded-lg border border-white/5">
-                        {(["ALL", "A", "B"] as const).map((sec) => (
-                          <button
-                            key={sec}
-                            onClick={() => setSectionFilter(sec)}
-                            className={cn(
-                              "px-2 py-0.5 rounded text-[10px] font-medium transition-all",
-                              sectionFilter === sec
-                                ? "bg-ai-blue text-black font-bold"
-                                : "text-text-muted hover:text-text-primary",
-                            )}
-                          >
-                            {sec === "ALL" ? "All" : `Sec ${sec}`}
-                          </button>
-                        ))}
+
+                    {unreadEmergencyCount > 0 ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 font-mono">
+                          {unreadEmergencyCount} CRITICAL
+                        </span>
+                        <button
+                          onClick={clearAllEmergencies}
+                          className="p-1 rounded hover:bg-glass-light text-text-muted hover:text-red-400 transition-colors cursor-pointer"
+                          title="Clear All Emergencies"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                    )}
-                    {isTeacher && !isHod && (
-                      <span className="text-[10px] font-semibold text-ai-blue bg-ai-blue/10 px-2 py-0.5 rounded border border-ai-blue/20">
-                        Section A
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full text-[9px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                        ALL SYSTEMS CLEAR
                       </span>
                     )}
                   </div>
-                  <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
-                    {alerts.length === 0 ? (
-                      <div className="text-center py-6 text-text-muted text-xs">
-                        No active behavioral alerts.
+
+                  {/* Body */}
+                  <div className="space-y-2.5 max-h-[350px] overflow-y-auto pr-1">
+                    {unreadEmergencyCount === 0 ? (
+                      <div className="py-4 px-2 text-center space-y-2">
+                        <div className="w-11 h-11 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto shadow-sm">
+                          <ShieldCheck className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-text-primary">Zero Active Emergencies</p>
+                          <p className="text-[11px] text-text-muted mt-1 leading-relaxed">
+                            No active SOS panic triggers, unauthorized breaches, or IoT node disconnections reported.
+                          </p>
+                        </div>
+
+                        {/* Operational Telemetry Chips */}
+                        <div className="grid grid-cols-2 gap-1.5 pt-1 text-left">
+                          <div className="p-2 rounded-lg bg-glass-light border border-glass-border">
+                            <span className="text-[10px] text-text-muted block">IoT Edge Nodes</span>
+                            <span className="text-xs font-mono font-bold text-emerald-400">6/6 Online</span>
+                          </div>
+                          <div className="p-2 rounded-lg bg-glass-light border border-glass-border">
+                            <span className="text-[10px] text-text-muted block">Perimeter Security</span>
+                            <span className="text-xs font-mono font-bold text-emerald-400">Secure</span>
+                          </div>
+                        </div>
+
+                        {/* Drill Trigger */}
+                        <button
+                          onClick={() => triggerSimulatedEmergency("SOS")}
+                          className="w-full mt-2 py-1.5 px-3 rounded-lg bg-glass-light hover:bg-glass-medium border border-glass-border text-[10px] font-medium text-text-muted hover:text-text-primary transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          Simulate Emergency Drill
+                        </button>
                       </div>
                     ) : (
-                      alerts.map((n) => {
-                        const isPhone = n.title.includes("Phone") || n.description?.includes("phone");
-                        const isSleeping = n.title.includes("Sleeping") || n.title.includes("Inactive") || n.description?.includes("sleeping");
-
-                        return (
-                          <div
-                            key={n.id}
-                            className={cn(
-                              "flex flex-col gap-1.5 p-2 rounded-lg text-xs border transition-colors",
-                              n.severity === "CRITICAL"
-                                ? "bg-error/10 border-error/30"
-                                : n.severity === "WARNING"
-                                ? "bg-warning/10 border-warning/30"
-                                : "bg-glass-light border-glass-border hover:bg-glass-medium",
-                            )}
-                          >
-                            <div className="flex items-center justify-between gap-1">
-                              <div className="flex items-center gap-1.5 font-semibold text-[11px] truncate">
-                                <span>{isPhone ? "📱" : isSleeping ? "💤" : "⚠️"}</span>
-                                <span className={cn(
-                                  n.severity === "CRITICAL" ? "text-error" : n.severity === "WARNING" ? "text-warning" : "text-ai-blue"
-                                )}>
-                                  {n.title}
-                                </span>
-                              </div>
-                              <span className="text-[9px] text-text-muted font-mono shrink-0">
-                                {new Date(n.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      emergencies.map((alert) => (
+                        <div
+                          key={alert.id}
+                          className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-text-primary space-y-2 shadow-sm"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-red-600 text-white font-mono animate-pulse">
+                                {alert.severity}
+                              </span>
+                              <span className="font-bold text-xs text-red-400 leading-tight">
+                                {alert.title}
                               </span>
                             </div>
-                            {n.description && (
-                              <p className="text-text-secondary text-[11px] leading-snug">{n.description}</p>
-                            )}
-                            <div className="flex items-center justify-between pt-1 border-t border-white/5">
-                              {n.section && (
-                                <span className="text-[9px] text-text-muted bg-white/10 px-1.5 py-0.5 rounded">
-                                  Section {n.section}
-                                </span>
-                              )}
-                              <button
-                                onClick={() => acknowledgeAlert(n.id)}
-                                className="text-[10px] text-ai-blue hover:underline cursor-pointer ml-auto"
-                              >
-                                Mark Read
-                              </button>
-                            </div>
+                            <span className="text-[10px] text-text-muted font-mono shrink-0">
+                              {alert.timestamp}
+                            </span>
                           </div>
-                        );
-                      })
+
+                          <p className="text-[11px] text-text-secondary leading-snug">
+                            {alert.description}
+                          </p>
+
+                          <div className="text-[10px] font-mono text-text-muted flex items-center gap-1.5 pt-1 border-t border-red-500/20">
+                            <span>📍 {alert.location}</span>
+                            {alert.deviceNode && (
+                              <span className="text-ai-cyan font-bold">• {alert.deviceNode}</span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-end gap-2 pt-1">
+                            <button
+                              onClick={() => acknowledgeEmergency(alert.id)}
+                              className="px-2 py-1 rounded-md text-[10px] font-medium bg-glass-light hover:bg-glass-medium border border-glass-border text-text-primary transition-colors cursor-pointer"
+                            >
+                              Acknowledge
+                            </button>
+                            <button
+                              onClick={() => resolveEmergency(alert.id)}
+                              className="px-2 py-1 rounded-md text-[10px] font-bold bg-red-600 hover:bg-red-700 text-white transition-colors cursor-pointer shadow-sm"
+                            >
+                              Resolve & Clear
+                            </button>
+                          </div>
+                        </div>
+                      ))
                     )}
                   </div>
                 </motion.div>

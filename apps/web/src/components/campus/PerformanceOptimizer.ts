@@ -94,27 +94,29 @@ interface FrameBudget {
 }
 
 export function usePerformanceMonitor() {
-  const budget = useRef<FrameBudget>({ drawCalls: 0, triangles: 0, fps: 60 });
+  const [budget, setBudget] = useState<FrameBudget>({ drawCalls: 0, triangles: 0, fps: 60 });
   const frameCount = useRef(0);
-  const lastTime = useRef(performance.now());
-  const [fps, setFps] = useState(60);
+  const lastTime = useRef(0);
 
   useFrame(() => {
     frameCount.current++;
 
     const now = performance.now();
+    if (lastTime.current === 0) {
+      lastTime.current = now;
+      return;
+    }
     const delta = now - lastTime.current;
 
     if (delta >= 1000) {
       const measuredFps = Math.round((frameCount.current * 1000) / delta);
-      budget.current.fps = measuredFps;
-      setFps(measuredFps);
+      setBudget((prev) => ({ ...prev, fps: measuredFps }));
       frameCount.current = 0;
       lastTime.current = now;
     }
   });
 
-  return { ...budget.current };
+  return budget;
 }
 
 // ── Particle Position Computation ──────────────────────────────

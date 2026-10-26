@@ -1,24 +1,21 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils/cn";
 import { api } from "@/lib/api/client";
 import { 
-  ScanFace, Sparkles, RefreshCw, Check, X, Search, 
-  Calendar, Eye, CheckCircle2, AlertTriangle,
-  UserCheck, UserPlus, Layers, Hash, Image as ImageIcon,
-  ChevronRight, ArrowRight, ShieldCheck, Film
+  ScanFace, Sparkles, RefreshCw, Check, Search, 
+  Eye, CheckCircle2, AlertTriangle,
+  UserCheck, UserPlus, Layers,
+  ShieldCheck, Film
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════════════════
    TYPES & INTERFACES
 ═══════════════════════════════════════════════════════════════════ */
-// All /storage/* paths are proxied through Next.js rewrites — use relative URLs
-const AI_BASE = "";
-
 function resolveCropUrl(urlOrPath: string | null | undefined): string {
   if (!urlOrPath) return "/placeholder-avatar.png";
   if (urlOrPath.startsWith("http://127.0.0.1:8000")) {
@@ -111,35 +108,9 @@ export default function IdentityCandidatesPage() {
   const [actionErrorMsg, setActionErrorMsg] = useState<string | null>(null);
 
   /* ─────────────────────────────────────────────────────────────
-     1. FETCH SESSIONS
+     1. FETCH CLUSTERS FOR SESSION
   ───────────────────────────────────────────────────────────── */
-  const fetchSessions = async () => {
-    try {
-      const res = await api.get<SessionInfo[]>("/enrollment/sessions");
-      if (res.success && Array.isArray(res.data) && res.data.length > 0) {
-        setSessions(res.data);
-        // Default to the first session (or whichever has clusters)
-        const sessionWithClusters = res.data.find(s => (s.generatedClusters || 0) > 0) || res.data[0];
-        setSelectedSessionId(sessionWithClusters.id);
-        fetchClustersForSession(sessionWithClusters.id);
-      } else {
-        // Fallback session ID known in DB
-        const fallbackId = "cmtpqbq7b016g8o6e1myew566";
-        setSelectedSessionId(fallbackId);
-        fetchClustersForSession(fallbackId);
-      }
-    } catch (err) {
-      console.error("Error fetching sessions:", err);
-      const fallbackId = "cmtpqbq7b016g8o6e1myew566";
-      setSelectedSessionId(fallbackId);
-      fetchClustersForSession(fallbackId);
-    }
-  };
-
-  /* ─────────────────────────────────────────────────────────────
-     2. FETCH CLUSTERS FOR SESSION
-  ───────────────────────────────────────────────────────────── */
-  const fetchClustersForSession = async (sessionId: string) => {
+  const fetchClustersForSession = useCallback(async (sessionId: string) => {
     if (!sessionId) return;
     setLoading(true);
     try {
@@ -162,7 +133,30 @@ export default function IdentityCandidatesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  /* ─────────────────────────────────────────────────────────────
+     2. FETCH SESSIONS
+  ───────────────────────────────────────────────────────────── */
+  const fetchSessions = useCallback(async () => {
+    try {
+      const res = await api.get<SessionInfo[]>("/enrollment/sessions");
+      if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+        setSessions(res.data);
+        // Default to the first session (or whichever has clusters)
+        const sessionWithClusters = res.data.find(s => (s.generatedClusters || 0) > 0) || res.data[0];
+        setSelectedSessionId(sessionWithClusters.id);
+        fetchClustersForSession(sessionWithClusters.id);
+      } else {
+        setSessions([]);
+        setSelectedSessionId("");
+      }
+    } catch (err) {
+      console.error("Error fetching sessions:", err);
+      setSessions([]);
+      setSelectedSessionId("");
+    }
+  }, [fetchClustersForSession]);
 
   /* ─────────────────────────────────────────────────────────────
      3. FETCH STUDENTS LIST FROM DATABASE
@@ -184,8 +178,14 @@ export default function IdentityCandidatesPage() {
   };
 
   useEffect(() => {
-    fetchSessions();
-  }, []);
+    let isMounted = true;
+    Promise.resolve().then(() => {
+      if (isMounted) fetchSessions();
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [fetchSessions]);
 
   /* ─────────────────────────────────────────────────────────────
      4. OPEN ASSIGN MODAL
@@ -291,9 +291,9 @@ export default function IdentityCandidatesPage() {
       } else {
         setActionErrorMsg(res.error || "Failed to complete student assignment.");
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Assignment error:", err);
-      setActionErrorMsg(err.message || "An error occurred while saving assignment in database.");
+      setActionErrorMsg(err instanceof Error ? err.message : "An error occurred while saving assignment in database.");
     } finally {
       setAssigning(false);
     }
@@ -846,7 +846,7 @@ export default function IdentityCandidatesPage() {
                 </div>
               ) : filteredStudents.length === 0 ? (
                 <div className="text-center py-12 text-slate-400 text-xs">
-                  No students found matching "{studentSearch}".
+                  No students found matching &quot;{studentSearch}&quot;.
                 </div>
               ) : (
                 filteredStudents.map(student => {

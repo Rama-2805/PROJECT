@@ -1,43 +1,48 @@
 "use client";
 
 import { useUIStore } from "@/store/uiStore";
-import { Search, Bell, Sparkles, Moon, Sun, User, Command, Menu } from "lucide-react";
+import {
+  Search,
+  Bell,
+  Moon,
+  Sun,
+  User,
+  Command,
+  Menu,
+  ShieldCheck,
+  Siren,
+  Trash2,
+} from "lucide-react";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useSyncExternalStore } from "react";
 import { cn } from "@/lib/utils/cn";
 import Link from "next/link";
-import { useBehaviorAlerts } from "@/lib/hooks/useBehaviorAlerts";
+import { useEmergencyAlerts } from "@/lib/hooks/useEmergencyAlerts";
+import { useAuthStore } from "@/lib/store/auth";
 
 export function TopNavbar() {
   const sidebarOpen = useUIStore((s) => s.sidebarOpen);
   const toggleSidebar = useUIStore((s) => s.toggleSidebar);
   const toggleCommandPalette = useUIStore((s) => s.toggleCommandPalette);
-  const toggleAssistant = useUIStore((s) => s.toggleAssistant);
   const theme = useUIStore((s) => s.theme);
   const toggleTheme = useUIStore((s) => s.toggleTheme);
   const pathname = usePathname();
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
 
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isNotificationsOpen, setIsNotificationsOpen] = useState(false);
 
   const {
-    alerts,
-    unreadCount,
-    sectionFilter,
-    setSectionFilter,
-    acknowledgeAlert,
-    isTeacher,
-    isHod,
-    isAdmin,
-  } = useBehaviorAlerts();
+    emergencies,
+    unreadEmergencyCount,
+    acknowledgeEmergency,
+    resolveEmergency,
+    clearAllEmergencies,
+    triggerSimulatedEmergency,
+  } = useEmergencyAlerts();
 
   const profileRef = useRef<HTMLDivElement>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   // Generate breadcrumbs from pathname
   const segments = pathname.split("/").filter(Boolean);
@@ -114,154 +119,157 @@ export function TopNavbar() {
       {/* Right: Actions */}
       <div className="flex items-center justify-end gap-x-2 sm:gap-x-4 lg:gap-x-5 shrink-0">
         
-        {/* Notification Bell */}
+        {/* Emergency & Campus Safety Bell */}
         <div className="relative" ref={notificationRef}>
           <button 
             onClick={() => setIsNotificationsOpen(!isNotificationsOpen)}
-            className="relative rounded-xl border border-glass-border bg-glass-light p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center text-text-secondary hover:bg-glass-medium hover:border-glass-border/30 hover:text-text-primary transition-all shadow-glass group cursor-pointer"
-            title="Real-time Behavioral & System Notifications"
+            className={cn(
+              "relative rounded-xl border p-2.5 min-h-[44px] min-w-[44px] flex items-center justify-center transition-all shadow-glass group cursor-pointer",
+              unreadEmergencyCount > 0
+                ? "border-red-500/50 bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                : "border-glass-border bg-glass-light text-text-secondary hover:bg-glass-medium hover:border-glass-border/30 hover:text-text-primary"
+            )}
+            title={unreadEmergencyCount > 0 ? "Campus Emergency Alert" : "Campus Safety & Emergency Status: All Systems Normal"}
           >
-            {unreadCount > 0 ? (
-              <span className="absolute -top-1 -right-1 h-4 min-w-[16px] px-1 rounded-full bg-red-500 text-[10px] font-bold text-white flex items-center justify-center animate-pulse shadow-md">
-                {unreadCount}
+            {unreadEmergencyCount > 0 ? (
+              <span className="absolute -top-1 -right-1 h-4 min-w-[16px] px-1 rounded-full bg-red-600 text-[10px] font-bold text-white flex items-center justify-center animate-pulse shadow-md font-mono">
+                {unreadEmergencyCount}
               </span>
             ) : (
-              <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-green-500 border border-bg-primary"></span>
+              <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-emerald-500 border border-bg-primary" />
             )}
-            <Bell className="h-4 w-4 group-hover:scale-110 transition-transform" />
+            <Bell className={cn("h-4 w-4 transition-transform", unreadEmergencyCount > 0 ? "animate-bounce text-red-400" : "group-hover:scale-110")} />
           </button>
           
           {isNotificationsOpen && (
-            <div className="fixed sm:absolute right-4 sm:right-0 top-20 sm:top-full mt-2 w-[calc(100vw-2rem)] sm:w-96 max-w-sm rounded-xl bg-bg-secondary/95 backdrop-blur-[45px] border border-glass-border p-3 shadow-2xl z-[100] text-xs transition-colors duration-300">
-              <div className="flex justify-between items-center pb-2 mb-2 border-b border-glass-border">
-                <div className="flex items-center gap-1.5">
-                  <span className="font-bold text-text-primary">Behavioral & Class Alerts</span>
-                  {unreadCount > 0 && (
-                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30">
-                      {unreadCount} New
-                    </span>
+            <div className="fixed sm:absolute right-4 sm:right-0 top-20 sm:top-full mt-2 w-[calc(100vw-2rem)] sm:w-96 max-w-sm rounded-2xl bg-bg-secondary/95 dark:bg-[#0c1017]/95 backdrop-blur-2xl border border-glass-border p-3.5 shadow-2xl z-[100] text-xs transition-colors duration-300">
+              {/* Header */}
+              <div className="flex justify-between items-center pb-2.5 mb-2.5 border-b border-glass-border">
+                <div className="flex items-center gap-2">
+                  {unreadEmergencyCount > 0 ? (
+                    <Siren className="w-4 h-4 text-red-500 animate-pulse" />
+                  ) : (
+                    <ShieldCheck className="w-4 h-4 text-emerald-400" />
                   )}
+                  <span className="font-bold text-text-primary">
+                    Emergency Dispatch
+                  </span>
                 </div>
-                {/* Section filter tabs for HOD / Admin */}
-                {(isHod || isAdmin) && (
-                  <div className="flex items-center gap-1 bg-black/30 p-0.5 rounded-lg border border-white/5">
-                    {(["ALL", "A", "B"] as const).map((sec) => (
-                      <button
-                        key={sec}
-                        onClick={() => setSectionFilter(sec)}
-                        className={cn(
-                          "px-2 py-0.5 rounded text-[10px] font-medium transition-all",
-                          sectionFilter === sec
-                            ? "bg-ai-blue text-black font-bold shadow-sm"
-                            : "text-text-muted hover:text-text-primary",
-                        )}
-                      >
-                        {sec === "ALL" ? "All" : `Sec ${sec}`}
-                      </button>
-                    ))}
+                
+                {unreadEmergencyCount > 0 ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/30 font-mono">
+                      {unreadEmergencyCount} CRITICAL
+                    </span>
+                    <button
+                      onClick={clearAllEmergencies}
+                      className="p-1 rounded hover:bg-glass-light text-text-muted hover:text-red-400 transition-colors cursor-pointer"
+                      title="Clear All Emergencies"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                   </div>
-                )}
-                {isTeacher && !isHod && (
-                  <span className="text-[10px] font-semibold text-ai-blue bg-ai-blue/10 px-2 py-0.5 rounded border border-ai-blue/20">
-                    Section A
+                ) : (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                    ALL CLEAR
                   </span>
                 )}
               </div>
 
-              <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
-                {alerts.length === 0 ? (
-                  <div className="text-center py-8 text-text-muted">
-                    <p className="text-xs">No active behavioral alerts</p>
-                    <p className="text-[10px] text-text-dim mt-1">All monitored students are attentive and alert.</p>
+              {/* Body */}
+              <div className="space-y-2.5 max-h-[360px] overflow-y-auto pr-1 custom-scrollbar">
+                {unreadEmergencyCount === 0 ? (
+                  <div className="py-4 px-3 text-center space-y-2.5">
+                    <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center mx-auto shadow-sm">
+                      <ShieldCheck className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-text-primary">Zero Active Emergencies</p>
+                      <p className="text-[11px] text-text-muted mt-1 leading-relaxed">
+                        Campus security perimeters, panic switches, and IoT vision nodes operating within safety parameters.
+                      </p>
+                    </div>
+
+                    {/* Operational Telemetry Chips */}
+                    <div className="grid grid-cols-2 gap-1.5 pt-1 text-left">
+                      <div className="p-2 rounded-lg bg-glass-light border border-glass-border">
+                        <span className="text-[10px] text-text-muted block">IoT Cameras</span>
+                        <span className="text-xs font-mono font-bold text-emerald-400">6/6 Online</span>
+                      </div>
+                      <div className="p-2 rounded-lg bg-glass-light border border-glass-border">
+                        <span className="text-[10px] text-text-muted block">Campus Perimeter</span>
+                        <span className="text-xs font-mono font-bold text-emerald-400">Secure</span>
+                      </div>
+                    </div>
+
+                    {/* Test Drill Trigger Button */}
+                    <button
+                      onClick={() => triggerSimulatedEmergency("SOS")}
+                      className="w-full mt-2 py-1.5 px-3 rounded-lg bg-glass-light hover:bg-glass-medium border border-glass-border text-[10px] font-medium text-text-muted hover:text-text-primary transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                    >
+                      <span>Simulate Emergency Drill</span>
+                    </button>
                   </div>
                 ) : (
-                  alerts.map((alert) => {
-                    const isPhone = alert.title.includes("Phone") || alert.description?.includes("phone");
-                    const isSleeping = alert.title.includes("Sleeping") || alert.title.includes("Inactive") || alert.description?.includes("sleeping");
-
-                    return (
-                      <div
-                        key={alert.id}
-                        className={cn(
-                          "p-2.5 rounded-xl transition-all border",
-                          alert.severity === "CRITICAL"
-                            ? "bg-red-500/10 border-red-500/30 hover:border-red-500/50"
-                            : alert.severity === "WARNING"
-                            ? "bg-amber-500/10 border-amber-500/30 hover:border-amber-500/50"
-                            : "bg-glass-light border-glass-border hover:bg-glass-medium",
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="text-base shrink-0">
-                              {isPhone ? "📱" : isSleeping ? "💤" : "⚠️"}
-                            </span>
-                            <span
-                              className={cn(
-                                "font-bold text-[11px] truncate",
-                                alert.severity === "CRITICAL"
-                                  ? "text-red-400"
-                                  : alert.severity === "WARNING"
-                                  ? "text-amber-400"
-                                  : "text-ai-blue",
-                              )}
-                            >
-                              {alert.title}
-                            </span>
-                          </div>
-                          <span className="text-[9px] text-text-muted shrink-0 font-mono">
-                            {new Date(alert.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  emergencies.map((alert) => (
+                    <div
+                      key={alert.id}
+                      className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-text-primary space-y-2 shadow-sm animate-in fade-in"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-red-600 text-white font-mono animate-pulse">
+                            {alert.severity}
+                          </span>
+                          <span className="font-bold text-xs text-red-400 leading-tight">
+                            {alert.title}
                           </span>
                         </div>
-
-                        {alert.description && (
-                          <p className="text-text-secondary text-[11px] mt-1 leading-snug">
-                            {alert.description}
-                          </p>
-                        )}
-
-                        <div className="flex items-center justify-between mt-2 pt-1.5 border-t border-white/5">
-                          <div className="flex items-center gap-1.5">
-                            {alert.section && (
-                              <span className="text-[9px] font-semibold px-1.5 py-0.2 rounded bg-white/10 text-text-muted">
-                                Section {alert.section}
-                              </span>
-                            )}
-                            {alert.confidence > 0 && (
-                              <span className="text-[9px] text-text-dim">
-                                AI Conf: {(alert.confidence * 100).toFixed(0)}%
-                              </span>
-                            )}
-                          </div>
-                          <button
-                            onClick={() => acknowledgeAlert(alert.id)}
-                            className="px-2 py-0.5 rounded text-[10px] font-medium bg-white/10 hover:bg-white/20 text-text-primary transition-colors cursor-pointer"
-                          >
-                            Acknowledge
-                          </button>
-                        </div>
+                        <span className="text-[10px] text-text-muted font-mono shrink-0">
+                          {alert.timestamp}
+                        </span>
                       </div>
-                    );
-                  })
+
+                      <p className="text-[11px] text-text-secondary leading-snug">
+                        {alert.description}
+                      </p>
+
+                      <div className="text-[10px] font-mono text-text-muted flex items-center gap-1.5 pt-1 border-t border-red-500/20">
+                        <span>📍 {alert.location}</span>
+                        {alert.deviceNode && (
+                          <span className="text-ai-cyan font-bold">• {alert.deviceNode}</span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2 pt-1">
+                        <button
+                          onClick={() => acknowledgeEmergency(alert.id)}
+                          className="px-2 py-1 rounded-md text-[10px] font-medium bg-glass-light hover:bg-glass-medium border border-glass-border text-text-primary transition-colors cursor-pointer"
+                        >
+                          Acknowledge
+                        </button>
+                        <button
+                          onClick={() => resolveEmergency(alert.id)}
+                          className="px-2 py-1 rounded-md text-[10px] font-bold bg-red-600 hover:bg-red-700 text-white transition-colors cursor-pointer shadow-sm"
+                        >
+                          Resolve & Clear
+                        </button>
+                      </div>
+                    </div>
+                  ))
                 )}
               </div>
             </div>
           )}
         </div>
 
-        {/* AI Assistant Toggle */}
-        <button 
-          onClick={toggleAssistant}
-          className="relative rounded-xl bg-gradient-to-br from-text-primary/10 via-text-primary/5 to-transparent p-2.5 text-text-primary border border-glass-border hover:border-glass-border/40 hover:text-text-primary transition-all shadow-glass hover:shadow-glow-blue hover:scale-105 group"
-        >
-          <Sparkles className="h-4 w-4 group-hover:rotate-12 transition-transform" />
-        </button>
-
         {/* Theme Toggle */}
         <button 
           onClick={toggleTheme}
-          className="rounded-xl border border-glass-border bg-glass-light p-2.5 text-text-secondary hover:bg-glass-medium hover:border-glass-border/30 hover:text-text-primary transition-all shadow-glass group"
+          className="rounded-xl border border-glass-border bg-glass-light p-2.5 text-text-secondary hover:bg-glass-medium hover:border-glass-border/30 hover:text-text-primary transition-all shadow-glass group cursor-pointer"
           aria-label="Toggle theme"
+          title={`Switch to ${theme === "dark" ? "Light Mode" : "Dark Mode"}`}
         >
           {mounted && theme === "light" ? (
             <Sun className="h-4 w-4 text-amber-500 group-hover:scale-110 transition-transform" />
@@ -290,11 +298,9 @@ export function TopNavbar() {
             <div className="absolute right-0 top-full mt-2 w-48 rounded-xl bg-bg-secondary/95 backdrop-blur-[40px] border border-glass-border p-2 shadow-2xl z-[100] text-text-primary">
               <Link 
                 href="#" 
-                onClick={(e: React.MouseEvent) => {
+                onClick={async (e: React.MouseEvent) => {
                   e.preventDefault();
-                  document.cookie = "refreshToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-                  localStorage.removeItem("currentUserEmail");
-                  localStorage.removeItem("user-role");
+                  await useAuthStore.getState().logout();
                   window.location.href = "/";
                 }}
                 className="block w-full text-left px-3.5 py-2.5 rounded-lg text-xs font-semibold text-red-500 hover:text-red-400 hover:bg-glass-light transition-all cursor-pointer"

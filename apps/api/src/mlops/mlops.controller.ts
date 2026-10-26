@@ -1,9 +1,23 @@
 // ─── SmartCampus AI — MLOps Controller ──────────────────────
 
-import { Controller, Get, Post, Param, Body, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Param,
+  Body,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { MlopsService } from './mlops.service';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RoleName } from '../_shared/enums/roles';
 
 @Controller('mlops')
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
 export class MlopsController {
   constructor(private readonly mlops: MlopsService) {}
 

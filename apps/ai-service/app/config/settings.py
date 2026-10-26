@@ -1,5 +1,6 @@
 """SmartCampus AI — Face Enrollment Service Configuration."""
 
+import os
 from pydantic_settings import BaseSettings
 from typing import Optional
 
@@ -15,7 +16,7 @@ class Settings(BaseSettings):
     port: int = 8000
 
     # Backend API
-    backend_api_url: str = "http://localhost:4000"
+    backend_api_url: str = os.getenv("BACKEND_API_URL") or os.getenv("BACKEND_URL") or "http://localhost:4000"
     backend_api_key: Optional[str] = None
     rtsp_stream_url: Optional[str] = None
 
@@ -90,18 +91,18 @@ class Settings(BaseSettings):
 
     # Track-Centric Clustering
     min_cluster_size: int = 2
-    cluster_selection_epsilon: float = 0.5
+    cluster_selection_epsilon: float = 0.20  # Cosine distance threshold (prevents merging identities at 0.50-0.75 sim)
     min_samples: int = 1
-    clustering_eps: float = 0.3  # Cosine distance threshold for DBSCAN
+    clustering_eps: float = 0.20  # Cosine distance threshold for DBSCAN
     hdbscan_min_cluster_size: int = 2  # Configurable HDBSCAN min_cluster_size for track-level clustering
     hdbscan_min_samples: int = 1       # Configurable HDBSCAN min_samples for track-level clustering
-    duplicate_cluster_threshold: float = 0.75  # Cosine similarity threshold for candidate duplicates
+    duplicate_cluster_threshold: float = 0.85  # Cosine similarity threshold for candidate duplicates (preserves distinct students at 0.72-0.75)
 
     # Database
     database_url: str = "postgresql://smartcampus:smartcampus_dev@localhost:5432/smartcampus"
 
     # CCTV Auto Enrollment Thresholds & Folders
-    duplicate_unknown_threshold: float = 0.75  # Cosine similarity for duplicate unknown filter
+    duplicate_unknown_threshold: float = 0.85  # Cosine similarity for duplicate unknown filter
     min_quality_score: float = 70.0  # Min quality score (0-100) to accept a face
     storage_dir: str = "storage"  # Root directory for auto-enrollment storage
     face_index_path: str = "vectors/face_index.faiss"
@@ -114,6 +115,7 @@ class Settings(BaseSettings):
     # Security
     encrypt_embeddings: bool = True
     encryption_key: str = "dev-encryption-key-32-bytes-long!!"
+    internal_api_key: str = "sc-internal-service-key-dev-only"
     data_retention_days: int = 365
 
     class Config:

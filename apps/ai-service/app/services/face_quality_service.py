@@ -29,7 +29,7 @@ class FaceQualityService:
         if image is None or image.size == 0:
             return image
         if landmarks is None or len(landmarks) < 5:
-            return cv2.resize(image, (112, 112))
+            return cv2.resize(image, (112, 112), interpolation=cv2.INTER_AREA)
 
         arcface_dst = np.array([
             [38.2946, 51.6963],
@@ -40,20 +40,26 @@ class FaceQualityService:
         ], dtype=np.float32)
 
         src = np.array(landmarks, dtype=np.float32).copy()
-        # If landmarks are in global frame coordinates while image is a local face crop,
-        # adjust landmarks so they are relative to image coordinates.
         h, w = image.shape[:2]
-        if np.any(src[:, 0] > w) or np.any(src[:, 1] > h):
+
+        # Check for landmark degeneracy: minimum eye separation
+        eye_dist = np.linalg.norm(src[1] - src[0])
+        if eye_dist < 6.0:
+            return cv2.resize(image, (112, 112), interpolation=cv2.INTER_AREA)
+
+        # If landmarks are in global frame coordinates while image is a local face crop,
+        # adjust landmarks so they are properly bounded inside the crop.
+        if np.any(src[:, 0] > w) or np.any(src[:, 1] > h) or np.any(src < 0):
             min_x = float(np.min(src[:, 0]))
             min_y = float(np.min(src[:, 1]))
-            src[:, 0] -= max(0.0, min_x - 5.0)
-            src[:, 1] -= max(0.0, min_y - 5.0)
+            src[:, 0] -= max(0.0, min_x)
+            src[:, 1] -= max(0.0, min_y)
 
         M, _ = cv2.estimateAffinePartial2D(src, arcface_dst, method=cv2.LMEDS)
         if M is None:
-            return cv2.resize(image, (112, 112))
+            return cv2.resize(image, (112, 112), interpolation=cv2.INTER_AREA)
 
-        aligned = cv2.warpAffine(image, M, (112, 112), borderMode=cv2.BORDER_CONSTANT, borderValue=(0,0,0))
+        aligned = cv2.warpAffine(image, M, (112, 112), borderMode=cv2.BORDER_REPLICATE)
         return aligned
 
     def estimate_pose_from_landmarks(self, landmarks: np.ndarray) -> Tuple[float, float, float]:

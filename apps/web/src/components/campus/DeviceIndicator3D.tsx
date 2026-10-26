@@ -43,13 +43,13 @@ export function DeviceIndicator3D({ device }: { device: DeviceIndicator }) {
     }
   });
 
-  if (!showDevices) return null;
-
   const geometry = useMemo(() => {
     if (device.type === 'camera') return new THREE.ConeGeometry(0.15, 0.25, 8);
     if (device.type === 'edge_ai') return new THREE.BoxGeometry(0.18, 0.18, 0.18);
     return new THREE.SphereGeometry(0.12, 8, 8);
   }, [device.type]);
+
+  if (!showDevices) return null;
 
   return (
     <group>
@@ -78,9 +78,16 @@ export function DeviceIndicator3D({ device }: { device: DeviceIndicator }) {
       </mesh>
 
       {/* Label */}
-      <Html position={[device.position[0], device.position[1] + 0.4, device.position[2]]} center style={{ pointerEvents: 'none' }}>
-        <div className="flex flex-col items-center">
-          <span className="text-[8px] font-mono text-white/70 drop-shadow-lg">{device.deviceId}</span>
+      <Html
+        position={[device.position[0], device.position[1] + 0.4, device.position[2]]}
+        center
+        style={{ pointerEvents: 'none' }}
+        zIndexRange={[0, 15]}
+      >
+        <div className="flex flex-col items-center pointer-events-none select-none">
+          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-black/80 border border-white/15 text-white/80 shadow">
+            {device.deviceId}
+          </span>
         </div>
       </Html>
     </group>

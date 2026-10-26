@@ -229,6 +229,12 @@ export class EnrollmentController {
     return this.enrollment.assignClusterStudent(dto);
   }
 
+  @Post("clusters/:id/confirm")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  confirmCluster(@Param("id") id: string, @Body() dto: { sessionId?: string }) {
+    return this.enrollment.confirmCluster(id, dto);
+  }
+
   @Post("sessions/:id/finalize")
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
   finalizeEnrollmentSession(@Param("id") id: string) {

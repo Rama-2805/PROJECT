@@ -81,6 +81,10 @@ def test_attendance_marking_rule(db_session, monkeypatch):
         "app.services.faiss_service.faiss_service.search_face",
         lambda *args, **kwargs: ("ENG_USN001", 0.95),
     )
+    monkeypatch.setattr(
+        "app.services.faiss_service.faiss_service.search_top_k",
+        lambda *args, **kwargs: [("ENG_USN001", 0.95)],
+    )
     # Mock candidate capture to avoid candidate queue database modifications in this test
     monkeypatch.setattr(attendance_engine, "_process_learning_candidate", lambda *args: None)
     # Mock WebSocket broadcasts
@@ -134,6 +138,10 @@ def test_continuous_learning_candidate_capture(db_session, monkeypatch):
     monkeypatch.setattr(
         "app.services.faiss_service.faiss_service.search_face",
         lambda *args, **kwargs: ("ENG_USN001", 0.99),
+    )
+    monkeypatch.setattr(
+        "app.services.faiss_service.faiss_service.search_top_k",
+        lambda *args, **kwargs: [("ENG_USN001", 0.99)],
     )
     # Mock image storage save_candidate_face
     monkeypatch.setattr(

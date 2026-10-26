@@ -83,10 +83,43 @@ class MediaPipeFaceQuality:
                 "rejection_reason": f"face_size_too_small_{w}x{h}",
             }
 
-        # 2. Image Clarity (Sharpness & Brightness)
+        # 2. Image Clarity, Contrast, and Texture
         gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if len(crop.shape) == 3 else crop
         sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         brightness = float(np.mean(gray))
+        std_val = float(np.std(gray))
+        sat_white = float(np.mean(gray >= 245))
+
+        # Immediate rejection of blank, uniform, or blown-out crops
+        if std_val < 14.0:
+            return {
+                "landmark_detected": False,
+                "face_width": w,
+                "face_height": h,
+                "head_yaw": 0.0,
+                "head_pitch": 0.0,
+                "head_roll": 0.0,
+                "sharpness": round(sharpness, 1),
+                "brightness": round(brightness, 1),
+                "overall_quality_score": 0.0,
+                "is_acceptable": False,
+                "rejection_reason": "blank_or_uniform_texture",
+            }
+
+        if sat_white > 0.35 or brightness > 230.0:
+            return {
+                "landmark_detected": False,
+                "face_width": w,
+                "face_height": h,
+                "head_yaw": 0.0,
+                "head_pitch": 0.0,
+                "head_roll": 0.0,
+                "sharpness": round(sharpness, 1),
+                "brightness": round(brightness, 1),
+                "overall_quality_score": 0.0,
+                "is_acceptable": False,
+                "rejection_reason": "saturated_white_glare",
+            }
 
         # 3. MediaPipe 3D Landmark & Pose Extraction
         self._init_mediapipe()
@@ -133,11 +166,21 @@ class MediaPipeFaceQuality:
         # Brightness score (ideal around 128)
         bright_score = 1.0 - abs(brightness - 128.0) / 128.0
         bright_score = max(0.0, min(1.0, bright_score))
-        # Pose score (penalty for non-frontal angles)
-        pose_penalty = (abs(yaw) / 45.0 + abs(pitch) / 35.0 + abs(roll) / 35.0) / 3.0
-        pose_score = max(0.0, 1.0 - pose_penalty)
-        # Landmark score: bonus if 3D face mesh fitted
-        lm_score = 1.0 if landmark_detected else 0.65
+        
+        # If landmarks were detected, compute pose score; if FaceMesh is active but found no landmarks,
+        # do NOT reward zero angles as a perfect frontal face.
+        if landmark_detected:
+            pose_penalty = (abs(yaw) / 45.0 + abs(pitch) / 35.0 + abs(roll) / 35.0) / 3.0
+            pose_score = max(0.0, 1.0 - pose_penalty)
+            lm_score = 1.0
+        elif self._face_mesh is not None:
+            # FaceMesh ran on the crop and confirmed NO facial landmarks exist
+            pose_score = 0.0
+            lm_score = 0.0
+        else:
+            # Fallback when mediapipe library is completely uninstalled/disabled
+            pose_score = 0.70
+            lm_score = 0.50
 
         overall_quality_score = round(
             0.20 * size_score +
@@ -149,7 +192,9 @@ class MediaPipeFaceQuality:
         )
 
         rejection_reason = None
-        if not is_pose_acceptable:
+        if self._face_mesh is not None and not landmark_detected:
+            rejection_reason = "no_face_landmarks_detected"
+        elif not is_pose_acceptable:
             rejection_reason = f"pose_angle_exceeded_y{yaw:.1f}_p{pitch:.1f}_r{roll:.1f}"
         elif overall_quality_score < getattr(settings, "min_track_quality", 0.35):
             rejection_reason = f"quality_below_threshold_{overall_quality_score:.2f}"

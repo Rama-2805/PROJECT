@@ -161,13 +161,13 @@ export function useWebXR(options: UseWebXROptions = {}): WebXRReturns {
 
       session.addEventListener('end', () => {
         sessionRef.current = null;
-        setXrState({
+        setXrState((prev) => ({
+          ...prev,
           isSupported: true,
           isSessionActive: false,
           sessionMode: null,
           error: null,
-          deviceType: xrState.deviceType,
-        });
+        }));
         options.onSessionEnd?.();
       });
     } catch (err) {

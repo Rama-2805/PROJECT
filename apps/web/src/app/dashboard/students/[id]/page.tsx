@@ -65,7 +65,13 @@ export default function StudentProfilePage() {
   }, [studentId]);
 
   useEffect(() => {
-    loadData();
+    let isMounted = true;
+    Promise.resolve().then(() => {
+      if (isMounted) loadData();
+    });
+    return () => {
+      isMounted = false;
+    };
   }, [loadData]);
 
   const fullName = student?.fullName || "Student Profile";

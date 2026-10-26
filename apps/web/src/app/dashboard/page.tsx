@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { motion } from "framer-motion";
 import { MetricCard } from "@/components/dashboard/widgets/MetricCard";
 import { AIStatusCard } from "@/components/dashboard/widgets/AIStatusCard";
@@ -60,7 +60,7 @@ export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [loading, setLoading] = useState(true);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(() => () => {}, () => true, () => false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [currentRole, setCurrentRole] = useState<"admin" | "hod" | "teacher" | "student">("admin");
 
@@ -87,7 +87,6 @@ export default function DashboardPage() {
   };
 
   useEffect(() => {
-    setMounted(true);
     let isCancelled = false;
     let tickCount = 0;
 

@@ -1,4 +1,5 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+const rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:4000/api";
+const API_BASE = rawApiUrl.endsWith("/api") ? rawApiUrl : `${rawApiUrl.replace(/\/+$/, "")}/api`;
 
 type RequestOptions = RequestInit & {
   skipAuth?: boolean;
@@ -6,46 +7,94 @@ type RequestOptions = RequestInit & {
 
 let accessToken: string | null = null;
 
-export function setAccessToken(token: string | null) {
+export function getCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp("(^|;\\s*)" + name + "=([^;]*)"));
+  return match ? decodeURIComponent(match[2]) : null;
+}
+
+let refreshPromise: Promise<string | null> | null = null;
+
+export function setAccessToken(token: string | null, refreshToken?: string | null) {
   accessToken = token;
   if (typeof window !== "undefined") {
-    if (token) {
-      localStorage.setItem("smartcampus_access_token", token);
+    const isHttps = window.location.protocol === "https:";
+    const secureFlag = isHttps ? "; Secure" : "";
+    if (token && !token.includes("mock-token")) {
+      document.cookie = `smartcampus_access_token=${token}; path=/; max-age=${15 * 60}; SameSite=Lax${secureFlag}`;
+      if (refreshToken && !refreshToken.includes("mock-token")) {
+        document.cookie = `refreshToken=${refreshToken}; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax${secureFlag}`;
+      }
     } else {
-      localStorage.removeItem("smartcampus_access_token");
+      accessToken = null;
+      document.cookie = `smartcampus_access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax${secureFlag}`;
+      document.cookie = `refreshToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax${secureFlag}`;
     }
   }
 }
 
-export function getAccessToken() {
+export function getAccessToken(): string | null {
   if (!accessToken && typeof window !== "undefined") {
-    accessToken = localStorage.getItem("smartcampus_access_token");
+    const fromCookie = getCookie("smartcampus_access_token");
+    if (fromCookie && !fromCookie.includes("mock-token")) {
+      accessToken = fromCookie;
+    }
+  }
+  if (accessToken && accessToken.includes("mock-token")) {
+    setAccessToken(null);
+    return null;
   }
   return accessToken;
 }
 
-async function refreshAccessToken(): Promise<string | null> {
-  try {
-    const res = await fetch(`${API_BASE}/auth/refresh`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    if (json.success && json.data?.tokens?.accessToken) {
-      setAccessToken(json.data.tokens.accessToken);
-      return json.data.tokens.accessToken;
-    }
-    return null;
-  } catch {
-    return null;
+/**
+ * Refreshes the short-lived access token using the backend's HttpOnly refresh cookie.
+ * Coalesces concurrent calls into a single in-flight request to prevent refresh storms.
+ */
+export async function refreshAccessToken(): Promise<string | null> {
+  if (refreshPromise) {
+    return refreshPromise;
   }
+
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/auth/refresh`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        credentials: "include",
+      });
+
+      if (!res.ok) {
+        setAccessToken(null);
+        return null;
+      }
+
+      const json = await res.json();
+      if (json.success && json.data?.tokens?.accessToken) {
+        const newAccess = json.data.tokens.accessToken;
+        setAccessToken(newAccess);
+        return newAccess;
+      }
+      setAccessToken(null);
+      return null;
+    } catch {
+      setAccessToken(null);
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
 }
 
 export async function apiRequest<T = unknown>(
   endpoint: string,
   options: RequestOptions = {},
-): Promise<{ success: boolean; data?: T; error?: string }> {
+  isRetry = false,
+): Promise<{ success: boolean; data?: T; error?: string; status?: number }> {
   const { skipAuth = false, ...fetchOptions } = options;
 
   const headers: Record<string, string> = {
@@ -58,26 +107,39 @@ export async function apiRequest<T = unknown>(
     headers["Authorization"] = `Bearer ${token}`;
   }
 
-  let res = await fetch(`${API_BASE}${endpoint}`, {
-    ...fetchOptions,
-    headers,
-    credentials: "include",
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${endpoint}`, {
+      ...fetchOptions,
+      headers,
+      credentials: "include",
+    });
+  } catch (netErr: any) {
+    return {
+      success: false,
+      error: netErr?.message || "Network connection error",
+      status: 0,
+    };
+  }
 
-  // If 401, try refresh
-  if (res.status === 401 && !skipAuth) {
+  const isAuthEndpoint =
+    endpoint.includes("/auth/login") ||
+    endpoint.includes("/auth/register") ||
+    endpoint.includes("/auth/forgot-password") ||
+    endpoint.includes("/auth/refresh");
+
+  // If 401 and not an auth endpoint and not yet retried, refresh token once
+  if (res.status === 401 && !isAuthEndpoint && !skipAuth && !isRetry) {
     const newToken = await refreshAccessToken();
     if (newToken) {
-      headers["Authorization"] = `Bearer ${newToken}`;
-      res = await fetch(`${API_BASE}${endpoint}`, {
-        ...fetchOptions,
-        headers,
-        credentials: "include",
-      });
+      return apiRequest<T>(endpoint, options, true);
     } else {
       setAccessToken(null);
-      return { success: false, error: "Session expired" };
+      return { success: false, error: "Session expired", status: 401 };
     }
+  } else if (res.status === 401 && !isAuthEndpoint && isRetry) {
+    setAccessToken(null);
+    return { success: false, error: "Authentication failed", status: 401 };
   }
 
   let json: any = null;
@@ -88,14 +150,18 @@ export async function apiRequest<T = unknown>(
   }
 
   if (json && typeof json === "object" && "success" in json) {
-    return json;
+    return { ...json, status: res.status };
   }
 
   if (res.ok) {
-    return { success: true, data: json as T };
+    return { success: true, data: json as T, status: res.status };
   }
 
-  return { success: false, error: json?.message || "Request failed" };
+  return {
+    success: false,
+    error: json?.message || json?.error || "Request failed",
+    status: res.status,
+  };
 }
 
 /* ─── Typed API helpers ─────────────────────────────────────────── */

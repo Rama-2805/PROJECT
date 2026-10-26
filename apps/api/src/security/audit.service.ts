@@ -1,5 +1,5 @@
-import { Injectable } from "@nestjs/common";
-import { PrismaService } from "../prisma/prisma.service";
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 
 export interface AuditEntry {
   userId?: string;
@@ -18,7 +18,7 @@ export class AuditService {
   async log(entry: AuditEntry): Promise<void> {
     await this.prisma.auditLog.create({
       data: {
-        userId: entry.userId || "system",
+        userId: entry.userId || 'system',
         action: entry.action,
         entity: entry.entity,
         entityId: entry.entityId,
@@ -31,37 +31,51 @@ export class AuditService {
   async logLogin(userId: string, success: boolean, ip?: string): Promise<void> {
     await this.log({
       userId,
-      action: success ? "LOGIN_SUCCESS" : "LOGIN_FAILED",
-      entity: "USER",
+      action: success ? 'LOGIN_SUCCESS' : 'LOGIN_FAILED',
+      entity: 'USER',
       entityId: userId,
       ip,
     });
   }
 
-  async logDataExport(userId: string, entity: string, recordCount: number): Promise<void> {
+  async logDataExport(
+    userId: string,
+    entity: string,
+    recordCount: number,
+  ): Promise<void> {
     await this.log({
       userId,
-      action: "DATA_EXPORT",
+      action: 'DATA_EXPORT',
       entity,
       metadata: { recordCount },
     });
   }
 
-  async logRoleChange(userId: string, targetUserId: string, oldRole: string, newRole: string): Promise<void> {
+  async logRoleChange(
+    userId: string,
+    targetUserId: string,
+    oldRole: string,
+    newRole: string,
+  ): Promise<void> {
     await this.log({
       userId,
-      action: "ROLE_CHANGE",
-      entity: "USER",
+      action: 'ROLE_CHANGE',
+      entity: 'USER',
       entityId: targetUserId,
       metadata: { oldRole, newRole },
     });
   }
 
-  async logDeviceAction(userId: string, deviceId: string, action: string, metadata?: Record<string, any>): Promise<void> {
+  async logDeviceAction(
+    userId: string,
+    deviceId: string,
+    action: string,
+    metadata?: Record<string, any>,
+  ): Promise<void> {
     await this.log({
       userId,
       action: `DEVICE_${action}`,
-      entity: "DEVICE",
+      entity: 'DEVICE',
       entityId: deviceId,
       metadata,
     });
@@ -70,39 +84,49 @@ export class AuditService {
   async logStudentDataAccess(userId: string, studentId: string): Promise<void> {
     await this.log({
       userId,
-      action: "STUDENT_DATA_ACCESS",
-      entity: "STUDENT",
+      action: 'STUDENT_DATA_ACCESS',
+      entity: 'STUDENT',
       entityId: studentId,
     });
   }
 
-  async logReportGeneration(userId: string, reportType: string, parameters?: Record<string, any>): Promise<void> {
+  async logReportGeneration(
+    userId: string,
+    reportType: string,
+    parameters?: Record<string, any>,
+  ): Promise<void> {
     await this.log({
       userId,
-      action: "REPORT_GENERATION",
-      entity: "REPORT",
+      action: 'REPORT_GENERATION',
+      entity: 'REPORT',
       metadata: { reportType, ...parameters },
     });
   }
 
-  async logBiometricAccess(userId: string, studentId: string, action: string): Promise<void> {
+  async logBiometricAccess(
+    userId: string,
+    studentId: string,
+    action: string,
+  ): Promise<void> {
     await this.log({
       userId,
       action: `BIOMETRIC_${action}`,
-      entity: "BIOMETRIC",
+      entity: 'BIOMETRIC',
       entityId: studentId,
     });
   }
 
-  async getAuditLogs(options: {
-    userId?: string;
-    action?: string;
-    entity?: string;
-    from?: Date;
-    to?: Date;
-    page?: number;
-    limit?: number;
-  } = {}) {
+  async getAuditLogs(
+    options: {
+      userId?: string;
+      action?: string;
+      entity?: string;
+      from?: Date;
+      to?: Date;
+      page?: number;
+      limit?: number;
+    } = {},
+  ) {
     const where: any = {};
     if (options.userId) where.userId = options.userId;
     if (options.action) where.action = options.action;
@@ -122,7 +146,7 @@ export class AuditService {
         where,
         skip,
         take: limit,
-        orderBy: { createdAt: "desc" },
+        orderBy: { createdAt: 'desc' },
         include: { user: { select: { fullName: true, email: true } } },
       }),
       this.prisma.auditLog.count({ where }),

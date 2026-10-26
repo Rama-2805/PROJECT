@@ -30,9 +30,9 @@ export function DeviceDetailPanel() {
           animate={{ x: 0, opacity: 1 }}
           exit={{ x: 400, opacity: 0 }}
           transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-          className="absolute right-4 top-20 bottom-4 z-20 w-80"
+          className="absolute right-4 top-20 bottom-4 z-40 w-88 sm:w-96 pointer-events-auto"
         >
-          <div className="h-full backdrop-blur-xl bg-[#111111]/90 rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
+          <div className="h-full backdrop-blur-2xl bg-[#0b0f19]/95 rounded-2xl border border-white/15 shadow-2xl overflow-hidden flex flex-col">
             {/* Header */}
             <div className="p-4 border-b border-white/5">
               <div className="flex items-start justify-between">

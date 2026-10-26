@@ -6,6 +6,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useCampusStore } from '@/store/campusStore';
+import { Bot, X, Send, Sparkles, MessageSquare } from 'lucide-react';
 
 const SUGGESTIONS = [
   'Show classrooms with low attendance',
@@ -15,10 +16,10 @@ const SUGGESTIONS = [
 ];
 
 const API_RESPONSES: Record<string, string> = {
-  'show classrooms with low attendance': '📊 Classrooms with < 75% attendance: CSE-205 (62%), MECH-101 (58%), ECE-304 (71%). Consider sending reminders and scheduling interactive workshops.',
-  'which devices are offline': '🔴 Offline Devices: Edge AI JSN-003 (LAB-302) — 25 minutes since last heartbeat. Camera CAM-201 showing warning signs (high temperature).',
+  'show classrooms with low attendance': '📊 Classrooms with < 75% attendance: CSE-205 (62%), MECH-101 (58%), ECE-304 (71%). Automated parent notices prepared in Reports Center.',
+  'which devices are offline': '🔴 Offline Devices: Edge AI JSN-003 (ENG Block) — 25 minutes since last heartbeat. Camera CAM-201 showing warning signs (high temperature 65°C).',
   'which department has highest engagement': '🏆 Top Engagement: CSE Department (88%), Central Library (85%), Engineering Block (82%). Lowest: Administration (60%).',
-  'show predictions for today': '🔮 Today\'s Predictions: CSE Block will reach 95% occupancy at 10 AM. Afternoon engagement predicted to drop 18%. Mechanical Block attendance trending below 85%.',
+  'show predictions for today': '🔮 Today\'s Predictions: CSE Block will reach 95% occupancy at 10 AM. Afternoon engagement predicted to drop 18% around 2 PM.',
 };
 
 interface Message {
@@ -29,41 +30,53 @@ interface Message {
 export function AIAssistantPanel() {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([
-    { text: '👋 Hi! I\'m your Campus AI assistant. Ask me anything about the campus or click a suggestion below.', isUser: false },
+    { text: '👋 Hi! I am your Campus AI assistant. Ask me anything about classroom occupancy, IoT devices, or student attendance.', isUser: false },
   ]);
   const [input, setInput] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && isOpen) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, isOpen]);
 
   const handleSend = (text: string) => {
     const query = text.toLowerCase().trim();
+    if (!query) return;
     setMessages((prev) => [...prev, { text, isUser: true }]);
+    setInput('');
 
     // Find matching response
     const matchedKey = Object.keys(API_RESPONSES).find((k) => query.includes(k));
     const response = matchedKey
       ? API_RESPONSES[matchedKey]
-      : '🤖 I can help with: classroom attendance, device status, engagement analytics, and AI predictions. Try one of the suggestions below!';
+      : '🤖 I monitor campus operations: ask about low attendance, edge camera status, classroom occupancy, or AI predictions!';
 
     setTimeout(() => {
       setMessages((prev) => [...prev, { text: response, isUser: false }]);
-    }, 500);
+    }, 400);
   };
 
   return (
     <>
-      {/* Toggle button */}
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="absolute bottom-4 left-4 z-20 w-10 h-10 rounded-2xl bg-[#111111]/85 border border-white/10 flex items-center justify-center hover:bg-white/10 hover:border-white/20 transition-all shadow-xl"
-      >
-        <span className="text-lg">{isOpen ? '✕' : '🤖'}</span>
-      </button>
+      {/* Floating Toggle Button */}
+      <div className="absolute bottom-4 left-4 z-40 pointer-events-auto">
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className={`flex items-center gap-2 px-3 py-2 rounded-2xl backdrop-blur-2xl border transition-all shadow-xl font-medium text-xs ${
+            isOpen
+              ? 'bg-ai-blue text-black border-ai-blue/40 shadow-ai-blue/20'
+              : 'bg-[#0b0f19]/90 text-white border-white/15 hover:bg-white/15'
+          }`}
+        >
+          <Bot className="w-4 h-4" />
+          <span>{isOpen ? 'Close AI' : 'Campus AI'}</span>
+          {!isOpen && (
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse ml-0.5" />
+          )}
+        </button>
+      </div>
 
       <AnimatePresence>
         {isOpen && (
@@ -71,35 +84,42 @@ export function AIAssistantPanel() {
             initial={{ opacity: 0, y: 20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
-            className="absolute bottom-16 left-4 z-20 w-80"
+            className="absolute bottom-16 left-4 z-40 w-80 sm:w-96 pointer-events-auto"
           >
-            <div className="backdrop-blur-xl bg-[#111111]/95 rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
+            <div className="backdrop-blur-2xl bg-[#0b0f19]/95 rounded-2xl border border-white/15 shadow-2xl overflow-hidden flex flex-col">
               {/* Header */}
-              <div className="px-4 py-3 border-b border-white/5">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm">🤖</span>
+              <div className="px-4 py-3 border-b border-white/10 bg-white/[0.02] flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <span className="p-1.5 rounded-lg bg-ai-blue/20 text-ai-blue border border-ai-blue/30">
+                    <Sparkles className="w-3.5 h-3.5" />
+                  </span>
                   <div>
-                    <h3 className="text-sm font-semibold text-white">Campus AI</h3>
-                    <span className="text-[10px] text-emerald-400">Online</span>
+                    <h3 className="text-xs font-bold text-white">Campus AI Assistant</h3>
+                    <span className="text-[10px] text-emerald-400 font-mono">Agent Active • Connected</span>
                   </div>
                 </div>
+                <button
+                  onClick={() => setIsOpen(false)}
+                  className="p-1 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
 
-              {/* Messages */}
-              <div ref={scrollRef} className="h-56 overflow-y-auto p-3 space-y-2 scrollbar-thin scrollbar-thumb-white/10">
+              {/* Chat Messages */}
+              <div ref={scrollRef} className="h-60 overflow-y-auto p-3 space-y-2.5 scrollbar-thin scrollbar-thumb-white/10">
                 {messages.map((msg, i) => (
                   <motion.div
                     key={i}
-                    initial={{ opacity: 0, y: 10 }}
+                    initial={{ opacity: 0, y: 8 }}
                     animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.1 }}
                     className={`flex ${msg.isUser ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
                       className={`max-w-[85%] px-3 py-2 rounded-2xl text-xs leading-relaxed border ${
                         msg.isUser
-                          ? 'bg-white/10 border-white/10 text-white rounded-br-md'
-                          : 'bg-white/[0.03] border-white/5 text-gray-300 rounded-bl-md'
+                          ? 'bg-ai-blue/20 border-ai-blue/30 text-white rounded-br-sm'
+                          : 'bg-white/[0.04] border-white/10 text-gray-200 rounded-bl-sm'
                       }`}
                     >
                       {msg.text}
@@ -109,36 +129,41 @@ export function AIAssistantPanel() {
               </div>
 
               {/* Suggestions */}
-              <div className="px-3 py-2 border-t border-white/5 flex flex-wrap gap-1.5">
+              <div className="p-2 border-t border-white/5 bg-black/20 flex flex-wrap gap-1">
                 {SUGGESTIONS.map((s) => (
                   <button
                     key={s}
                     onClick={() => handleSend(s)}
-                    className="px-2 py-1 rounded-lg bg-white/[0.03] border border-white/5 text-[10px] text-gray-400 hover:text-white hover:bg-white/10 transition-colors"
+                    className="text-[10px] px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 text-gray-300 hover:text-white transition-colors truncate max-w-full"
                   >
                     {s}
                   </button>
                 ))}
               </div>
 
-              {/* Input */}
-              <div className="px-3 py-2 border-t border-white/5">
-                <div className="flex gap-2">
-                  <input
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && input.trim()) { handleSend(input.trim()); setInput(''); } }}
-                    placeholder="Ask about campus..."
-                    className="flex-1 px-3 py-1.5 rounded-xl bg-black border border-white/10 text-xs text-white placeholder:text-gray-600 focus:outline-none focus:border-white/30"
-                  />
-                  <button
-                    onClick={() => { if (input.trim()) { handleSend(input.trim()); setInput(''); } }}
-                    className="px-3 py-1.5 rounded-xl bg-white text-black text-xs font-semibold hover:bg-gray-200 transition-colors"
-                  >
-                    Send
-                  </button>
-                </div>
-              </div>
+              {/* Input field */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  handleSend(input);
+                }}
+                className="p-2.5 border-t border-white/10 flex items-center gap-2 bg-white/[0.01]"
+              >
+                <input
+                  type="text"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Ask anything about the campus..."
+                  className="flex-1 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder:text-gray-500 focus:outline-none focus:border-ai-blue"
+                />
+                <button
+                  type="submit"
+                  disabled={!input.trim()}
+                  className="p-1.5 rounded-xl bg-ai-blue disabled:opacity-30 text-black font-semibold hover:bg-ai-blue/90 transition-all shrink-0"
+                >
+                  <Send className="w-3.5 h-3.5" />
+                </button>
+              </form>
             </div>
           </motion.div>
         )}

@@ -106,7 +106,13 @@ def test_enroll_student_flow(client, db_session, monkeypatch):
 
     # Mock image loading for embedding extraction
     import cv2
-    monkeypatch.setattr(cv2, "imread", lambda path: np.zeros((112, 112, 3), dtype=np.uint8))
+    dummy_vec = np.ones(512, dtype=np.float32)
+    dummy_vec /= np.linalg.norm(dummy_vec)
+    monkeypatch.setattr(cv2, "imread", lambda path: np.full((112, 112, 3), 128, dtype=np.uint8))
+    monkeypatch.setattr(
+        "app.services.embedding_service.embedding_service.generate_embedding",
+        lambda *args, **kwargs: dummy_vec,
+    )
 
     # Enroll POST payload — uses the unknown-faces/enroll endpoint
     enroll_data = {

@@ -33,19 +33,47 @@ class EmbeddingService:
                 pass
             if self._rec_model is None:
                 try:
+                    import os
                     import insightface
                     from pathlib import Path
-                    rec_path = Path.home() / ".insightface" / "models" / "buffalo_l" / "w600k_r50.onnx"
-                    if rec_path.exists():
-                        self._rec_model = insightface.model_zoo.get_model(str(rec_path))
-                        self._rec_model.prepare(ctx_id=-1)
+                    custom_arcface = os.getenv("ARCFACE_MODEL_PATH")
+                    custom_root = os.getenv("INSIGHTFACE_ROOT")
+                    candidate_paths = [
+                        Path(custom_arcface) if custom_arcface else None,
+                        Path(custom_root) / "models" / "buffalo_l" / "w600k_r50.onnx" if custom_root else None,
+                        Path("/root/.insightface/models/buffalo_l/w600k_r50.onnx"),
+                        Path.home() / ".insightface" / "models" / "buffalo_l" / "w600k_r50.onnx",
+                        Path("/app/models/buffalo_l/w600k_r50.onnx"),
+                        Path("models/buffalo_l/w600k_r50.onnx"),
+                        Path("apps/ai-service/models/buffalo_l/w600k_r50.onnx"),
+                    ]
+                    for rec_path in candidate_paths:
+                        if rec_path is None:
+                            continue
+                        try:
+                            if rec_path.exists():
+                                self._rec_model = insightface.model_zoo.get_model(str(rec_path))
+                                self._rec_model.prepare(ctx_id=-1)
+                                logger.info(f"Loaded ArcFace model from {rec_path}")
+                                break
+                        except Exception:
+                            continue
                 except Exception as e:
                     logger.error(f"Failed to directly load ArcFace recognition model: {e}")
         return self._rec_model
 
     def generate_embedding(self, face_crop: np.ndarray, landmarks: Optional[Any] = None) -> Optional[np.ndarray]:
         """Extract a 512D ArcFace embedding from a cropped BGR face image with 5-point landmark alignment."""
-        if face_crop is None or face_crop.size == 0:
+        if face_crop is None or getattr(face_crop, 'size', 0) == 0:
+            return None
+
+        # Reject crops below minimum face detection dimensions (ArcFace requires at least 24x24)
+        if len(face_crop.shape) < 3 or face_crop.shape[0] < 24 or face_crop.shape[1] < 24:
+            return None
+
+        # Reject blank white, overexposed, or featureless uniform patches
+        gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY) if len(face_crop.shape) == 3 else face_crop
+        if float(np.std(gray)) < 12.0 or float(np.mean(gray >= 245)) > 0.40:
             return None
 
         try:
@@ -57,21 +85,27 @@ class EmbeddingService:
                 feat = rec_model.get_feat(aligned)
                 if feat is not None:
                     emb = feat.flatten()
+                    if not np.all(np.isfinite(emb)):
+                        return None
                     norm = np.linalg.norm(emb)
-                    if norm > 0:
-                        emb = emb / norm
-                    return emb
+                    if norm > 1e-4:
+                        return (emb / norm).astype(np.float32)
+                    return None
 
             # Fallback if recognition model is not directly accessible
-            faces = face_detector.model.get(rgb_crop)
-            if faces:
-                best_face = max(faces, key=lambda f: f.det_score)
-                if hasattr(best_face, "embedding") and best_face.embedding is not None:
-                    emb = best_face.embedding.copy()
-                    norm = np.linalg.norm(emb)
-                    if norm > 0:
-                        emb = emb / norm
-                    return emb
+            input_crop = aligned if (aligned is not None and getattr(aligned, 'size', 0) > 0) else face_crop
+            rgb_crop = cv2.cvtColor(input_crop, cv2.COLOR_BGR2RGB)
+            if face_detector.model is not None:
+                faces = face_detector.model.get(rgb_crop)
+                if faces:
+                    best_face = max(faces, key=lambda f: f.det_score)
+                    if hasattr(best_face, "embedding") and best_face.embedding is not None:
+                        emb = best_face.embedding.copy()
+                        if not np.all(np.isfinite(emb)):
+                            return None
+                        norm = np.linalg.norm(emb)
+                        if norm > 1e-4:
+                            return (emb / norm).astype(np.float32)
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
 

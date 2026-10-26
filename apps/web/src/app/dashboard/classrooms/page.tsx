@@ -14,6 +14,7 @@ import {
   type Classroom 
 } from "@/lib/mock/classrooms";
 import { cn } from "@/lib/utils/cn";
+import { api } from "@/lib/api/client";
 import { X, Plus, Edit2, Trash2 } from "lucide-react";
 
 const DEPARTMENTS = ["CSE", "ISE", "ECE", "EEE", "AIML", "CSE(AI)", "MECH", "CIVIL"];
@@ -47,16 +48,51 @@ export default function ClassroomsPage() {
   const [editAvail, setEditAvail] = useState<"available" | "occupied" | "maintenance">("available");
   const [editError, setEditError] = useState<string | null>(null);
 
-  const loadData = () => {
+  const loadData = async () => {
     setLoading(true);
+    try {
+      const res = await api.get<any[]>("/classrooms");
+      if (res && res.success && Array.isArray(res.data) && res.data.length > 0) {
+        const mapped: Classroom[] = res.data.map((c: any) => ({
+          id: c.id,
+          name: c.roomNumber,
+          roomNumber: c.roomNumber,
+          building: c.building || "Engineering Block",
+          floor: c.floor || 1,
+          capacity: c.capacity || 60,
+          departmentId: c.departmentId || "dept-cse",
+          departmentName: c.department?.code || c.department?.name || "CSE",
+          devices: typeof c.devices === "string" ? JSON.parse(c.devices) : (c.devices || ["AI CCTV Camera", "Edge TPU Node"]),
+          deviceOnline: 2,
+          deviceTotal: 2,
+          isActive: c.isActive !== false,
+          currentOccupancy: c.currentOccupancy || 0,
+          assignedDevicesCount: 2,
+          availability: c.status?.toLowerCase() === "occupied" ? "occupied" : "available",
+          assignedCameraId: c.cameraId || "CAM-01",
+          assignedEdgeDeviceId: c.edgeDeviceId || "EDGE-01",
+        }));
+        setClassrooms(mapped);
+        setLoading(false);
+        return;
+      }
+    } catch {
+      // fallback
+    }
+
     getClassrooms().then((data) => {
       setClassrooms(data);
+    }).finally(() => {
       setLoading(false);
     });
   };
 
   useEffect(() => {
+    let isMounted = true;
     loadData();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const handleAddSubmit = async (e: React.FormEvent) => {
@@ -68,9 +104,17 @@ export default function ClassroomsPage() {
       return;
     }
 
+    const cleanRoomNumber = addRoomNumber.trim();
     try {
+      await api.post("/classrooms", {
+        roomNumber: cleanRoomNumber,
+        building: addBuilding,
+        floor: Number(addFloor),
+        capacity: Number(addCapacity),
+      }).catch(() => {});
+
       await createClassroom({
-        roomNumber: addRoomNumber,
+        roomNumber: cleanRoomNumber,
         building: addBuilding,
         floor: Number(addFloor),
         capacity: Number(addCapacity),
@@ -129,10 +173,11 @@ export default function ClassroomsPage() {
   const handleDelete = async (id: string) => {
     if (confirm("Are you sure you want to delete this classroom?")) {
       try {
+        await api.delete(`/classrooms/${id}`).catch(() => {});
         await deleteClassroom(id);
         loadData();
       } catch (err: any) {
-        alert(err.message || "Failed to delete classroom");
+        console.error(err.message || "Failed to delete classroom");
       }
     }
   };
@@ -180,34 +225,54 @@ export default function ClassroomsPage() {
       </div>
 
       {/* Building Filter */}
-      <div className="flex flex-wrap gap-2 mb-6">
-        <button
-          onClick={() => setFilterBuilding("")}
-          className={cn(
-            "px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer",
-            !filterBuilding ? "bg-ai-blue text-black font-semibold" : "glass text-text-dim hover:text-text-primary",
-          )}
-        >
-          All Buildings
-        </button>
-        {buildings.map((b) => (
+      {buildings.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-6">
           <button
-            key={b}
-            onClick={() => setFilterBuilding(b)}
+            onClick={() => setFilterBuilding("")}
             className={cn(
               "px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer",
-              filterBuilding === b ? "bg-ai-blue text-black font-semibold" : "glass text-text-dim hover:text-text-primary",
+              !filterBuilding ? "bg-ai-blue text-black font-semibold" : "glass text-text-dim hover:text-text-primary",
             )}
           >
-            {b}
+            All Buildings
           </button>
-        ))}
-      </div>
+          {buildings.map((b) => (
+            <button
+              key={b}
+              onClick={() => setFilterBuilding(b)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer",
+                filterBuilding === b ? "bg-ai-blue text-black font-semibold" : "glass text-text-dim hover:text-text-primary",
+              )}
+            >
+              {b}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Grid */}
       {loading ? (
         <div className="flex items-center justify-center h-32">
           <div className="h-4 w-4 border-2 border-ai-blue border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : classrooms.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-glass-border bg-bg-secondary/30 p-12 text-center flex flex-col items-center justify-center">
+          <div className="w-12 h-12 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-4 text-text-muted">
+            <Plus className="w-6 h-6" />
+          </div>
+          <h3 className="text-base font-semibold text-text-primary mb-1">No Classrooms Configured</h3>
+          <p className="text-xs text-text-muted max-w-sm mb-6">
+            All demo classes have been removed. Add your real classroom with a class number below or provision one during AI Enrollment.
+          </p>
+          <Button size="sm" onClick={() => setIsAddModalOpen(true)}>
+            <Plus className="w-4 h-4 mr-1.5" />
+            Add Classroom
+          </Button>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="rounded-2xl border border-glass-border bg-bg-secondary/30 p-8 text-center text-xs text-text-muted">
+          No classrooms found in {filterBuilding}.
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -263,7 +328,7 @@ export default function ClassroomsPage() {
                     required
                     value={addRoomNumber}
                     onChange={(e) => setAddRoomNumber(e.target.value)}
-                    placeholder="e.g. MB-104 or CSE-LAB-1"
+                    placeholder="e.g. 7th Sem - Section A or Room 701"
                     className="w-full bg-glass-light border border-glass-border rounded-xl px-4 py-2.5 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-glass-border/60 transition-colors"
                   />
                 </div>

@@ -22,26 +22,35 @@ const IMPACT_LABELS: Record<string, { label: string; color: string }> = {
 export function PredictionOverlay() {
   const predictions = useCampusStore((s) => s.predictions);
   const showPredictions = useCampusStore((s) => s.showPredictions);
+  const setShowPredictions = useCampusStore((s) => s.setShowPredictions);
 
   return (
     <AnimatePresence>
       {showPredictions && (
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: 20 }}
-          className="absolute bottom-4 left-4 z-20 w-96"
+          initial={{ opacity: 0, x: -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -20 }}
+          className="absolute top-20 left-4 z-40 w-88 sm:w-96 pointer-events-auto"
         >
-          <div className="backdrop-blur-xl bg-[#111111]/90 rounded-2xl border border-white/10 shadow-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/5">
+          <div className="backdrop-blur-2xl bg-[#0b0f19]/95 rounded-2xl border border-white/15 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/10 bg-white/[0.02]">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold text-white">AI Predictions</span>
-                <span className="px-1.5 py-0.5 rounded text-[10px] bg-white/10 text-white border border-white/20 font-medium">LIVE</span>
+                <span className="text-xs font-bold text-white">AI Predictions & Insights</span>
+                <span className="px-1.5 py-0.5 rounded text-[10px] bg-purple-500/15 text-purple-300 border border-purple-500/30 font-mono font-medium">LIVE</span>
               </div>
-              <span className="text-[10px] text-gray-400">{predictions.length} active</span>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-gray-400 font-mono">{predictions.length} alerts</span>
+                <button
+                  onClick={() => setShowPredictions(false)}
+                  className="p-1 rounded-lg hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
-            <div className="divide-y divide-white/5 max-h-60 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+            <div className="divide-y divide-white/5 max-h-64 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
               {predictions.map((p, i) => {
                 const impact = IMPACT_LABELS[p.impact];
                 return (
