@@ -170,9 +170,12 @@ async def generate_mjpeg_stream(camera_id: str, mode: str = "attendance"):
         await asyncio.sleep(0.04)  # ~25 FPS update rate
 
 @router.get("/stream")
-async def get_camera_stream(camera_id: str = "webcam", mode: str = "attendance"):
+async def get_camera_stream(camera_id: str = "webcam", mode: str = "attendance", show_boxes: Optional[bool] = None):
     """MJPEG stream endpoint for live monitoring with separated mode overlays."""
     from ..services.attendance_engine import attendance_engine
+    if show_boxes is not None:
+        attendance_engine.show_face_boxes = bool(show_boxes)
+
     if camera_id not in attendance_engine.active_sessions:
         try:
             attendance_engine.start_session(

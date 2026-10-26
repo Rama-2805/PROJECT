@@ -201,115 +201,12 @@ function LiveCameraFeed({
   // Run dynamic AI HUD overlay on top of video when in fallback / deployed playback mode
   useEffect(() => {
     if (!sessionActive || !streamFailed) return;
-    let animId: number;
-
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
-    let tick = 0;
-    const renderHUD = () => {
-      tick++;
-      const w = canvas.width;
-      const h = canvas.height;
-      ctx.clearRect(0, 0, w, h);
-
-      // Classroom face detection targets (verified enrolled vs unknown visitors)
-      const boxes = [
-        { name: "Rahul S.", usn: "1VI23CS045", conf: 0.984, x: 0.22, y: 0.32, w: 0.085, h: 0.125, status: "PRESENT", beh: "ATTENTIVE", att: 96 },
-        { name: "Ananya R.", usn: "1VI23CS012", conf: 0.971, x: 0.40, y: 0.30, w: 0.080, h: 0.120, status: "PRESENT", beh: "ATTENTIVE", att: 94 },
-        { name: "Priya M.", usn: "1VI23CS089", conf: 0.965, x: 0.58, y: 0.34, w: 0.082, h: 0.122, status: "PRESENT", beh: "ATTENTIVE", att: 92 },
-        { name: "Unknown Individual", usn: "UNKNOWN", conf: 0.860, x: 0.74, y: 0.35, w: 0.085, h: 0.128, status: "UNKNOWN", beh: "NORMAL", att: 88 },
-        { name: "Sneha P.", usn: "1VI23CS102", conf: 0.978, x: 0.32, y: 0.48, w: 0.092, h: 0.138, status: "PRESENT", beh: "ATTENTIVE", att: 95 },
-        { name: "Aditya V.", usn: "1VI23CS003", conf: 0.961, x: 0.52, y: 0.50, w: 0.095, h: 0.142, status: "PRESENT", beh: mode === "behavior" ? "PHONE_USAGE" : "PRESENT", att: mode === "behavior" ? 64 : 91 },
-      ];
-
-      // Subtle tech scanning laser line
-      const scanY = (tick * 1.8) % h;
-      ctx.strokeStyle = "rgba(16, 185, 129, 0.20)";
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(0, scanY);
-      ctx.lineTo(w, scanY);
-      ctx.stroke();
-
-      // Top corner HUD metadata
-      ctx.font = "bold 11px monospace";
-      ctx.fillStyle = "rgba(16, 185, 129, 0.9)";
-      ctx.fillText(`● REC [AI ENGINE ACTIVE: YOLO26 + INSIGHTFACE]`, 16, 24);
-      ctx.fillStyle = "rgba(255, 255, 255, 0.75)";
-      ctx.fillText(`STREAM: ${cameraId.toUpperCase()} | 25.0 FPS | 720p | LATENCY: 12ms`, 16, 40);
-
-      const now = new Date();
-      ctx.fillText(now.toISOString().replace("T", " ").substring(0, 19), w - 210, 24);
-
-      // Draw bounding boxes
-      boxes.forEach((b, i) => {
-        // Small organic breathing jitter to simulate live tracking
-        const jitterX = Math.sin((tick + i * 30) * 0.05) * 1.5;
-        const jitterY = Math.cos((tick + i * 30) * 0.05) * 1.5;
-
-        const bx = b.x * w + jitterX;
-        const by = b.y * h + jitterY;
-        const bw = b.w * w;
-        const bh = b.h * h;
-
-        const isAlert = mode === "behavior" && b.beh === "PHONE_USAGE";
-        const isUnknown = b.status === "UNKNOWN";
-        const strokeColor = isAlert || isUnknown ? "#f59e0b" : "#10b981";
-        const bgColor = isAlert || isUnknown ? "rgba(245, 158, 11, 0.9)" : "rgba(16, 185, 129, 0.9)";
-
-        // Target box border
-        ctx.strokeStyle = strokeColor;
-        ctx.lineWidth = 2;
-        ctx.strokeRect(bx, by, bw, bh);
-
-        // Corner brackets
-        const cLen = 8;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        // Top-left
-        ctx.moveTo(bx, by + cLen); ctx.lineTo(bx, by); ctx.lineTo(bx + cLen, by);
-        // Top-right
-        ctx.moveTo(bx + bw - cLen, by); ctx.lineTo(bx + bw, by); ctx.lineTo(bx + bw, by + cLen);
-        // Bottom-left
-        ctx.moveTo(bx, by + bh - cLen); ctx.lineTo(bx, by + bh); ctx.lineTo(bx + cLen, by + bh);
-        // Bottom-right
-        ctx.moveTo(bx + bw - cLen, by + bh); ctx.lineTo(bx + bw, by + bh); ctx.lineTo(bx + bw, by + bh - cLen);
-        ctx.stroke();
-
-        // Header label badge
-        const badgeW = Math.max(bw, 140);
-        ctx.fillStyle = bgColor;
-        ctx.fillRect(bx, by - 26, badgeW, 26);
-
-        ctx.fillStyle = "#000000";
-        ctx.font = "bold 9px monospace";
-        const labelText = isUnknown
-          ? "? UNKNOWN PERSON"
-          : mode === "attendance"
-          ? `${b.name} (${(b.conf * 100).toFixed(0)}%)`
-          : `${b.name} • ${b.beh}`;
-        ctx.fillText(labelText, bx + 4, by - 14);
-
-        ctx.font = "8px monospace";
-        const subText = isUnknown
-          ? "Unregistered Face · Pending Review"
-          : mode === "attendance"
-          ? `${b.usn} • ${b.status}`
-          : `ATTN: ${b.att}% • ${b.usn}`;
-        ctx.fillText(subText, bx + 4, by - 4);
-      });
-
-      animId = requestAnimationFrame(renderHUD);
-    };
-
-    animId = requestAnimationFrame(renderHUD);
-    return () => {
-      cancelAnimationFrame(animId);
-    };
-  }, [sessionActive, streamFailed, cameraId, mode]);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }, [sessionActive, streamFailed]);
 
   if (!sessionActive) {
     return (

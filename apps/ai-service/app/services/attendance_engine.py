@@ -62,6 +62,8 @@ class AttendanceEngine:
         self.annotated_frames = {}
         self.annotated_frames_attendance = {}
         self.annotated_frames_behavior = {}
+        # Whether to render bounding boxes & badges on faces in video streams (default: False for clean camera feed)
+        self.show_face_boxes = False
 
         # Asynchronous Behavioral Worker State & Rolling History
         self.behavior_queue = queue.Queue(maxsize=3)
@@ -436,10 +438,13 @@ class AttendanceEngine:
             logger.error(f"Fatal error in attendance loop: {fatal_err}")
 
     def _draw_attendance_overlay(self, frame: np.ndarray, active_tracks: List[TrackedFace], video_name: str = "", camera_id: str = None) -> np.ndarray:
-        """Render high-contrast Attendance-Only HUD and bounding box overlays on live frame.
+        """Render live monitoring frame.
         
-        Strictly excludes any behavioral alert pills or phone/sleeping markers.
+        When show_face_boxes is False (default), returns clean unobstructed frame with zero bounding boxes.
         """
+        if not getattr(self, "show_face_boxes", False):
+            return frame.copy()
+
         annotated = frame.copy()
         h, w = annotated.shape[:2]
 
@@ -557,10 +562,13 @@ class AttendanceEngine:
         return annotated
 
     def _draw_behavior_overlay(self, frame: np.ndarray, active_tracks: List[TrackedFace], video_name: str = "") -> np.ndarray:
-        """Render high-contrast Behavioral-Only HUD and telemetry overlays on live frame.
+        """Render behavioral monitoring frame.
         
-        Strictly excludes attendance check-in badges or marking students present.
+        When show_face_boxes is False (default), returns clean unobstructed frame with zero bounding boxes.
         """
+        if not getattr(self, "show_face_boxes", False):
+            return frame.copy()
+
         annotated = frame.copy()
         h, w = annotated.shape[:2]
 
