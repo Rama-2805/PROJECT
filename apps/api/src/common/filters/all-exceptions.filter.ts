@@ -27,7 +27,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const message =
       resObj && typeof resObj === 'object' && (resObj as any).message
         ? (resObj as any).message
-        : exception instanceof HttpException
+        : exception instanceof Error
           ? exception.message
           : 'Internal server error';
 
@@ -39,9 +39,21 @@ export class AllExceptionsFilter implements ExceptionFilter {
       stack,
     );
 
+    const errorDetails = exception instanceof Error
+      ? {
+          name: exception.name,
+          message: exception.message,
+          code: (exception as any).code,
+          meta: (exception as any).meta,
+          stack: exception.stack,
+        }
+      : String(exception);
+
+    const isProd = process.env.NODE_ENV === 'production';
     const errorResponse = {
       statusCode: status,
-      message,
+      message: isProd && status === HttpStatus.INTERNAL_SERVER_ERROR ? 'Internal server error' : message,
+      errorDetails: !isProd ? errorDetails : undefined,
       path: request.url,
       method: request.method,
       timestamp: new Date().toISOString(),

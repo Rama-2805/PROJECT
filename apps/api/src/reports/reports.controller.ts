@@ -90,4 +90,24 @@ export class ReportsController {
   ) {
     return this.reports.scheduleReport(dto, user.id, user.institutionId);
   }
+
+  @Get('new-students')
+  @Roles(
+    RoleName.SUPER_ADMIN,
+    RoleName.INSTITUTION_ADMIN,
+    RoleName.RESEARCH_ANALYST,
+    RoleName.HOD,
+    RoleName.TEACHER,
+  )
+  getNewStudents(
+    @Query('classroomId') classroomId?: string,
+    @Query('section') section?: string,
+    @CurrentUser() user?: JwtPayload,
+  ) {
+    return this.reports.getNewStudentsReport(
+      classroomId,
+      section,
+      user?.institutionId,
+    );
+  }
 }

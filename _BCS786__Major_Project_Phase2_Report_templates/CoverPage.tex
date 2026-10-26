@@ -1,0 +1,60 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage{fontspec}
+%\setmainfont{Times New Roman}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{background}
+\geometry{a4paper,total={180mm,250mm},left=20mm}
+\usepackage{tikz}
+\usetikzlibrary{calc}
+\thispagestyle{empty}
+\backgroundsetup{
+scale=8,
+angle=0,
+firstpage=true,
+opacity=0.1,
+color=black,
+contents={\begin{tikzpicture}[remember picture,overlay]
+\node at ([yshift=1pt,xshift=0pt]current page.center)
+{\includegraphics[width=1cm]{college_logo.JPG}};
+\end{tikzpicture}}}
+\begin{document}
+\begin{tikzpicture}[remember picture,overlay]
+   \draw[line width = 2pt] ($(current page.north west) + (1in,-0.5in)$)  rectangle ($(current page.south east) +  (-0.5in,0.5in)$);
+\end{tikzpicture}
+\begin{center}
+\textbf{\large{VISVESVARAYA TECHNOLOGICAL UNIVERSITY}}\\
+Jnana Sangama,Belagavi-590018\\
+\vspace{0.2in}
+\includegraphics[scale=0.27]{VTU_Logo.png}\\[0.4cm]
+\textbf{\MakeUppercase{Major Project Work Report}} \\[0.05cm]
+\textbf{ON}\\[0.5cm]
+\textcolor{blue}{\textbf{\LARGE{\MakeUppercase{{{Title of the Project}}} }}}\\[0.3cm]
+\textit{Submitted in partial fulfilment of the requirements for the award of the degree of}\\[2mm]
+\textbf{BACHELOR OF ENGINEERING}\\[2mm]
+\textbf{in}\\[2mm]
+\textbf{COMPUTER SCIENCE AND ENGINEERING}\\[0.5cm]
+\small{Submitted by} \\[3mm]
+\vspace{0.2cm}
+\textbf{STUDENT 1 \hspace{6cm} USN1\\[1mm]
+STUDENT 2  \hspace{6cm} USN2\\[1mm]
+STUDENT 3 \hspace{6cm} USN3\\[1mm]
+STUDENT 4 \hspace{6cm} USN4\\}
+\vspace{1cm}
+{\large \textbf{Under The Guidance of}}\\[1.5mm]
+
+{ \textbf{NAME OF THE PROFESSOR}}\\[1.5mm]
+{ DESIGNATION}\\[0.2cm]
+\vspace{0.3cm}
+\includegraphics[scale=0.4]{college_logo.JPG}\\
+\vspace{0.5cm}
+\textbf{DEPARTMENT OF COMPUTER SCIENCE AND ENGINEERING}\\
+\vspace{0.2cm}
+\textbf{\large{VEMANA INSTITUTE OF TECHNOLOGY}}\\[2mm]
+\scriptsize{(Affiliated to Visvesvaraya Technological University, Belagavi) \\Recognized by Govt. of Karnataka ,Approved by AICTE, New Delhi)
+Accredited by NBA (ECE, CSE, ISE)}\\[1mm]
+%\vspace{0.2cm}
+\textbf{KORAMANGALA, BENGALURU - 560034}\\[2mm]
+\textbf{2026-27}
+\end{center}
+\end{document}

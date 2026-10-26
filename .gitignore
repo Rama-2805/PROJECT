@@ -72,6 +72,8 @@ AttendifyAI/
 
 
 # AI service runtime data (face crops, embeddings, unknown faces)
+storage/unknown_faces/
+storage/enrollment/
 apps/ai-service/storage/unknown_faces/
 apps/ai-service/storage/*.json
 *.npy

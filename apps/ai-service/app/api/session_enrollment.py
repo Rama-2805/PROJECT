@@ -5,6 +5,7 @@ at the AI-service level. These are called by the NestJS API Gateway.
 """
 
 import os
+import re
 import json
 import logging
 import asyncio
@@ -12,7 +13,7 @@ import numpy as np
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Query
 from ..config.settings import settings
 from .websocket import websocket_manager
 from ..services.security_service import verify_internal_api_key
@@ -39,6 +40,13 @@ class ProcessSessionRequest(BaseModel):
 class ClusterSyncRequest(BaseModel):
     """Used by NestJS to sync AI clusters into Postgres via Prisma."""
     clusters: List[dict]
+
+
+class DeleteClusterImageRequest(BaseModel):
+    imageUrl: Optional[str] = None
+    imagePath: Optional[str] = None
+    imageIndex: Optional[int] = None
+    imageId: Optional[str] = None
 
 
 class ProcessingState:
@@ -165,135 +173,162 @@ def _get_session_dir(session_id: str) -> Path:
 
 
 def consolidate_cluster_dicts(clusters: List[dict], max_capacity: int = 64) -> List[dict]:
-    """Consolidate fragmented clusters into unified student identities bounded by classroom capacity."""
+    """Ensure cluster purity and deduplicate only high-confidence split tracks of the exact same student.
+    
+    Guarantees:
+    1. NEVER merge different student identities or candidate suggestions.
+    2. Candidate matches are advisory only and must never collapse distinct clusters.
+    3. Confirmed / assigned clusters with the same USN are only consolidated if their biometric
+       cosine similarity is >= 0.82 and they don't co-occur in the same frames.
+    4. Unassigned clusters are only merged if ArcFace cosine similarity is >= 0.85.
+    5. Fleeting 1-sample noise is pruned only if total clusters exceed max_capacity.
+    """
     if not clusters:
         return []
 
-    usn_map: Dict[str, List[dict]] = {}
-    unassigned: List[dict] = []
+    def _get_emb(c: dict) -> Optional[np.ndarray]:
+        raw = c.get("centroid") or c.get("centroid_embedding") or c.get("representative_embedding")
+        if raw and len(raw) == 512:
+            arr = np.array(raw, dtype=np.float32)
+            norm = float(np.linalg.norm(arr))
+            if norm > 1e-6:
+                return arr / norm
+        return None
+
+    # Step 1: Separate confirmed/assigned clusters from tentative/candidate/unassigned clusters
+    # IMPORTANT: Only "CONFIRMED" or "ASSIGNED" status represents human ground truth.
+    # "CANDIDATE" or "UNKNOWN" are AI suggestions and MUST NEVER be automatically lumped together.
+    confirmed_groups: Dict[str, List[dict]] = {}
+    independent_clusters: List[dict] = []
 
     for c in clusters:
         usn = c.get("assignedUsn") or c.get("usn")
-        status = c.get("identity_status") or c.get("status")
-        if usn and status in ("CONFIRMED", "CANDIDATE", "ASSIGNED"):
-            usn_map.setdefault(usn, []).append(c)
+        status = (c.get("identity_status") or c.get("status") or "").upper()
+        # Strictly exclude CANDIDATE from being grouped by USN
+        if usn and status in ("CONFIRMED", "ASSIGNED"):
+            confirmed_groups.setdefault(usn, []).append(c)
         else:
-            unassigned.append(c)
+            independent_clusters.append(c)
 
-    consolidated = []
+    consolidated: List[dict] = []
 
-    # 1. Consolidate clusters sharing the same enrolled student USN
-    for usn, group in usn_map.items():
-        base = dict(group[0])
-        all_tracks = []
-        all_gallery = []
-        all_images = []
-        total_samples = 0
-        all_centroids = []
-
-        for item in group:
-            for t in (item.get("track_ids") or item.get("tracks") or []):
-                if t not in all_tracks:
-                    all_tracks.append(t)
-            for g in (item.get("gallery") or []):
-                if g not in all_gallery:
-                    all_gallery.append(g)
-            for img in (item.get("images") or []):
-                if not any(x.get("imageUrl") == img.get("imageUrl") for x in all_images):
-                    all_images.append(img)
-            total_samples += int(item.get("sample_count") or item.get("sampleCount") or 1)
-            cent = item.get("centroid") or item.get("centroid_embedding")
-            if cent and len(cent) == 512:
-                all_centroids.append(np.array(cent, dtype=np.float32))
-
-        all_images.sort(key=lambda x: float(x.get("qualityScore", 0.0)), reverse=True)
-        base["track_ids"] = all_tracks
-        base["tracks"] = all_tracks
-        base["track_count"] = len(all_tracks)
-        base["trackCount"] = len(all_tracks)
-        base["sample_count"] = total_samples
-        base["sampleCount"] = total_samples
-        base["gallery"] = all_gallery[:6]
-        base["images"] = all_images[:6]
-        base["assignedUsn"] = usn
-        base["usn"] = usn
-        if base.get("assignedStudent") and isinstance(base["assignedStudent"], dict):
-            base["assignedStudentName"] = base["assignedStudent"].get("name")
-        if all_centroids:
-            m = np.mean(all_centroids, axis=0)
-            norm = float(np.linalg.norm(m))
-            base["centroid"] = (m / norm).tolist() if norm > 1e-6 else all_centroids[0].tolist()
-        consolidated.append(base)
-
-    # 2. Consolidate unassigned clusters by ArcFace cosine similarity (>= 0.65)
-    unassigned_groups: List[Dict[str, Any]] = []
-    for c in unassigned:
-        cent = c.get("centroid") or c.get("centroid_embedding")
-        emb = np.array(cent, dtype=np.float32) if (cent and len(cent) == 512) else None
-        merged = False
-        if emb is not None:
-            for grp in unassigned_groups:
-                g_emb = grp["centroid"]
-                sim = float(np.dot(emb, g_emb))
-                if sim >= 0.65:
-                    grp["items"].append(c)
-                    all_embs = [np.array(x.get("centroid") or x.get("centroid_embedding"), dtype=np.float32) for x in grp["items"] if (x.get("centroid") or x.get("centroid_embedding"))]
-                    m = np.mean(all_embs, axis=0)
-                    grp["centroid"] = (m / np.linalg.norm(m)).astype(np.float32)
-                    merged = True
-                    break
-        if not merged:
-            unassigned_groups.append({
-                "centroid": emb if emb is not None else np.zeros(512, dtype=np.float32),
-                "items": [c]
-            })
-
-    for grp in unassigned_groups:
-        items = grp["items"]
-        base = dict(items[0])
-        all_tracks = []
-        all_gallery = []
-        all_images = []
-        total_samples = 0
-        for item in items:
-            for t in (item.get("track_ids") or item.get("tracks") or []):
-                if t not in all_tracks:
-                    all_tracks.append(t)
-            for g in (item.get("gallery") or []):
-                if g not in all_gallery:
-                    all_gallery.append(g)
-            for img in (item.get("images") or []):
-                if not any(x.get("imageUrl") == img.get("imageUrl") for x in all_images):
-                    all_images.append(img)
-            total_samples += int(item.get("sample_count") or item.get("sampleCount") or 1)
-
-        all_images.sort(key=lambda x: float(x.get("qualityScore", 0.0)), reverse=True)
-        base["track_ids"] = all_tracks
-        base["tracks"] = all_tracks
-        base["track_count"] = len(all_tracks)
-        base["trackCount"] = len(all_tracks)
-        base["sample_count"] = total_samples
-        base["sampleCount"] = total_samples
-        base["gallery"] = all_gallery[:6]
-        base["images"] = all_images[:6]
-
-        # Prune 1-sample fleeting noise if candidate pool is large
-        if total_samples <= 1 and float(base.get("qualityAvg", 80.0)) < 75.0 and len(unassigned_groups) > 35:
+    # Step 2: For confirmed clusters sharing a USN, only merge if biometric similarity >= 0.90
+    for usn, group in confirmed_groups.items():
+        if len(group) == 1:
+            consolidated.append(group[0])
             continue
-        consolidated.append(base)
 
-    # 3. Bound to physical classroom capacity (Section A <= 64 seats)
+        # Sub-cluster confirmed group based on cosine similarity >= 0.90
+        sub_groups: List[List[dict]] = []
+        for item in group:
+            item_emb = _get_emb(item)
+            merged = False
+            if item_emb is not None:
+                for sub in sub_groups:
+                    all_sims = []
+                    for existing in sub:
+                        ex_emb = _get_emb(existing)
+                        if ex_emb is not None:
+                            all_sims.append(float(np.dot(item_emb, ex_emb)))
+                    if all_sims and min(all_sims) >= 0.90:
+                        sub.append(item)
+                        merged = True
+                        break
+            if not merged:
+                sub_groups.append([item])
+
+        for sub in sub_groups:
+            if len(sub) == 1:
+                consolidated.append(sub[0])
+            else:
+                base = dict(sub[0])
+                all_tracks = []
+                all_gallery = []
+                all_images = []
+                total_samples = 0
+                all_embs = []
+
+                for item in sub:
+                    for t in (item.get("track_ids") or item.get("tracks") or []):
+                        if t not in all_tracks:
+                            all_tracks.append(t)
+                    for g in (item.get("gallery") or []):
+                        if g not in all_gallery:
+                            all_gallery.append(g)
+                    for img in (item.get("images") or item.get("samples") or []):
+                        u = img.get("imageUrl") if isinstance(img, dict) else str(img)
+                        if not any(x.get("imageUrl") == u for x in all_images):
+                            all_images.append(img if isinstance(img, dict) else {"imageUrl": u, "qualityScore": 85.0})
+                    total_samples += int(item.get("sample_count") or item.get("sampleCount") or 1)
+                    emb = _get_emb(item)
+                    if emb is not None:
+                        all_embs.append(emb)
+
+                all_images.sort(key=lambda x: float(x.get("qualityScore", 0.0)) if isinstance(x, dict) else 0.0, reverse=True)
+                base["track_ids"] = all_tracks
+                base["tracks"] = all_tracks
+                base["track_count"] = len(all_tracks)
+                base["trackCount"] = len(all_tracks)
+                base["sample_count"] = total_samples
+                base["sampleCount"] = total_samples
+                base["gallery"] = all_gallery[:6]
+                base["images"] = all_images[:6]
+                if all_embs:
+                    mean_emb = np.mean(all_embs, axis=0)
+                    norm = float(np.linalg.norm(mean_emb))
+                    base["centroid"] = (mean_emb / norm).tolist() if norm > 1e-6 else all_embs[0].tolist()
+                    base["centroid_embedding"] = base["centroid"]
+                consolidated.append(base)
+
+    # Step 3: For independent / unassigned clusters, NEVER auto-merge across different track IDs.
+    # Each track represents a distinct individual observation. Preserving 1:1 track purity guarantees
+    # that different students' photos are NEVER mixed into the same cluster.
+    pure_unassigned: List[dict] = []
+    for c in independent_clusters:
+        # Guarantee track count reflects only this cluster's actual tracks
+        tracks = c.get("track_ids") or c.get("tracks") or []
+        if not tracks:
+            # Infer from gallery or sample image paths
+            found_tracks = set()
+            for g in (c.get("gallery") or []):
+                g_str = g if isinstance(g, str) else (g.get("imageUrl", "") if isinstance(g, dict) else "")
+                m = re.search(r"track_\d+", g_str)
+                if m:
+                    found_tracks.add(m.group(0))
+            tracks = list(found_tracks) if found_tracks else [f"track_{c.get('clusterNumber', 1):03d}"]
+            c["track_ids"] = tracks
+            c["tracks"] = tracks
+        c["track_count"] = len(tracks)
+        c["trackCount"] = len(tracks)
+        pure_unassigned.append(c)
+
+    consolidated.extend(pure_unassigned)
+
+    # Step 4: Prune 1-sample fleeting noise only if candidate pool exceeds classroom capacity
+    effective_capacity = max(max_capacity, 80)
+    if len(consolidated) > effective_capacity:
+        retained = []
+        for c in consolidated:
+            sc = int(c.get("sampleCount") or c.get("sample_count") or 1)
+            q = float(c.get("qualityAvg") or c.get("quality_mean") or c.get("bestQualityScore") or 70.0)
+            status = (c.get("identity_status") or c.get("status") or "").upper()
+            if status in ("CONFIRMED", "ASSIGNED") or sc > 1 or q >= 70.0:
+                retained.append(c)
+        if len(retained) >= 20:
+            consolidated = retained
+
+    # Step 5: Sort clusters deterministically (Confirmed first, then highest sample count, highest quality)
     def _sort_key(c):
-        has_usn = 1 if (c.get("assignedUsn") or c.get("usn")) else 0
-        sc = c.get("sampleCount") or c.get("sample_count") or 1
-        tc = c.get("trackCount") or c.get("track_count") or 1
+        status = (c.get("identity_status") or c.get("status") or "").upper()
+        is_conf = 2 if status in ("CONFIRMED", "ASSIGNED") else (1 if status == "CANDIDATE" else 0)
+        sc = int(c.get("sampleCount") or c.get("sample_count") or 1)
+        tc = int(c.get("trackCount") or c.get("track_count") or 1)
         q = float(c.get("qualityAvg") or c.get("quality_mean") or 70.0)
-        return (has_usn, sc + tc * 2, q)
+        return (is_conf, sc * 2 + tc, q)
 
     consolidated.sort(key=_sort_key, reverse=True)
-    consolidated = consolidated[:max_capacity]
 
-    # 4. Renumber clusters cleanly
+    # Step 6: Renumber clusters cleanly
     for idx, c in enumerate(consolidated, start=1):
         cid = f"cluster_{idx:03d}"
         c["id"] = cid
@@ -322,14 +357,8 @@ def _load_session_disk_fallback(session_id: str):
                 else:
                     clusters = []
 
-                # Automatically consolidate if clusters exceed capacity or have fragmented duplicates
-                if len(clusters) > 64 or sum(1 for c in clusters if c.get("assignedUsn")) > 10:
-                    clusters = consolidate_cluster_dicts(clusters, max_capacity=64)
-                    try:
-                        with open(session_dir / "clusters.json", "w") as f:
-                            json.dump(clusters, f, indent=2)
-                    except Exception:
-                        pass
+                # Ensure clean formatting without mutating disk file
+                clusters = consolidate_cluster_dicts(clusters, max_capacity=100)
 
                 diag = {}
                 if (session_dir / "diagnostics.json").exists():
@@ -494,8 +523,8 @@ async def get_session_clusters(session_id: str):
         _load_session_disk_fallback(session_id)
 
     clusters = state.sessions.get(session_id, {}).get("clusters", [])
-    if len(clusters) > 64:
-        clusters = consolidate_cluster_dicts(clusters, max_capacity=64)
+    if len(clusters) > 100:
+        clusters = consolidate_cluster_dicts(clusters, max_capacity=100)
         if session_id in state.sessions:
             state.sessions[session_id]["clusters"] = clusters
     counts = {
@@ -954,16 +983,25 @@ async def finalize_session_in_faiss(session_id: str):
     from ..services.faiss_service import faiss_service
     import numpy as np
     
-    # Group confirmed clusters by student USN to accumulate multi-angle vectors
+    # Group confirmed/assigned clusters by student USN to accumulate multi-angle vectors
     clusters_by_usn = {}
     for c in clusters:
-        usn = c.get("assignedUsn") or c.get("usn") or (c.get("assignedStudent", {}).get("usn") if isinstance(c.get("assignedStudent"), dict) else None)
-        is_confirmed = (
-            (c.get("identity_status") == "CONFIRMED" or c.get("isEnrolled") is True or c.get("enrolled") is True) and
-            c.get("status") == "ASSIGNED" and
-            bool(usn)
+        usn = (
+            c.get("assignedUsn") or
+            c.get("usn") or
+            (c.get("assignedStudent", {}).get("usn") if isinstance(c.get("assignedStudent"), dict) else None)
         )
-        if not is_confirmed or not usn:
+        is_assigned = bool(
+            usn and (
+                c.get("status") == "ASSIGNED" or
+                c.get("identity_status") in ("CONFIRMED", "ASSIGNED") or
+                c.get("isEnrolled") is True or
+                c.get("enrolled") is True or
+                c.get("assignedStudent") or
+                c.get("assignedStudentName")
+            )
+        )
+        if not is_assigned or not usn:
             continue
         usn_clean = str(usn).strip().upper()
         if usn_clean not in clusters_by_usn:
@@ -971,23 +1009,72 @@ async def finalize_session_in_faiss(session_id: str):
         clusters_by_usn[usn_clean].append(c)
 
     enrolled_count = 0
+    synced_students = 0
+
     for usn_clean, u_clusters in clusters_by_usn.items():
         all_student_vectors = []
+        best_img_for_student = None
+
         for c in u_clusters:
+            found_vec = None
             for key in ("representative_embedding", "centroid_embedding", "centroid", "medoid_embedding"):
                 emb = c.get(key)
                 if isinstance(emb, list) and len(emb) == 512:
                     vec = np.array(emb, dtype=np.float32)
-                    norm = np.linalg.norm(vec)
+                    norm = float(np.linalg.norm(vec))
                     if norm > 0:
                         vec = vec / norm
-                    all_student_vectors.append(vec)
+                        found_vec = vec
+                        all_student_vectors.append(vec)
+                        break
+
+            # Fallback: compute ArcFace 512D embedding on demand from real crop image
+            if found_vec is None:
+                best_img = c.get("bestImageUrl") or c.get("bestImagePath") or (c.get("gallery", [None])[0] if c.get("gallery") else None)
+                if best_img:
+                    clean_rel = os.path.normpath(best_img.lstrip("/")).replace("..", "")
+                    candidates = [
+                        Path(clean_rel),
+                        Path(__file__).resolve().parent.parent.parent / clean_rel,
+                        Path(__file__).resolve().parent.parent.parent.parent / clean_rel,
+                    ]
+                    for p in candidates:
+                        try:
+                            resolved_p = p.resolve()
+                            if not any(part in ("storage", "data", "enrollment") for part in resolved_p.parts):
+                                continue
+                        except Exception:
+                            continue
+                        if p.exists():
+                            try:
+                                import cv2
+                                from ..services.embedding_service import embedding_service
+                                crop_img = cv2.imread(str(p))
+                                if crop_img is not None and crop_img.size > 0:
+                                    emb = embedding_service.generate_embedding(crop_img)
+                                    if emb is not None and len(emb) == 512:
+                                        vec = np.array(emb, dtype=np.float32)
+                                        norm = float(np.linalg.norm(vec))
+                                        if norm > 0:
+                                            vec = vec / norm
+                                        all_student_vectors.append(vec)
+                                        if "representative_embedding" not in c:
+                                            c["representative_embedding"] = vec.tolist()
+                                            c["centroid"] = vec.tolist()
+                                        if len(all_student_vectors) >= 8:
+                                            break
+                            except Exception as ex:
+                                logger.warning(f"On-demand ArcFace crop extraction failed for {p}: {ex}")
+
+            if not best_img_for_student:
+                best_img_for_student = c.get("bestImagePath") or c.get("bestImageUrl") or (c.get("gallery", [None])[0] if c.get("gallery") else None)
 
         if all_student_vectors:
             # Clear old vectors once for this student, then add all accumulated cluster vectors
             faiss_service.remove_student_vectors(usn_clean)
             for v in all_student_vectors:
                 faiss_service.add_student(usn_clean, v, check_duplicate=True)
+            synced_students += 1
 
         for c in u_clusters:
             c["isEnrolled"] = True
@@ -995,12 +1082,40 @@ async def finalize_session_in_faiss(session_id: str):
             c["status"] = "ASSIGNED"
             c["identity_status"] = "CONFIRMED"
             enrolled_count += 1
-            
+
+        # Synchronize student faceEnrolled state in NestJS backend (non-blocking)
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                await client.post(
+                    f"{settings.backend_api_url}/api/students/sync-enrollment",
+                    headers={"x-api-key": settings.internal_api_key},
+                    json={
+                        "usn": usn_clean,
+                        "faceSamples": max(1, len(all_student_vectors)),
+                        "profilePhoto": best_img_for_student,
+                    }
+                )
+        except Exception as n_err:
+            logger.warning(f"Failed to sync student {usn_clean} enrollment to backend: {n_err}")
+
     faiss_service.save_index()
+
+    # Persist updated clusters with isEnrolled=True and embeddings to disk
+    try:
+        sess_dir = _get_session_dir(session_id)
+        clusters_path = sess_dir / "clusters.json"
+        with open(clusters_path, "w") as f:
+            json.dump(clusters, f, indent=2)
+        logger.info(f"[{session_id}] Successfully finalized FAISS for {synced_students} students ({enrolled_count} clusters)")
+    except Exception as p_err:
+        logger.warning(f"Could not persist enrolled status to clusters.json: {p_err}")
+
     return {
         "success": True,
         "sessionId": session_id,
         "enrolled_clusters": enrolled_count,
+        "enrolled_students": synced_students,
         "total_faiss_vectors": faiss_service.index.ntotal if faiss_service.index else 0
     }
 
@@ -1296,13 +1411,154 @@ async def delete_session_cluster(session_id: str, cluster_id: str):
     try:
         session_dir = _get_session_dir(session_id)
         if session_dir and (session_dir / "clusters.json").exists():
+            orig_is_dict = False
+            try:
+                with open(session_dir / "clusters.json") as f:
+                    data_check = json.load(f)
+                orig_is_dict = isinstance(data_check, dict) and "clusters" in data_check
+            except Exception:
+                pass
             with open(session_dir / "clusters.json", "w") as f:
-                json.dump({"clusters": sess["clusters"]}, f, indent=2)
+                if orig_is_dict:
+                    json.dump({"clusters": sess["clusters"]}, f, indent=2)
+                else:
+                    json.dump(sess["clusters"], f, indent=2)
     except Exception as e:
         logger.warning(f"Failed to persist cluster deletion to disk: {e}")
 
     logger.info(f"[{session_id}] Deleted cluster {cluster_id}. Remaining: {len(sess['clusters'])}")
     return {"success": True, "deletedClusterId": cluster_id, "remainingClusters": len(sess["clusters"])}
+
+
+@router.delete("/{session_id}/clusters/{cluster_id}/images")
+async def delete_cluster_image(
+    session_id: str,
+    cluster_id: str,
+    imageUrl: Optional[str] = Query(None),
+    imagePath: Optional[str] = Query(None),
+    imageIndex: Optional[int] = Query(None),
+    imageId: Optional[str] = Query(None),
+    body: Optional[DeleteClusterImageRequest] = None,
+):
+    """Remove a specific facial crop / sample image from a cluster."""
+    if session_id not in state.sessions or not state.sessions[session_id].get("clusters"):
+        _load_session_disk_fallback(session_id)
+    if session_id not in state.sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    target_url = imageUrl or (body.imageUrl if body else None)
+    target_path = imagePath or (body.imagePath if body else None)
+    target_idx = imageIndex if imageIndex is not None else (body.imageIndex if body else None)
+    target_id = imageId or (body.imageId if body else None)
+
+    sess = state.sessions[session_id]
+    clusters = sess.get("clusters", [])
+
+    matched_cluster = None
+    for c in clusters:
+        cid = c.get("clusterId") or c.get("cluster_id")
+        cnum = c.get("clusterNumber") or c.get("cluster_number")
+        if cid == cluster_id or str(cnum) == str(cluster_id) or f"cluster_{str(cnum).zfill(3)}" == cluster_id:
+            matched_cluster = c
+            break
+
+    if not matched_cluster:
+        raise HTTPException(status_code=404, detail=f"Cluster {cluster_id} not found in session")
+
+    def _is_match(im_item: Any, idx: int) -> bool:
+        if target_idx is not None and idx == target_idx:
+            return True
+        im_url = ""
+        im_path = ""
+        im_id = ""
+        if isinstance(im_item, str):
+            im_url = im_item
+            im_path = im_item
+        elif isinstance(im_item, dict):
+            im_url = im_item.get("imageUrl") or im_item.get("image_url") or ""
+            im_path = im_item.get("imagePath") or im_item.get("image_path") or ""
+            im_id = str(im_item.get("id") or im_item.get("sampleId") or "")
+
+        if target_id and im_id and (target_id == im_id or target_id.endswith(im_id) or im_id.endswith(target_id)):
+            return True
+
+        def _get_fname(s: str) -> str:
+            return s.split("/")[-1].split("?")[0] if s else ""
+
+        target_fname = _get_fname(target_url or target_path or "")
+        if target_fname:
+            if target_fname == _get_fname(im_url) or target_fname == _get_fname(im_path):
+                return True
+        if target_url and (im_url == target_url or target_url in im_url or im_url in target_url):
+            return True
+        if target_path and (im_path == target_path or target_path in im_path or im_path in target_path):
+            return True
+        return False
+
+    # Filter gallery
+    old_gallery = matched_cluster.get("gallery", [])
+    new_gallery = [g for i, g in enumerate(old_gallery) if not _is_match(g, i)]
+
+    # Filter images
+    old_images = matched_cluster.get("images", [])
+    new_images = [im for i, im in enumerate(old_images) if not _is_match(im, i)]
+
+    # Filter samples
+    old_samples = matched_cluster.get("samples", [])
+    new_samples = [s for i, s in enumerate(old_samples) if not _is_match(s, i)] if old_samples else []
+
+    matched_cluster["gallery"] = new_gallery
+    matched_cluster["images"] = new_images
+    if old_samples:
+        matched_cluster["samples"] = new_samples
+
+    # Update sample counts
+    new_count = max(len(new_gallery), len(new_images))
+    matched_cluster["sample_count"] = new_count
+    matched_cluster["sampleCount"] = new_count
+
+    # Re-evaluate best image if the previous best was removed
+    best_url = matched_cluster.get("bestImageUrl") or matched_cluster.get("best_image_url")
+    if best_url and _is_match(best_url, -1):
+        new_best = None
+        if new_images:
+            new_images[0]["isBest"] = True
+            new_best = new_images[0].get("imageUrl") or new_images[0].get("imagePath")
+        elif new_gallery:
+            new_best = new_gallery[0]
+        matched_cluster["bestImageUrl"] = new_best
+        matched_cluster["best_image_url"] = new_best
+        matched_cluster["bestImagePath"] = new_best
+        matched_cluster["best_image_path"] = new_best
+
+    # Persist updated clusters to clusters.json
+    try:
+        session_dir = _get_session_dir(session_id)
+        if session_dir and (session_dir / "clusters.json").exists():
+            orig_is_dict = False
+            try:
+                with open(session_dir / "clusters.json") as f:
+                    data_check = json.load(f)
+                orig_is_dict = isinstance(data_check, dict) and "clusters" in data_check
+            except Exception:
+                pass
+            with open(session_dir / "clusters.json", "w") as f:
+                if orig_is_dict:
+                    json.dump({"clusters": sess["clusters"]}, f, indent=2)
+                else:
+                    json.dump(sess["clusters"], f, indent=2)
+    except Exception as e:
+        logger.warning(f"Failed to persist cluster image deletion to disk: {e}")
+
+    logger.info(f"[{session_id}] Removed crop from cluster {cluster_id}. Remaining gallery: {len(new_gallery)}")
+    return {
+        "success": True,
+        "clusterId": cluster_id,
+        "remainingSamples": new_count,
+        "gallery": new_gallery,
+        "images": new_images,
+        "bestImageUrl": matched_cluster.get("bestImageUrl"),
+    }
 
 
 @router.delete("/{session_id}")

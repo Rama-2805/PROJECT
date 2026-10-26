@@ -9,7 +9,7 @@ import math
 import logging
 import cv2
 import numpy as np
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 from ..config.settings import settings
 
 logger = logging.getLogger("smartcampus.quality")
@@ -24,12 +24,27 @@ class FaceQualityService:
     def __init__(self):
         self.min_quality_score = settings.min_quality_score
 
-    def align_face(self, image: np.ndarray, landmarks: Any) -> np.ndarray:
-        """Align face to ArcFace standard 112x112 template using 5 facial landmarks."""
-        if image is None or image.size == 0:
+    def align_face(
+        self,
+        image: np.ndarray,
+        landmarks: Any,
+        full_frame: Optional[np.ndarray] = None,
+        bbox: Optional[Any] = None,
+    ) -> np.ndarray:
+        """Align face to ArcFace standard 112x112 template using 5 facial landmarks.
+        
+        Args:
+            image: Face crop or frame image.
+            landmarks: 5 facial landmarks [[x, y], ...].
+            full_frame: Optional full camera frame if available.
+            bbox: Optional [x1, y1, x2, y2] bounding box in full_frame coords.
+        """
+        if image is None or getattr(image, "size", 0) == 0:
             return image
+
+        # 1. Fallback if landmarks not provided or incomplete
         if landmarks is None or len(landmarks) < 5:
-            return cv2.resize(image, (112, 112), interpolation=cv2.INTER_AREA)
+            return cv2.resize(image, (112, 112), interpolation=cv2.INTER_LINEAR)
 
         arcface_dst = np.array([
             [38.2946, 51.6963],
@@ -40,27 +55,50 @@ class FaceQualityService:
         ], dtype=np.float32)
 
         src = np.array(landmarks, dtype=np.float32).copy()
+        eye_dist = float(np.linalg.norm(src[1] - src[0]))
+
+        # Degenerate eye distance (< 8px) or inverted eyes: clean resize
+        if eye_dist < 8.0 or src[1, 0] <= src[0, 0]:
+            return cv2.resize(image, (112, 112), interpolation=cv2.INTER_LINEAR)
+
+        # 2. Case A: full_frame is available and landmarks are in full_frame coordinates
+        # Warp directly from the full frame to avoid any border smearing artifacts
+        if full_frame is not None and getattr(full_frame, "size", 0) > 0:
+            try:
+                M, _ = cv2.estimateAffinePartial2D(src, arcface_dst, method=cv2.LMEDS)
+                if M is not None:
+                    return cv2.warpAffine(full_frame, M, (112, 112), borderMode=cv2.BORDER_REFLECT)
+            except Exception:
+                pass
+
+        # 3. Case B: Local crop.
         h, w = image.shape[:2]
+        is_global = np.any(src[:, 0] > w) or np.any(src[:, 1] > h) or np.any(src < 0)
 
-        # Check for landmark degeneracy: minimum eye separation
-        eye_dist = np.linalg.norm(src[1] - src[0])
-        if eye_dist < 6.0:
-            return cv2.resize(image, (112, 112), interpolation=cv2.INTER_AREA)
+        if is_global:
+            if bbox is not None and len(bbox) >= 4:
+                # Adjust landmarks by the true crop origin (x1, y1)
+                bx1, by1 = float(bbox[0]), float(bbox[1])
+                src[:, 0] -= bx1
+                src[:, 1] -= by1
+            else:
+                # Without full frame or true crop origin, affine warp of local crop with min_x shift
+                # severely distorts face geometry and creates artificial border streaks.
+                # Clean linear resize preserves real facial features reliably.
+                return cv2.resize(image, (112, 112), interpolation=cv2.INTER_LINEAR)
 
-        # If landmarks are in global frame coordinates while image is a local face crop,
-        # adjust landmarks so they are properly bounded inside the crop.
-        if np.any(src[:, 0] > w) or np.any(src[:, 1] > h) or np.any(src < 0):
-            min_x = float(np.min(src[:, 0]))
-            min_y = float(np.min(src[:, 1]))
-            src[:, 0] -= max(0.0, min_x)
-            src[:, 1] -= max(0.0, min_y)
+        # If eye distance in the local crop is small (< 14px), affine warp with scale factor > 2.5
+        # causes border replicate streaks across most of the 112x112 canvas.
+        # Direct clean linear resize preserves genuine facial features.
+        eye_dist_crop = float(np.linalg.norm(src[1] - src[0]))
+        if eye_dist_crop < 14.0 or w < 48 or h < 48:
+            return cv2.resize(image, (112, 112), interpolation=cv2.INTER_LINEAR)
 
         M, _ = cv2.estimateAffinePartial2D(src, arcface_dst, method=cv2.LMEDS)
         if M is None:
-            return cv2.resize(image, (112, 112), interpolation=cv2.INTER_AREA)
+            return cv2.resize(image, (112, 112), interpolation=cv2.INTER_LINEAR)
 
-        aligned = cv2.warpAffine(image, M, (112, 112), borderMode=cv2.BORDER_REPLICATE)
-        return aligned
+        return cv2.warpAffine(image, M, (112, 112), borderMode=cv2.BORDER_REFLECT)
 
     def estimate_pose_from_landmarks(self, landmarks: np.ndarray) -> Tuple[float, float, float]:
         """Estimate pitch, yaw, and roll from 5 facial landmarks as a fallback.

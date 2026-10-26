@@ -42,7 +42,27 @@ if (commandExists('docker')) {
     execSync('docker compose -f docker-compose.dev.yml up -d', { cwd: rootDir, stdio: 'inherit' });
     console.log("✅ Docker containers running and healthy.\n");
   } catch (dockerError) {
-    console.warn("⚠️ Failed to start Docker services automatically. Ensure PostgreSQL and Redis are running locally.\n");
+    if (process.platform === 'darwin' && fs.existsSync('/Applications/Docker.app')) {
+      console.log("🐳 Docker daemon not reachable. Launching Docker Desktop...");
+      try {
+        execSync('open -a Docker', { stdio: 'ignore' });
+        console.log("⏳ Waiting for Docker daemon to initialize...");
+        for (let i = 0; i < 30; i++) {
+          try {
+            execSync('docker info', { stdio: 'ignore' });
+            break;
+          } catch (e) {
+            execSync('sleep 2');
+          }
+        }
+        execSync('docker compose -f docker-compose.dev.yml up -d', { cwd: rootDir, stdio: 'inherit' });
+        console.log("✅ Docker containers running and healthy.\n");
+      } catch (launchErr) {
+        console.warn("⚠️ Failed to start Docker services automatically. Ensure PostgreSQL and Redis are running locally.\n");
+      }
+    } else {
+      console.warn("⚠️ Failed to start Docker services automatically. Ensure PostgreSQL and Redis are running locally.\n");
+    }
   }
 } else {
   console.log("⚠️ Docker not found. Skipping docker-compose. Please start PostgreSQL and Redis locally.\n");

@@ -148,9 +148,9 @@ class MediaPipeFaceQuality:
                     pass
 
         # 4. Pose Angle Limits
-        max_yaw = getattr(settings, "max_yaw", 35.0)
-        max_pitch = getattr(settings, "max_pitch", 30.0)
-        max_roll = getattr(settings, "max_roll", 30.0)
+        max_yaw = getattr(settings, "max_yaw", 40.0)
+        max_pitch = getattr(settings, "max_pitch", 35.0)
+        max_roll = getattr(settings, "max_roll", 35.0)
 
         is_pose_acceptable = (
             abs(yaw) <= max_yaw and
@@ -159,26 +159,22 @@ class MediaPipeFaceQuality:
         )
 
         # 5. Composite Quality Score Calculation (0.0 to 1.0)
-        # Size score: normalized for upscaled crops (max at 64px or above)
-        size_score = min(1.0, (w * h) / (64.0 * 64.0))
-        # Sharpness score (normalized at 25.0 for small crops)
-        sharp_score = min(1.0, sharpness / 25.0)
+        # Size score: normalized for classroom crops (target 40px or above)
+        size_score = min(1.0, (w * h) / (40.0 * 40.0))
+        # Sharpness score (normalized at 20.0 for small crops)
+        sharp_score = min(1.0, sharpness / 20.0)
         # Brightness score (ideal around 128)
         bright_score = 1.0 - abs(brightness - 128.0) / 128.0
         bright_score = max(0.0, min(1.0, bright_score))
         
-        # If landmarks were detected, compute pose score; if FaceMesh is active but found no landmarks,
-        # do NOT reward zero angles as a perfect frontal face.
+        # If landmarks were detected, compute pose score; if FaceMesh found no landmarks on a small
+        # classroom crop, fall back to robust multi-factor OpenCV scoring rather than rejecting the face.
         if landmark_detected:
             pose_penalty = (abs(yaw) / 45.0 + abs(pitch) / 35.0 + abs(roll) / 35.0) / 3.0
             pose_score = max(0.0, 1.0 - pose_penalty)
             lm_score = 1.0
-        elif self._face_mesh is not None:
-            # FaceMesh ran on the crop and confirmed NO facial landmarks exist
-            pose_score = 0.0
-            lm_score = 0.0
         else:
-            # Fallback when mediapipe library is completely uninstalled/disabled
+            # Fallback for far/back-row classroom faces where dense 468 mesh is not detected
             pose_score = 0.70
             lm_score = 0.50
 
@@ -192,11 +188,9 @@ class MediaPipeFaceQuality:
         )
 
         rejection_reason = None
-        if self._face_mesh is not None and not landmark_detected:
-            rejection_reason = "no_face_landmarks_detected"
-        elif not is_pose_acceptable:
+        if landmark_detected and not is_pose_acceptable:
             rejection_reason = f"pose_angle_exceeded_y{yaw:.1f}_p{pitch:.1f}_r{roll:.1f}"
-        elif overall_quality_score < getattr(settings, "min_track_quality", 0.35):
+        elif overall_quality_score < getattr(settings, "min_track_quality", 0.30):
             rejection_reason = f"quality_below_threshold_{overall_quality_score:.2f}"
 
         is_acceptable = (rejection_reason is None)
@@ -237,14 +231,14 @@ class MediaPipeFaceQuality:
                 (landmarks[291].x * img_w, landmarks[291].y * img_h), # Right mouth corner
             ], dtype=np.float64)
 
-            # Generic 3D model points (in mm)
+            # Generic 3D model points (in mm) matching image coordinates (Y points downwards: chin > nose, eyes < nose)
             model_points = np.array([
                 (0.0, 0.0, 0.0),             # Nose tip
-                (0.0, -330.0, -65.0),        # Chin
-                (-225.0, 170.0, -135.0),     # Left eye left corner
-                (225.0, 170.0, -135.0),      # Right eye right corner
-                (-150.0, -150.0, -125.0),    # Left mouth corner
-                (150.0, -150.0, -125.0)      # Right mouth corner
+                (0.0, 330.0, -65.0),         # Chin (below nose in image coordinates: positive Y)
+                (-225.0, -170.0, -135.0),    # Left eye left corner (above nose: negative Y)
+                (225.0, -170.0, -135.0),     # Right eye right corner (above nose: negative Y)
+                (-150.0, 150.0, -125.0),     # Left mouth corner (below nose: positive Y)
+                (150.0, 150.0, -125.0)       # Right mouth corner (below nose: positive Y)
             ], dtype=np.float64)
 
             focal_length = img_w
@@ -266,7 +260,15 @@ class MediaPipeFaceQuality:
             rmat, _ = cv2.Rodrigues(rotation_vector)
             angles, _, _, _, _, _ = cv2.RQDecomp3x3(rmat)
 
-            pitch, yaw, roll = angles[0], angles[1], angles[2]
+            pitch_raw, yaw_raw, roll_raw = angles[0], angles[1], angles[2]
+            # Normalize Euler angle ambiguity from RQDecomp3x3 to forward-upright orientation
+            pitch = min(abs(pitch_raw), abs(abs(pitch_raw) - 180.0))
+            if pitch_raw < 0:
+                pitch = -pitch
+            roll = min(abs(roll_raw), abs(abs(roll_raw) - 180.0))
+            if roll_raw < 0:
+                roll = -roll
+            yaw = float(yaw_raw)
             return float(yaw), float(pitch), float(roll)
         except Exception:
             return 0.0, 0.0, 0.0

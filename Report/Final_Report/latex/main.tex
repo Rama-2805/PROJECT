@@ -1,0 +1,75 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in,left=1.25in,top=1in,includefoot]{geometry}
+\usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{calc}
+\usetikzlibrary{calc}
+\usepackage{background}
+\usepackage{setspace}
+\usepackage{ragged2e}
+\usepackage{fancyhdr}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{cite}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{tfrupee}
+\usepackage[colorlinks=true,linkcolor=black,citecolor=blue,urlcolor=blue]{hyperref}
+
+% Running Headers and Footers matching Sample Report
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\textit{SmartCampus AI}}
+\fancyhead[R]{}
+\fancyfoot[L]{Dept. of CSE, Vemana IT}
+\fancyfoot[C]{\thepage}
+\fancyfoot[R]{2026-27}
+\renewcommand{\headrulewidth}{0.5pt}
+\renewcommand{\footrulewidth}{1pt}
+
+% Section Numbering Depth
+\setcounter{secnumdepth}{3}
+\setcounter{tocdepth}{3}
+
+\sloppy
+
+\begin{document}
+
+% ---------------- FRONT MATTER ----------------
+\input{frontmatter/cover}
+\input{frontmatter/certificate}
+\input{frontmatter/abstract}
+\input{frontmatter/declaration}
+\input{frontmatter/acknowledgment}
+\input{frontmatter/toc}
+
+% ---------------- MAIN CHAPTERS ----------------
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+\input{chapters/ch1_introduction}
+\input{chapters/ch2_literature_survey}
+\input{chapters/ch3_system_analysis}
+\input{chapters/ch4_system_requirements}
+\input{chapters/ch5_project_description}
+\input{chapters/ch6_system_implementation}
+\input{chapters/ch7_system_testing}
+\input{chapters/ch8_conclusion_future_scope}
+
+% ---------------- REFERENCES ----------------
+\newpage
+\begin{center}
+{\fontsize{16pt}{16pt}\selectfont \textbf{REFERENCES}}\\[4mm]
+\end{center}
+\addcontentsline{toc}{section}{REFERENCES}
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+% ---------------- APPENDIX ----------------
+\input{chapters/appendix}
+
+\end{document}

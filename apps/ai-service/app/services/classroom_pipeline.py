@@ -817,16 +817,18 @@ class ClassroomPipeline:
         t_q_start = time.time()
         for track in active_tracks:
             # Skip expensive crop extraction & MediaPipe evaluation if track already has 5 samples
-            # or if track has reached max quality evaluation attempts (e.g. 15 attempts)
+            # or if track has reached max quality evaluation attempts (e.g. 100 attempts)
             if len(track.selected_samples) >= getattr(settings, "max_samples_per_track", 5):
                 continue
-            if getattr(track, "quality_eval_attempts", 0) >= getattr(settings, "max_quality_attempts_per_track", 15):
+            if getattr(track, "quality_eval_attempts", 0) >= getattr(settings, "max_quality_attempts_per_track", 100):
                 continue
 
             bx1, by1, bx2, by2 = [int(v) for v in track.bbox]
             crop_w, crop_h = max(0, bx2 - bx1), max(0, by2 - by1)
 
-            if crop_w < 32 or crop_h < 32:
+            min_w = getattr(settings, "min_face_width", 16)
+            min_h = getattr(settings, "min_face_height", 16)
+            if crop_w < min_w or crop_h < min_h:
                 self.quality_rejected += 1
                 self.rejection_reasons["too_small"] += 1
                 continue
@@ -841,7 +843,7 @@ class ClassroomPipeline:
             # Proportional Margin with Square Aspect Ratio Preservation
             cx, cy = (bx1 + bx2) / 2.0, (by1 + by2) / 2.0
             margin_factor = 1.3
-            side = max(int(max(crop_w, crop_h) * margin_factor), 40)
+            side = max(int(max(crop_w, crop_h) * margin_factor), 32)
             half_s = side / 2.0
 
             # Shift center so the square stays strictly within image boundaries
@@ -860,7 +862,7 @@ class ClassroomPipeline:
             ey2 = min(h, int(round(cy + half_s)))
 
             crop = frame[ey1:ey2, ex1:ex2].copy()
-            if crop.size == 0 or crop.shape[0] < 32 or crop.shape[1] < 32:
+            if crop.size == 0 or crop.shape[0] < min_h or crop.shape[1] < min_w:
                 continue
 
             # Reject blank white or low-texture crops
@@ -899,7 +901,12 @@ class ClassroomPipeline:
 
             # Extract ArcFace 512D Embedding for accepted quality crop
             try:
-                emb = embedding_service.generate_embedding(crop, sample_dict.get("landmarks"))
+                emb = embedding_service.generate_embedding(
+                    crop,
+                    sample_dict.get("landmarks"),
+                    full_frame=frame,
+                    bbox=[ex1, ey1, ex2, ey2]
+                )
                 if emb is not None and isinstance(emb, np.ndarray) and emb.shape == (512,):
                     emb_norm = float(np.linalg.norm(emb))
                     if abs(emb_norm - 1.0) <= 0.15:
@@ -1525,22 +1532,23 @@ class ClassroomPipeline:
                     if grp_sims:
                         min_sim = min(grp_sims)
 
-                if not (tr_usn and grp_usn and tr_usn == grp_usn) and min_sim < 0.70:
+                # Strict biometric purity: never merge tracks without strong facial similarity
+                if min_sim < 0.78:
                     continue
 
                 is_merge = False
                 score = 0.0
 
-                # Merge Rule 1: Same enrolled student USN
-                if tr_usn and grp_usn and tr_usn == grp_usn:
+                # Merge Rule 1: Same enrolled student USN (requires confirmed facial similarity)
+                if tr_usn and grp_usn and tr_usn == grp_usn and sim >= 0.82 and min_sim >= 0.78:
                     is_merge = True
                     score = 10.0 + sim
-                # Merge Rule 2: Same seated desk anchor (<= 30px) + compatible face (sim >= 0.74, min_sim >= 0.70)
-                elif is_valid_seat and seat_dist <= 30.0 and sim >= 0.74 and min_sim >= 0.70:
+                # Merge Rule 2: Same seated desk anchor (<= 30px) + compatible face (sim >= 0.80, min_sim >= 0.78)
+                elif is_valid_seat and seat_dist <= 30.0 and sim >= 0.80 and min_sim >= 0.78:
                     is_merge = True
                     score = 5.0 + sim + (1.0 - seat_dist / 30.0)
-                # Merge Rule 3: Definite ArcFace identity match (sim >= 0.80, min_sim >= 0.72)
-                elif sim >= 0.80 and min_sim >= 0.72:
+                # Merge Rule 3: Definite ArcFace identity match (sim >= 0.84, min_sim >= 0.80)
+                elif sim >= 0.84 and min_sim >= 0.80:
                     is_merge = True
                     score = 3.0 + sim
 
@@ -1918,7 +1926,7 @@ class ClassroomPipeline:
                 for tr in s_tracks:
                     placed = False
                     for sc in sub_clusters:
-                        if all(float(np.dot(tr["centroid"], m["centroid"])) >= 0.78 for m in sc):
+                        if all(float(np.dot(tr["centroid"], m["centroid"])) >= 0.92 for m in sc):
                             sc.append(tr)
                             placed = True
                             break
@@ -2051,8 +2059,8 @@ class ClassroomPipeline:
 
                     same_enrolled = bool(faiss_a and faiss_b and faiss_a[0] == faiss_b[0])
 
-                    # Fast pre-filter: Strict biometric similarity gate
-                    if not same_enrolled and not same_seat and c_sim < 0.74:
+                    # Fast pre-filter: Strict biometric similarity gate (must look alike)
+                    if c_sim < 0.78:
                         continue
 
                     merge_attempts_count += 1
@@ -2069,7 +2077,7 @@ class ClassroomPipeline:
                     ]
                     min_track_sim = min(track_sims) if track_sims else c_sim
 
-                    if not same_enrolled and min_track_sim < 0.70:
+                    if min_track_sim < 0.75:
                         merge_rejected_internal_inconsistency += 1
                         incompatible_pairs.add(pair_key)
                         merge_decisions_log.append({
@@ -2079,7 +2087,7 @@ class ClassroomPipeline:
                             "representative_similarity": round(r_sim, 3),
                             "min_track_similarity": round(min_track_sim, 3),
                             "decision": "REJECT",
-                            "reason": f"Internal track inconsistency ({min_track_sim:.3f} < 0.700)"
+                            "reason": f"Internal track inconsistency ({min_track_sim:.3f} < 0.750)"
                         })
                         continue
 
@@ -2098,24 +2106,24 @@ class ClassroomPipeline:
                     supporting_pairs_80 = sum(1 for s in cross_sims if s >= 0.80)
 
                     # Multi-Evidence Merge Rules:
-                    # Rule 1: Same enrolled student identity (both match same USN >= 0.60 in FAISS)
-                    is_enrolled_merge = bool(same_enrolled and min_track_sim >= 0.68)
+                    # Rule 1: Same enrolled student identity (both match same USN in FAISS with high mutual similarity)
+                    is_enrolled_merge = bool(same_enrolled and c_sim >= 0.90 and min_track_sim >= 0.88)
 
-                    # Rule 2: Physical desk continuity (tight desk anchor <= 35px, high appearance sim)
-                    is_seat_merge = bool(same_seat and min_track_sim >= 0.70)
+                    # Rule 2: Physical desk continuity (tight desk anchor <= 25px, extremely high appearance sim)
+                    is_seat_merge = bool(same_seat and c_sim >= 0.92 and min_track_sim >= 0.88 and seat_dist <= 25.0)
 
-                    # Rule 3: Direct Appearance Cosine Merge (Must have high confidence evidence)
+                    # Rule 3: Direct Appearance Cosine Merge (Must have overwhelming biometric evidence)
                     is_appearance_merge = (
-                        c_sim >= 0.78 and
-                        r_sim >= 0.74 and
-                        min_track_sim >= 0.72
+                        c_sim >= 0.92 and
+                        r_sim >= 0.90 and
+                        min_track_sim >= 0.90
                     )
 
                     # Rule 4: High-confidence multi-sample match
                     is_multi_sample_merge = (
-                        c_sim >= 0.76 and
-                        supporting_pairs_80 >= 2 and
-                        min_track_sim >= 0.70
+                        c_sim >= 0.92 and
+                        supporting_pairs_80 >= 4 and
+                        min_track_sim >= 0.90
                     )
 
                     if not (is_enrolled_merge or is_seat_merge or is_appearance_merge or is_multi_sample_merge):
@@ -2213,7 +2221,7 @@ class ClassroomPipeline:
                 if has_internal_overlap:
                     break
 
-            if min_pw >= 0.85 or (min_pw >= 0.72 and not has_internal_overlap):
+            if min_pw >= 0.85 or (min_pw >= 0.78 and not has_internal_overlap):
                 purified_candidate_groups.append(cg)
                 continue
 
@@ -2234,7 +2242,7 @@ class ClassroomPipeline:
                     compatible = True
                     for m in sc:
                         sim = float(np.dot(tr["centroid"], m["centroid"]))
-                        if sim < 0.72:
+                        if sim < 0.78:
                             compatible = False
                             break
                         if (tr["last_seen"] > 0 and m["last_seen"] > 0) and sim < 0.85:
@@ -2266,28 +2274,9 @@ class ClassroomPipeline:
                     "last_seen": max(tr["last_seen"] for tr in sc_tracks),
                 })
 
+        # Candidate groups are strictly preserved as purified pure identity groups.
+        # Zero unconfirmed cross-track grouping is performed without strict biometric verification.
         candidate_groups = purified_candidate_groups
-
-        # ── Step 4.6: Merge Candidate Groups Matching the Same Enrolled Student ──
-        usn_map = {}
-        merged_groups = []
-        for cg in candidate_groups:
-            f_match = faiss_service.search_face(cg["centroid"], threshold=0.58)
-            usn = f_match[0] if f_match else None
-            if usn and usn in usn_map:
-                existing_cg = usn_map[usn]
-                existing_cg["member_tracks"].extend(cg["member_tracks"])
-                all_c = [tr["centroid"] for tr in existing_cg["member_tracks"]]
-                new_mean = np.mean(all_c, axis=0)
-                norm_c = float(np.linalg.norm(new_mean))
-                existing_cg["centroid"] = (new_mean / norm_c if norm_c > 0.1 else all_c[0]).astype(np.float32)
-                existing_cg["quality_max"] = max(existing_cg["quality_max"], cg["quality_max"])
-            else:
-                if usn:
-                    usn_map[usn] = cg
-                merged_groups.append(cg)
-
-        candidate_groups = merged_groups
 
         # ── Step 4.7: Bound Candidate Groups Strictly to Classroom Seating Capacity ──
         MAX_CLASSROOM_CAPACITY = getattr(settings, "max_classroom_capacity", 64)

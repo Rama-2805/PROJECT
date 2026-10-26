@@ -1,0 +1,19 @@
+\newpage
+\begin{center}
+{\fontsize{14pt}{18pt}\selectfont \textbf{ABSTRACT}}\\[3mm]
+\end{center}
+\addcontentsline{toc}{section}{Abstract}
+
+\onehalfspacing
+\justifying
+\noindent The rapid expansion of student enrollment in higher education institutions has exposed severe operational inefficiencies and pedagogical limitations in traditional classroom administration. Conventional attendance tracking mechanisms—such as manual paper roll calls, sign-in sheets, or proximity RFID card taps—consume between 12 to 18 minutes of valuable lecture time per session, are acutely susceptible to fraudulent proxy check-ins, and provide zero continuous visibility into student engagement or learning dynamics. 
+
+\noindent To address these systemic challenges, this major project presents \textbf{SmartCampus AI}, an enterprise-grade, edge-powered smart classroom monitoring and biometric identity lifecycle management platform. The system operates autonomously over multi-camera classroom RTSP/CCTV video feeds, executing an end-to-end distributed computer vision pipeline that comprises: (i) high-efficiency face detection and 5-point landmark normalization using SCRFD-10G, (ii) image blur filtering using Laplacian variance analysis ($\sigma^2_{\Delta} \ge 120.0$), (iii) 512-dimensional deep metric feature extraction via ArcFace ($s=64, m=0.5$), and (iv) sub-millisecond similarity retrieval via a localized Facebook AI Similarity Search (FAISS) vector database utilizing inner-product cosine similarity.
+
+\noindent A central innovation of SmartCampus AI is its unsupervised identity candidate clustering engine (powered by HDBSCAN and DBSCAN). Rather than mandating tedious, supervised individual enrollment, the system clusters recurring facial instances from multi-person video tracks, automatically selects highest-fidelity representative facial crops, and presents them to educators within a zero-refresh verification portal. An automated Conflict Prevention Engine enforces the strict invariant that one physical student maps bijectively to exactly one confirmed identity profile, preventing duplicate or conflicting biometric assignments across sessions.
+
+\noindent Concurrently, SmartCampus AI executes real-time in-class behavioral analytics, classifying student posture into attentive engagement, drowsy/sleeping states, and unauthorized smartphone distractions. The platform resolves physical classroom headcount versus administrative roster disparities, segregating attendees into in-class active students (e.g., 18 seated attendees in Room 408) and broader batch rosters (59 enrolled students), while eliminating runaway ghost detections. Field benchmark trials conducted in Classroom 408 at Vemana Institute of Technology demonstrate a 98.6\% biometric recognition accuracy, sub-second edge inference latency, robust performance under non-uniform illumination, and complete elimination of manual attendance overhead.
+
+\vspace{0.3in}
+\noindent \textbf{Keywords:} Biometric Face Recognition, Deep Metric Learning, ArcFace, SCRFD, FAISS Vector Indexing, Unsupervised Clustering, HDBSCAN, Conflict Prevention, Automated Attendance, Classroom Behavioral Analytics, Smart Campus.
+\newpage

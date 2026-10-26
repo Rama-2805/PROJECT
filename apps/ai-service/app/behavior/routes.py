@@ -29,7 +29,7 @@ class StartBehaviorSessionRequest(BaseModel):
 
 
 class StopBehaviorSessionRequest(BaseModel):
-    camera_id: str = Field(..., description="Camera identifier to stop.")
+    camera_id: Optional[str] = Field(None, description="Camera identifier to stop (or omit to stop all).")
 
 
 @router.post("/session/start")
@@ -71,14 +71,13 @@ def start_behavior_session(req: StartBehaviorSessionRequest):
 
 
 @router.post("/session/stop")
-def stop_behavior_session(req: StopBehaviorSessionRequest):
+def stop_behavior_session(req: Optional[StopBehaviorSessionRequest] = None):
     """Stop behavioural monitoring and resolve any open behavioural events."""
     from ..services.attendance_engine import attendance_engine
 
-    stopped = attendance_engine.stop_behavior_session(req.camera_id)
-    if not stopped:
-        raise HTTPException(status_code=404, detail="No active behavioral session for this camera.")
-    return {"status": "success", "mode": "behavior", "camera_id": req.camera_id, "message": "Behavioral monitoring stopped."}
+    cam_id = req.camera_id if req else None
+    attendance_engine.stop_behavior_session(cam_id)
+    return {"status": "success", "mode": "behavior", "message": "Behavioral monitoring stopped."}
 
 
 @router.get("/session/status")

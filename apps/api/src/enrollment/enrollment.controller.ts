@@ -97,6 +97,15 @@ export class EnrollmentController {
     return this.enrollment.deleteCluster(id);
   }
 
+  @Delete("clusters/:id/images")
+  @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
+  deleteClusterImage(
+    @Param("id") id: string,
+    @Body() dto: { imageId?: string; imageUrl?: string; imagePath?: string },
+  ) {
+    return this.enrollment.deleteClusterImage(id, dto);
+  }
+
   @Post("manual")
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN, RoleName.TEACHER)
   manualEnroll(@Body() dto: ManualEnrollmentDto) {

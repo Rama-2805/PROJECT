@@ -452,6 +452,7 @@ export default function LiveMonitoringPage() {
   // Attendance Roster Filters
   const [attendanceRosterFilter, setAttendanceRosterFilter] = useState<"ALL" | "PRESENT" | "ABSENT">("ALL");
   const [attendanceSearch, setAttendanceSearch] = useState("");
+  const [sessionPresentUsns, setSessionPresentUsns] = useState<Set<string>>(new Set());
   const [manualPresentUsns, setManualPresentUsns] = useState<Set<string>>(new Set());
   const [manualAbsentUsns, setManualAbsentUsns] = useState<Set<string>>(new Set());
 
@@ -578,9 +579,9 @@ export default function LiveMonitoringPage() {
   useEffect(() => {
     if (!sessionActive) return;
 
-    const wsHost = typeof window !== "undefined" ? window.location.host : "localhost:3000";
     const wsProto = typeof window !== "undefined" && window.location.protocol === "https:" ? "wss" : "ws";
-    const wsUrl = process.env.NEXT_PUBLIC_AI_WS_URL || `${wsProto}://${wsHost}/api/v1/ws`;
+    const aiWsHost = typeof window !== "undefined" ? `${window.location.hostname}:8000` : "localhost:8000";
+    const wsUrl = process.env.NEXT_PUBLIC_AI_WS_URL || `${wsProto}://${aiWsHost}/api/v1/ws`;
     let socket: WebSocket | null = null;
     try {
       socket = new WebSocket(wsUrl);
@@ -603,16 +604,19 @@ export default function LiveMonitoringPage() {
             const sTime = eventData.time || new Date().toLocaleTimeString();
 
             if (sUsn) {
+              const cleanUsn = sUsn.trim().toUpperCase();
+              setSessionPresentUsns((prev) => new Set(prev).add(cleanUsn));
+
               const newEvent: LiveAttendanceEvent = {
                 id: `att_${Date.now()}_${Math.random()}`,
                 type: "ATTENDANCE_DETECTED",
-                studentId: sUsn,
+                studentId: cleanUsn,
                 studentName: sName,
                 confidence: sConf,
                 time: sTime,
               };
 
-              setAttendanceEvents((prev) => [newEvent, ...prev.filter((e) => e.studentId !== sUsn)].slice(0, 50));
+              setAttendanceEvents((prev) => [newEvent, ...prev.filter((e) => e.studentId !== cleanUsn)].slice(0, 50));
             }
           } else if (eventType === "UNKNOWN_FACE") {
             const clusterId = eventData.cluster_id || eventData.id || "unknown_visitor";
@@ -929,19 +933,43 @@ export default function LiveMonitoringPage() {
 
           if (unresolved.length > 0) {
             setAttendanceEvents((prev) => {
-              const existingIds = new Set(prev.map((e) => e.studentId));
-              const newUnknownEvents: LiveAttendanceEvent[] = unresolved
-                .filter((u: any) => !existingIds.has(u.cluster_id || `unk_${u.id}`))
-                .map((u: any) => ({
-                  id: `unk_${u.id}`,
+              const existingEventIds = new Set(prev.map((e) => e.id));
+              const existingStudentIds = new Set(prev.map((e) => e.studentId));
+              const seenThisBatch = new Set<string>();
+
+              const newUnknownEvents: LiveAttendanceEvent[] = [];
+              for (const u of unresolved) {
+                const eventId = `unk_${u.id}`;
+                const trackRef = u.cluster_id ? `Track ${u.cluster_id}` : `Track ${u.id}`;
+                if (
+                  existingEventIds.has(eventId) ||
+                  existingStudentIds.has(trackRef) ||
+                  (u.cluster_id && existingStudentIds.has(u.cluster_id)) ||
+                  seenThisBatch.has(eventId) ||
+                  seenThisBatch.has(trackRef)
+                ) {
+                  continue;
+                }
+                seenThisBatch.add(eventId);
+                seenThisBatch.add(trackRef);
+                newUnknownEvents.push({
+                  id: eventId,
                   type: "UNKNOWN_PERSON",
-                  studentId: u.cluster_id ? `Track ${u.cluster_id}` : `Track ${u.id}`,
+                  studentId: trackRef,
                   studentName: "UNKNOWN",
                   faceImageUrl: u.preview_image || u.image_path || u.thumbnail || undefined,
                   confidence: u.quality_score ? u.quality_score / 100 : 0.85,
                   time: u.detected_at ? new Date(u.detected_at).toLocaleTimeString() : new Date().toLocaleTimeString(),
-                }));
-              return [...newUnknownEvents, ...prev].slice(0, 50);
+                });
+              }
+
+              if (newUnknownEvents.length === 0) return prev;
+
+              const newIds = new Set(newUnknownEvents.map((e) => e.id));
+              const newStudentIds = new Set(newUnknownEvents.map((e) => e.studentId));
+              const filteredPrev = prev.filter((e) => !newIds.has(e.id) && !newStudentIds.has(e.studentId));
+
+              return [...newUnknownEvents, ...filteredPrev].slice(0, 50);
             });
           }
         }
@@ -965,26 +993,111 @@ export default function LiveMonitoringPage() {
     return `${h}:${m}:${s}`;
   };
 
-  // Filter students for the currently selected class section
+  // Filter students for the currently selected class section (strictly enrolled students, never anonymous tracks)
   const sectionStudents = useMemo(() => {
-    const all = Object.values(studentBehaviors);
+    const all = Object.values(studentBehaviors).filter(
+      (s) =>
+        s.is_verified_identity !== false &&
+        !s.usn.startsWith("TRACK") &&
+        !s.usn.startsWith("TRK-") &&
+        !s.usn.startsWith("track_")
+    );
     if (!selectedClass) return all;
     return all.filter((s) => s.section === selectedClass.section);
   }, [studentBehaviors, selectedClass]);
 
-  // Verified present student USNs from live recognition and manual check-ins
+  // Synchronize live attendance status strictly from active camera session
+  useEffect(() => {
+    let isMounted = true;
+    async function syncActiveSessionAttendance() {
+      // If no session is active, live presence is 0
+      if (!sessionActive) {
+        if (isMounted) {
+          setSessionPresentUsns(new Set());
+          setAttendanceEvents([]);
+        }
+        return;
+      }
+
+      try {
+        const res = await fetch("/api/v1/attendance/live-session-status");
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && data.status === "success") {
+            const marked: string[] = (data.marked_students || []).map((u: string) => String(u).trim().toUpperCase());
+            const recognized = data.recognized_students || {};
+            const activeUsns = new Set<string>([...marked, ...Object.keys(recognized).map((u) => u.trim().toUpperCase())]);
+
+            // Filter strictly to current section students
+            const secUsns = new Set(sectionStudents.map((s) => s.usn.toUpperCase()));
+            const validUsns = Array.from(activeUsns).filter((u) => secUsns.has(u));
+
+            setSessionPresentUsns((prev) => {
+              const next = new Set(prev);
+              validUsns.forEach((u) => next.add(u));
+              return next;
+            });
+
+            const newEvents: LiveAttendanceEvent[] = validUsns.map((u) => {
+              const info = recognized[u] || {};
+              const st = sectionStudents.find((s) => s.usn.toUpperCase() === u);
+              return {
+                id: `live_${u}`,
+                type: "ATTENDANCE_DETECTED",
+                studentId: u,
+                studentName: st?.name || info.name || u,
+                confidence: info.confidence || 0.95,
+                time: info.time || new Date().toLocaleTimeString(),
+              };
+            });
+
+            if (newEvents.length > 0) {
+              setAttendanceEvents((prev) => {
+                const existingIds = new Set(prev.map((e) => e.studentId));
+                const filtered = newEvents.filter((e) => !existingIds.has(e.studentId));
+                return [...filtered, ...prev].slice(0, 50);
+              });
+            }
+          }
+        }
+      } catch (err) {
+        // Non-blocking live status sync
+      }
+    }
+
+    syncActiveSessionAttendance();
+    const interval = setInterval(syncActiveSessionAttendance, 2500);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [sessionActive, sectionStudents]);
+
+  // Verified present student USNs from live recognition and manual check-ins (Monotonic Guarantee)
   const verifiedPresentUsns = useMemo(() => {
     const set = new Set<string>();
+    sessionPresentUsns.forEach((usn) => {
+      const u = usn.toUpperCase();
+      if (!manualAbsentUsns.has(u)) {
+        set.add(u);
+      }
+    });
     attendanceEvents.forEach((e) => {
       if ((e.type === "ATTENDANCE_DETECTED" || e.type === "MANUAL_CHECKIN") && e.studentId) {
-        if (!manualAbsentUsns.has(e.studentId)) {
-          set.add(e.studentId.toUpperCase());
+        const u = e.studentId.toUpperCase();
+        if (!manualAbsentUsns.has(u)) {
+          set.add(u);
         }
       }
     });
-    manualPresentUsns.forEach((usn) => set.add(usn.toUpperCase()));
+    manualPresentUsns.forEach((usn) => {
+      const u = usn.toUpperCase();
+      if (!manualAbsentUsns.has(u)) {
+        set.add(u);
+      }
+    });
     return set;
-  }, [attendanceEvents, manualAbsentUsns, manualPresentUsns]);
+  }, [sessionPresentUsns, attendanceEvents, manualAbsentUsns, manualPresentUsns]);
 
   // Attendance verification logic: strictly only enrolled students recognized or explicitly checked-in
   const isStudentPresent = useCallback((usn: string) => {
@@ -1036,33 +1149,40 @@ export default function LiveMonitoringPage() {
   }, [sectionStudents, attendancePresentList, attendanceAbsentList, attendanceRosterFilter, attendanceSearch]);
 
   const handleToggleStudentAttendance = useCallback((usn: string) => {
-    const currentlyPresent = isStudentPresent(usn);
+    const cleanUsn = usn.trim().toUpperCase();
+    const currentlyPresent = isStudentPresent(cleanUsn);
     if (currentlyPresent) {
-      setManualPresentUsns((prev) => {
+      setSessionPresentUsns((prev) => {
         const next = new Set(prev);
-        next.delete(usn);
+        next.delete(cleanUsn);
         return next;
       });
-      setManualAbsentUsns((prev) => new Set(prev).add(usn));
-      setControlToast(`Marked ${usn} as ABSENT`);
+      setManualPresentUsns((prev) => {
+        const next = new Set(prev);
+        next.delete(cleanUsn);
+        return next;
+      });
+      setManualAbsentUsns((prev) => new Set(prev).add(cleanUsn));
+      setControlToast(`Marked ${cleanUsn} as ABSENT`);
     } else {
       setManualAbsentUsns((prev) => {
         const next = new Set(prev);
-        next.delete(usn);
+        next.delete(cleanUsn);
         return next;
       });
-      setManualPresentUsns((prev) => new Set(prev).add(usn));
-      const st = sectionStudents.find((s) => s.usn === usn);
+      setManualPresentUsns((prev) => new Set(prev).add(cleanUsn));
+      setSessionPresentUsns((prev) => new Set(prev).add(cleanUsn));
+      const st = sectionStudents.find((s) => s.usn.toUpperCase() === cleanUsn);
       const manualEvent: LiveAttendanceEvent = {
         id: `manual_${Date.now()}`,
         type: "MANUAL_CHECKIN",
-        studentId: usn,
-        studentName: st?.name || usn,
+        studentId: cleanUsn,
+        studentName: st?.name || cleanUsn,
         confidence: 1.0,
         time: new Date().toLocaleTimeString(),
       };
       setAttendanceEvents((prev) => [manualEvent, ...prev].slice(0, 50));
-      setControlToast(`Marked ${st?.name || usn} as PRESENT (Verified)`);
+      setControlToast(`Marked ${st?.name || cleanUsn} as PRESENT (Verified)`);
     }
     setTimeout(() => setControlToast(null), 2500);
   }, [isStudentPresent, sectionStudents]);
@@ -1166,6 +1286,13 @@ export default function LiveMonitoringPage() {
 
     try {
       if (!sessionActive) {
+        // Clean session initialization: start fresh from 0 for the new session
+        setSessionPresentUsns(new Set());
+        setAttendanceEvents([]);
+        setManualPresentUsns(new Set());
+        setManualAbsentUsns(new Set());
+        setSessionDuration(0);
+
         // Trigger start session endpoint
         const res = await fetch(startUrl, {
           method: "POST",
@@ -1185,21 +1312,36 @@ export default function LiveMonitoringPage() {
           console.warn("Session start response not OK:", res.status);
         }
 
-        setSessionDuration(0);
         setSessionActive(true);
         setStreamKey(Date.now());
         setControlToast(isBehavior ? "Behavioral monitoring session started" : "Attendance session started");
       } else {
-        await fetch(stopUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "x-api-key": "sc-internal-service-key-dev-only",
-          },
-          body: JSON.stringify({ camera_id: activeCameraId }),
-        }).catch(() => null);
+        await Promise.allSettled([
+          fetch("/api/v1/attendance/session/stop", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": "sc-internal-service-key-dev-only",
+            },
+            body: JSON.stringify({ camera_id: activeCameraId }),
+          }),
+          fetch("/api/v1/behavior/session/stop", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": "sc-internal-service-key-dev-only",
+            },
+            body: JSON.stringify({ camera_id: activeCameraId }),
+          }),
+        ]);
 
         setSessionActive(false);
+        setSessionDuration(0);
+        setActiveLiveToast(null);
+        setSessionPresentUsns(new Set());
+        setAttendanceEvents([]);
+        setManualPresentUsns(new Set());
+        setManualAbsentUsns(new Set());
         setControlToast("Monitoring session ended");
       }
     } catch (e) {
@@ -2222,10 +2364,12 @@ export default function LiveMonitoringPage() {
                 <div className="text-center">
                   <p className="text-[11px] text-text-muted mb-1">Session Duration</p>
                   <p className="text-3xl font-bold text-white tabular-nums tracking-wider font-mono">
-                    {formatDuration(sessionDuration)}
+                    {sessionActive ? formatDuration(sessionDuration) : "00:00:00"}
                   </p>
                   <p className="text-xs text-text-muted mt-1">
-                    {selectedClass.name} · {monitoringMode === "attendance" ? "Attendance Pipeline" : "Behavioral Pipeline"}
+                    {sessionActive
+                      ? `${selectedClass.name} · ${monitoringMode === "attendance" ? "Attendance Pipeline" : "Behavioral Pipeline"}`
+                      : `${selectedClass.name} · Standby`}
                   </p>
                 </div>
               </GlassCard>
@@ -2284,11 +2428,11 @@ export default function LiveMonitoringPage() {
                           if (attendanceFilter === "UNKNOWN") return e.type === "UNKNOWN_PERSON";
                           return true;
                         })
-                        .map((evt) => {
+                        .map((evt, idx) => {
                           const isUnk = evt.type === "UNKNOWN_PERSON";
                           return (
                             <div
-                              key={evt.id}
+                              key={`${evt.id}-${idx}`}
                               className={cn(
                                 "p-2 rounded-lg border text-xs flex items-start justify-between gap-2 transition-all",
                                 isUnk

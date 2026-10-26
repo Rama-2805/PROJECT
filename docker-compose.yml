@@ -141,6 +141,7 @@ services:
       AI_SERVICE_URL: http://ai-engine:8000
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?Internal API key required}
       STORAGE_DIR: /app/uploads
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:4000}
       PORT: 4000
     ports:
       - "4000:4000"
@@ -194,13 +195,15 @@ services:
     restart: unless-stopped
     networks: [smartcampus-net]
     depends_on:
+      postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
       minio: { condition: service_healthy }
     volumes:
       - ai-data:/app/data
-      - ${INSIGHTFACE_MODEL_DIR:-/Users/rama/.insightface/models}:/root/.insightface/models:ro
+      - ${INSIGHTFACE_MODEL_DIR:-~/.insightface/models}:/root/.insightface/models
     environment:
       PYTHONUNBUFFERED: 1
+      DATABASE_URL: postgresql://${POSTGRES_USER:-smartcampus}:${POSTGRES_PASSWORD}@postgres:5432/smartcampus
       REDIS_URL: redis://:${REDIS_PASSWORD:-smartcampus}@redis:6379
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-smartcampus}
@@ -209,13 +212,15 @@ services:
       BACKEND_URL: http://api:4000
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?Internal API key required}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://localhost:4000}
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
       timeout: 5s
-      retries: 3
+      retries: 5
+      start_period: 90s
     deploy:
       resources:
         limits: { cpus: "4", memory: "4G" }
@@ -233,14 +238,15 @@ services:
       ai-engine: { condition: service_started }
     volumes:
       - ai-data:/app/data
-      - ${INSIGHTFACE_MODEL_DIR:-/Users/rama/.insightface/models}:/root/.insightface/models:ro
+      - ${INSIGHTFACE_MODEL_DIR:-~/.insightface/models}:/root/.insightface/models
     environment:
       PYTHONUNBUFFERED: 1
       REDIS_URL: redis://:${REDIS_PASSWORD:-smartcampus}@redis:6379
+      DATABASE_URL: postgresql://${POSTGRES_USER:-smartcampus}:${POSTGRES_PASSWORD}@postgres:5432/smartcampus
       BACKEND_API_URL: http://api:4000
       BACKEND_URL: http://api:4000
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:?Internal API key required}
-    command: celery -A app.workers.enrollment_worker worker --loglevel=info --concurrency=2
+    command: celery -A app.workers.enrollment_worker.celery_app worker --loglevel=info --concurrency=2
     deploy:
       resources:
         limits: { cpus: "2", memory: "2G" }

@@ -38,7 +38,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       }
 
       const { user, tokens } = res.data;
-      setAccessToken(tokens.accessToken);
+      setAccessToken(tokens.accessToken, tokens.refreshToken);
 
       // Sync role & user metadata for legacy UI components
       if (typeof window !== "undefined") {
@@ -73,7 +73,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       }
 
       const { user, tokens } = res.data;
-      setAccessToken(tokens.accessToken);
+      setAccessToken(tokens.accessToken, tokens.refreshToken);
 
       if (typeof window !== "undefined") {
         const primaryRole = (user.roles?.[0] || "user").toLowerCase();

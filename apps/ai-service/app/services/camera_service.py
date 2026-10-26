@@ -513,6 +513,16 @@ class CameraService:
             
         logger.info(f"Camera {camera_id} stopped and cleaned up.")
 
+    def stop_all_cameras(self) -> None:
+        """Stop all running camera threads and release resources."""
+        with self._lock:
+            running_cams = list(self._running.keys())
+        for cid in running_cams:
+            try:
+                self.stop_camera(cid)
+            except Exception as e:
+                logger.debug(f"Error stopping camera {cid}: {e}")
+
     def _open_capture(self, source_path: str):
         """Open video capture source: footage video sequence, RTSP link, or webcam."""
         try:

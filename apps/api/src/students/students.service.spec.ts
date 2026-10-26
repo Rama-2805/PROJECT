@@ -7,19 +7,7 @@ import type { JwtPayload } from '../_shared/types/jwt';
 
 describe('StudentsService', () => {
   let service: StudentsService;
-  let prisma: {
-    student: {
-      findMany: jest.Mock;
-      count: jest.Mock;
-      findFirst: jest.Mock;
-      findUnique: jest.Mock;
-      create: jest.Mock;
-      update: jest.Mock;
-      delete: jest.Mock;
-    };
-    studentCluster: { findMany: jest.Mock };
-    enrollmentSession: { findFirst: jest.Mock };
-  };
+  let prisma: any;
 
   const mockInstitutionId = 'inst-vemana-01';
   const mockOtherInstitutionId = 'inst-other-02';
@@ -148,7 +136,7 @@ describe('StudentsService', () => {
       const originalFetch = global.fetch;
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
-        json: async () => ({ clusters: [] }),
+        json: async () => ({ clusters: [] as any[] }),
       } as any);
 
       try {

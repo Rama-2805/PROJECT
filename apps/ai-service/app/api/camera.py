@@ -172,6 +172,18 @@ async def generate_mjpeg_stream(camera_id: str, mode: str = "attendance"):
 @router.get("/stream")
 async def get_camera_stream(camera_id: str = "webcam", mode: str = "attendance"):
     """MJPEG stream endpoint for live monitoring with separated mode overlays."""
+    from ..services.attendance_engine import attendance_engine
+    if camera_id not in attendance_engine.active_sessions:
+        try:
+            attendance_engine.start_session(
+                camera_id=camera_id,
+                class_id="7th Sem — Section A",
+                source_path="footage",
+                mode=mode,
+            )
+        except Exception as e:
+            logger.debug(f"Auto-start attendance engine session notice: {e}")
+
     state = camera_service.get_camera_state(camera_id)
     if state == CameraState.OFFLINE:
         # Try starting camera automatically if offline with footage sequence

@@ -5,6 +5,7 @@ import {
   IsBoolean,
   IsArray,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class StartSessionDto {
   @IsOptional() @IsString() institutionId?: string;
@@ -48,6 +49,6 @@ export class AttendanceQueryDto {
   @IsOptional() @IsString() classroomId?: string;
   @IsOptional() @IsString() fromDate?: string;
   @IsOptional() @IsString() toDate?: string;
-  @IsOptional() @IsNumber() page?: number;
-  @IsOptional() @IsNumber() limit?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() page?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() limit?: number;
 }

@@ -5,7 +5,7 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 RUN apk add --no-cache libc6-compat
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json* .npmrc* ./
 RUN npm ci
 
 # ─── Stage 2: Build ─────────────────────────────────────────────
@@ -31,7 +31,9 @@ RUN addgroup -g 1001 -S web && \
 # Copy build artifacts
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/.next/static ./apps/web/.next/static
 COPY --from=builder /app/public ./public
+COPY --from=builder /app/public ./apps/web/public
 
 USER web
 EXPOSE 3000
@@ -40,4 +42,4 @@ HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
 
 ENTRYPOINT ["/sbin/tini", "--"]
-CMD ["node", "server.js"]
+CMD ["sh", "-c", "if [ -f apps/web/server.js ]; then exec node apps/web/server.js; else exec node server.js; fi"]

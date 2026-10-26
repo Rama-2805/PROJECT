@@ -62,23 +62,29 @@ class EmbeddingService:
                     logger.error(f"Failed to directly load ArcFace recognition model: {e}")
         return self._rec_model
 
-    def generate_embedding(self, face_crop: np.ndarray, landmarks: Optional[Any] = None) -> Optional[np.ndarray]:
+    def generate_embedding(
+        self,
+        face_crop: np.ndarray,
+        landmarks: Optional[Any] = None,
+        full_frame: Optional[np.ndarray] = None,
+        bbox: Optional[Any] = None,
+    ) -> Optional[np.ndarray]:
         """Extract a 512D ArcFace embedding from a cropped BGR face image with 5-point landmark alignment."""
         if face_crop is None or getattr(face_crop, 'size', 0) == 0:
             return None
 
-        # Reject crops below minimum face detection dimensions (ArcFace requires at least 24x24)
-        if len(face_crop.shape) < 3 or face_crop.shape[0] < 24 or face_crop.shape[1] < 24:
+        # Reject crops below minimum face detection dimensions (ArcFace operates down to 20x20)
+        if len(face_crop.shape) < 3 or face_crop.shape[0] < 20 or face_crop.shape[1] < 20:
             return None
 
         # Reject blank white, overexposed, or featureless uniform patches
         gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY) if len(face_crop.shape) == 3 else face_crop
-        if float(np.std(gray)) < 12.0 or float(np.mean(gray >= 245)) > 0.40:
+        if float(np.std(gray)) < 10.0 or float(np.mean(gray >= 245)) > 0.45:
             return None
 
         try:
             from .face_quality_service import face_quality_service
-            aligned = face_quality_service.align_face(face_crop, landmarks)
+            aligned = face_quality_service.align_face(face_crop, landmarks, full_frame=full_frame, bbox=bbox)
 
             rec_model = self.rec_model
             if rec_model is not None:

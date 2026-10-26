@@ -228,11 +228,24 @@ async def serve_storage_file(file_path: str, request: Request):
     if clean_path.startswith("storage/"):
         clean_path = clean_path[len("storage/"):]
 
-    full_path = os.path.join("storage", clean_path)
-    storage_root = os.path.realpath("storage")
-    resolved = os.path.realpath(full_path)
+    # Support multiple candidate storage roots (repo root, ai-service local, settings.storage_dir)
+    app_dir = os.path.dirname(os.path.abspath(__file__))
+    candidate_roots = [
+        os.path.realpath(os.path.join(app_dir, "..", "storage")),
+        os.path.realpath(os.path.join(app_dir, "..", "..", "..", "storage")),
+        os.path.realpath("storage"),
+        os.path.realpath(os.path.join("apps", "ai-service", "storage")),
+        os.path.realpath(getattr(settings, "storage_dir", "storage")),
+    ]
 
-    if not resolved.startswith(storage_root) or not os.path.exists(resolved):
+    resolved = None
+    for s_root in candidate_roots:
+        cand = os.path.realpath(os.path.join(s_root, clean_path))
+        if cand.startswith(s_root) and os.path.exists(cand):
+            resolved = cand
+            break
+
+    if not resolved:
         raise HTTPException(status_code=404, detail="Biometric asset not found")
 
     return FileResponse(resolved, headers={"Cache-Control": "public, max-age=86400"})

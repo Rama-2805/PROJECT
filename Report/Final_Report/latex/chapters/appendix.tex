@@ -1,0 +1,78 @@
+\newpage
+\begin{flushleft}
+{\fontsize{16pt}{16pt}\selectfont \textbf{APPENDIX}}
+\end{flushleft}		
+\begin{center}
+{\fontsize{18pt}{22pt}\selectfont \textbf{SYSTEM CONFIGURATION, REST API SPECS \& DEPLOYMENT}}\\[2mm]
+\end{center}
+\addcontentsline{toc}{section}{\numberline{}APPENDIX: SYSTEM CONFIGURATION \& API SPECS}
+
+\onehalfspacing
+\justifying
+\noindent This appendix documents the primary architectural interfaces, core environment variables, and Docker deployment configurations supporting SmartCampus AI.
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{14pt}{18pt}\selectfont \textbf{A.1 CORE RESTFUL \& WEBSOCKET API SPECIFICATIONS}}\\[2mm]
+\end{flushleft}
+
+\noindent Table A.1 lists the principal REST API endpoints provided by the NestJS 11 Gateway (`apps/api`) and Python AI Service (`apps/ai-service`).
+
+\begin{table}[h]
+\centering
+\caption{Principal API Endpoints and Telemetry Interfaces}
+\label{tab:api_specs}
+\vspace{2mm}
+\begin{tabular}{l l p{8.5cm}}
+\toprule
+\textbf{HTTP Method} & \textbf{Endpoint Route} & \textbf{Functionality \& Payload Description} \\
+\midrule
+`POST` & `/api/auth/login` & Authenticates user credentials, returns signed JWT access token and HTTP-only refresh cookie. \\
+`POST` & `/api/attendance/sessions` & Creates a new active lecture session tied to classroom and course subject. \\
+`GET` & `/api/attendance/sessions/:id` & Retrieves real-time attendance roll and active headcount stats. \\
+`GET` & `/api/enrollment/sessions/:id/clusters` & Returns discovered unsupervised identity clusters with representative crop URLs. \\
+`POST` & `/api/enrollment/assign` & Assigns student to cluster, invoking Conflict Prevention Engine and FAISS sync. \\
+`GET` & `/api/students` & Fetches enrolled student directory with USN, section, and biometric status. \\
+`WS` & `/socket.io/telemetry` & Full-duplex WebSocket stream broadcasting live attention scores, posture states, and infraction alerts. \\
+`POST` & `/ai/detect-and-embed` & (Internal) Ingests raw video frame, returns bounding boxes, 512D vectors, and blur scores. \\
+`POST` & `/ai/vector-sync` & (Internal) Inserts confirmed student embedding into FAISS index and persists to disk. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\vspace{0.2in}
+\begin{flushleft}
+{\fontsize{14pt}{18pt}\selectfont \textbf{A.2 PRODUCTION ENVIRONMENT CONFIGURATION}}\\[2mm]
+\end{flushleft}
+
+\noindent The following environment variables configure the production orchestration layer across microservices:
+
+\begin{verbatim}
+# PostgreSQL Relational Database Configuration
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/smartcampus?schema=public"
+
+# Redis Caching & Queue State
+REDIS_HOST="localhost"
+REDIS_PORT=6379
+
+# JWT Cryptographic Secrets & Token Expiration
+JWT_SECRET="smartcampus_super_secure_jwt_secret_phase2_2026"
+JWT_EXPIRES_IN="15m"
+JWT_REFRESH_SECRET="smartcampus_refresh_secret_vtu_vemana"
+JWT_REFRESH_EXPIRES_IN="7d"
+
+# Python AI Computer Vision Service
+AI_SERVICE_URL="http://localhost:8000"
+FAISS_INDEX_PATH="./vectors/face_index.faiss"
+FAISS_METADATA_PATH="./vectors/metadata.json"
+LAPLACIAN_BLUR_THRESHOLD=120.0
+COSINE_SIMILARITY_THRESHOLD=0.65
+
+# MinIO S3 Object Storage
+MINIO_ENDPOINT="localhost"
+MINIO_PORT=9000
+MINIO_ROOT_USER="minioadmin"
+MINIO_ROOT_PASSWORD="minioadminpassword"
+MINIO_BUCKET_NAME="smartcampus-faces"
+\end{verbatim}
+\newpage

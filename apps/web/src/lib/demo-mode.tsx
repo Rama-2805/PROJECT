@@ -9,8 +9,18 @@ function getDemoSnapshot(): boolean {
   const params = new URLSearchParams(window.location.search);
   const envDemo = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
   const queryDemo = params.get("demo");
-  if (queryDemo === "false") return false;
-  return queryDemo === "true" || envDemo;
+  if (queryDemo === "false") {
+    try { sessionStorage.removeItem("smartcampus_demo_mode"); } catch {}
+    return false;
+  }
+  if (queryDemo === "true") {
+    try { sessionStorage.setItem("smartcampus_demo_mode", "true"); } catch {}
+    return true;
+  }
+  try {
+    if (sessionStorage.getItem("smartcampus_demo_mode") === "true") return true;
+  } catch {}
+  return envDemo;
 }
 
 interface DemoEvent {
@@ -148,5 +158,17 @@ export function isDemoMode(): boolean {
     return true;
   }
   if (typeof window === "undefined") return false;
-  return new URLSearchParams(window.location.search).get("demo") === "true";
+  const demoParam = new URLSearchParams(window.location.search).get("demo");
+  if (demoParam === "false") {
+    try { sessionStorage.removeItem("smartcampus_demo_mode"); } catch {}
+    return false;
+  }
+  if (demoParam === "true") {
+    try { sessionStorage.setItem("smartcampus_demo_mode", "true"); } catch {}
+    return true;
+  }
+  try {
+    if (sessionStorage.getItem("smartcampus_demo_mode") === "true") return true;
+  } catch {}
+  return false;
 }

@@ -24,11 +24,13 @@ export function setAccessToken(token: string | null, refreshToken?: string | nul
       document.cookie = `smartcampus_access_token=${token}; path=/; max-age=${15 * 60}; SameSite=Lax${secureFlag}`;
       if (refreshToken && !refreshToken.includes("mock-token")) {
         document.cookie = `refreshToken=${refreshToken}; path=/; max-age=${7 * 24 * 60 * 60}; SameSite=Lax${secureFlag}`;
+        localStorage.setItem("smartcampus_refresh_token", refreshToken);
       }
     } else {
       accessToken = null;
       document.cookie = `smartcampus_access_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax${secureFlag}`;
       document.cookie = `refreshToken=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC; SameSite=Lax${secureFlag}`;
+      localStorage.removeItem("smartcampus_refresh_token");
     }
   }
 }
@@ -58,11 +60,17 @@ export async function refreshAccessToken(): Promise<string | null> {
 
   refreshPromise = (async () => {
     try {
+      const storedRefreshToken =
+        (typeof window !== "undefined"
+          ? localStorage.getItem("smartcampus_refresh_token")
+          : null) || getCookie("refreshToken");
+
       const res = await fetch(`${API_BASE}/auth/refresh`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
+        body: JSON.stringify({ refreshToken: storedRefreshToken }),
         credentials: "include",
       });
 
@@ -74,7 +82,8 @@ export async function refreshAccessToken(): Promise<string | null> {
       const json = await res.json();
       if (json.success && json.data?.tokens?.accessToken) {
         const newAccess = json.data.tokens.accessToken;
-        setAccessToken(newAccess);
+        const newRefresh = json.data.tokens.refreshToken || storedRefreshToken;
+        setAccessToken(newAccess, newRefresh);
         return newAccess;
       }
       setAccessToken(null);

@@ -1,0 +1,112 @@
+\newpage
+\begin{flushleft}
+{\fontsize{16pt}{16pt}\selectfont \textbf{CHAPTER 3}}
+\end{flushleft}		
+\begin{center}
+{\fontsize{18pt}{22pt}\selectfont \textbf{SYSTEM ANALYSIS}}\\[2mm]
+\end{center}
+\addcontentsline{toc}{section}{\numberline{3}SYSTEM ANALYSIS}
+
+\onehalfspacing
+\justifying
+\noindent System analysis constitutes a fundamental phase in engineering enterprise campus solutions, establishing an objective critique of legacy methodologies and formulating an architecturally sound intervention. In most engineering colleges and universities, classroom attendance and student engagement monitoring continue to rely on manual, fragmented, or poorly integrated mechanisms. In a typical departmental setup, attendance is recorded manually on paper rosters or through entryway biometric readers, leading to substantial instructional time loss, proxy vulnerability, and an absence of actionable learning telemetry. This chapter analyzes the core drawbacks of existing mechanisms, articulates the proposed SmartCampus AI architecture, and presents a comprehensive feasibility study encompassing technical, operational, and economic dimensions.
+
+\vspace{0.2in}
+\begin{flushleft}
+{\fontsize{14pt}{18pt}\selectfont \textbf{3.1 DRAWBACKS OF THE EXISTING SYSTEM}}\\[2mm]
+\end{flushleft}
+\addcontentsline{toc}{subsection}{\numberline{3.1}Drawbacks of the Existing System}
+
+\noindent The deficiencies of legacy attendance and campus monitoring systems can be categorized into technical, operational, and administrative limitations:
+\begin{itemize}
+    \item \textbf{Manual Labor Dependence \& Instructional Loss:} Heavy reliance on faculty roll calls consumes between 12 and 18 minutes of every lecture hour. Across a 45-lecture semester per course, 9 to 13.5 hours of instructional time are squandered per subject.
+    \item \textbf{Vulnerability to Proxy Attendance:} Paper sign-in sheets and shared RFID access cards facilitate "buddy punching" and fraudulent check-ins, compromising the integrity of institutional attendance registers and accreditation compliance audits.
+    \item \textbf{Entrance Bottlenecks \& Hardware Wear:} Wall-mounted fingerprint kiosks or doorway face-scanners require students to queue sequentially at the classroom entrance during short 5-minute period transitions, causing hallway congestion and lecture delays.
+    \item \textbf{High Enrollment Friction in Commercial Systems:} Conventional facial recognition platforms mandate individual, supervised photo capture sessions (capturing multiple angles per student), which becomes prohibitively tedious when onboarding thousands of students.
+    \item \textbf{Lack of Pedagogical Engagement Telemetry:} Conventional administrative workflows offer zero real-time visibility into whether seated students are actively paying attention, experiencing cognitive fatigue, or distracted by covert smartphone usage.
+    \item \textbf{Privacy Risks and Cloud Bandwidth Costs:} Streaming continuous multi-classroom video feeds to third-party public cloud AI APIs (such as AWS or Azure) violates student biometric data sovereignty regulations and introduces unsustainable network bandwidth expenses.
+\end{itemize}
+
+\vspace{0.2in}
+\begin{flushleft}
+{\fontsize{14pt}{18pt}\selectfont \textbf{3.2 PROPOSED SYSTEM}}\\[2mm]
+\end{flushleft}
+\addcontentsline{toc}{subsection}{\numberline{3.2}Proposed System}
+
+\noindent SmartCampus AI overcomes these limitations by deploying a decentralized, edge-native computer vision and multi-tier institutional management architecture:
+\begin{itemize}
+    \item \textbf{Passive, Continuous Overhead Video Ingestion:} Uses standard overhead CCTV IP cameras streaming RTSP video to monitor the classroom autonomously without requiring student interaction or active scanning.
+    \item \textbf{High-Efficiency Multi-Stage AI Vision Engine:} Combines SCRFD-10G face detection, Laplacian blur filtering ($\sigma^2_\Delta \ge 120.0$), 5-point affine landmark alignment, and ResNet-100 ArcFace deep metric learning to extract 512-dimensional feature vectors.
+    \item \textbf{Sub-Millisecond In-Memory FAISS Vector Retrieval:} Evaluates inner-product cosine similarity against verified templates in under 1.5 milliseconds, logging verified attendance records to PostgreSQL 16 automatically.
+    \item \textbf{Unsupervised Candidate Identity Clustering:} Aggregates recurring face appearances across temporal video tracks via HDBSCAN/DBSCAN into distinct candidate clusters, automatically selecting the sharpest frontal crops for educator review.
+    \item \textbf{Conflict Prevention Engine:} Mathematically guarantees bijective identity mappings ($\text{Card}(S \cap C) \le 1$), releasing stale or conflicting assignments automatically.
+    \item \textbf{Headcount Normalization \& Behavioral Analytics:} Segregates active in-class attendees (18 seated in Room 408) from broader batch rosters (59 enrolled students), bounded unknown visitor counts, and computes real-time Attention Index scores streaming alerts to faculty dashboards.
+    \item \textbf{Enterprise Multi-Tenant Portals:} Next.js 16 frontend and NestJS 11 gateway protected by 5-tier cryptographic Role-Based Access Control (RBAC).
+\end{itemize}
+
+\vspace{0.2in}
+\begin{flushleft}
+{\fontsize{14pt}{18pt}\selectfont \textbf{3.3 FEASIBILITY STUDY}}\\[2mm]
+\end{flushleft}
+\addcontentsline{toc}{subsection}{\numberline{3.3}Feasibility Study}
+
+\noindent A rigorous feasibility analysis was conducted to verify that SmartCampus AI is technically viable, operationally practical, and economically sustainable for university deployment.
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{12pt}{16pt}\selectfont \textbf{3.3.1 Technical Feasibility}}\\[1mm]
+\end{flushleft}
+\addcontentsline{toc}{subsubsection}{\numberline{3.3.1}Technical Feasibility}
+
+\noindent The technical feasibility of SmartCampus AI is established through the synergy of mature, state-of-the-art open-source software libraries and high-performance edge computing hardware:
+\begin{itemize}
+    \item \textit{Algorithmic Maturity:} SCRFD-10G and ArcFace represent industry standards in face detection and deep metric learning, delivering $>98\%$ verification accuracy in crowded scenes.
+    \item \textit{Vector Search Scalability:} FAISS executes exact inner-product similarity queries in sub-millisecond time on commodity CPU architectures, eliminating the need for costly GPU cloud clusters.
+    \item \textit{Enterprise Architecture:} NestJS 11 and Next.js 16 provide modular, TypeScript-enforced microservices with WebSocket broadcasting, supported by ACID-compliant PostgreSQL 16 and Redis 7 caching.
+\end{itemize}
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{12pt}{16pt}\selectfont \textbf{3.3.2 Operational Feasibility}}\\[1mm]
+\end{flushleft}
+\addcontentsline{toc}{subsubsection}{\numberline{3.3.2}Operational Feasibility}
+
+\noindent The operational feasibility evaluates whether the system integrates smoothly into daily institutional routines:
+\begin{itemize}
+    \item \textit{Zero User Friction:} Neither students nor faculty are required to carry physical cards, scan fingers, or line up at doors. The system operates passively overhead.
+    \item \textit{Intuitive Teacher Verification Hub:} The candidate review portal presents clean visual cluster cards, enabling educators to verify student assignments with zero-refresh optimistic UI state updates.
+    \item \textit{Role-Specific Workflows:} Clear hierarchy ensures teachers see only their active lecture sections, HODs monitor departmental trends, and students access personal attendance analytics.
+\end{itemize}
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{12pt}{16pt}\selectfont \textbf{3.3.3 Economic Feasibility (Cost Estimation)}}\\[1mm]
+\end{flushleft}
+\addcontentsline{toc}{subsubsection}{\numberline{3.3.3}Economic Feasibility (Cost Estimation)}
+
+\noindent The economic feasibility is demonstrated by comparing the one-time edge deployment investment against the recurring savings in faculty instructional time and paper logistics. Table 3.1 provides the comprehensive bill-of-materials and cost estimation for deploying SmartCampus AI across a standard departmental cluster of 6 lecture halls.
+
+\begin{table}[h]
+\centering
+\caption{Hardware \& Infrastructure Cost Estimation for 6-Classroom Department Cluster}
+\label{tab:cost_est}
+\vspace{2mm}
+\begin{tabular}{p{5.5cm} c c r}
+\toprule
+\textbf{Component Description} & \textbf{Unit Cost (INR)} & \textbf{Quantity} & \textbf{Total Cost (INR)} \\
+\midrule
+Full HD 1080p PoE IP Wide-Angle Camera & \rupee\,3,800 & 6 units & \rupee\,22,800 \\
+Edge Compute Node (M-Series / Jetson AGX) & \rupee\,78,000 & 1 server & \rupee\,78,000 \\
+Gigabit PoE Network Switch (8-Port Managed) & \rupee\,6,500 & 1 unit & \rupee\,6,500 \\
+Cat6 UTP Cabling \& Conduit Installation & \rupee\,4,500 & 1 lot & \rupee\,4,500 \\
+Camera Ceiling Mounting Brackets \& Accessories & \rupee\,850 & 6 units & \rupee\,5,100 \\
+Online UPS Backup System (1 kVA / 30 min) & \rupee\,12,500 & 1 unit & \rupee\,12,500 \\
+Software Licensing \& AI Frameworks & \rupee\,0 & Open-Source & \rupee\,0 \\
+\midrule
+\textbf{Total Capital Expenditure (CapEx)} & \textbf{—} & \textbf{—} & \textbf{\rupee\,1,29,400} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\noindent At an aggregate deployment cost of \rupee\,1,29,400 across 6 lecture halls (approximately \rupee\,21,500 per classroom), the system pays for itself within a single semester by recovering over 350 hours of faculty teaching time previously lost to manual attendance logging.
+\newpage

@@ -1,0 +1,35 @@
+# SmartCampus AI — Caddy Production Reverse Proxy
+# Automatic HTTPS with Let's Encrypt
+# Set DOMAIN environment variable (or defaults to api.smartcampus.ai)
+
+{$DOMAIN:api.smartcampus.ai} {
+    encode gzip zstd
+
+    # NestJS API Gateway & Health
+    handle /api/* {
+        reverse_proxy api:4000
+    }
+    handle /health {
+        reverse_proxy api:4000
+    }
+
+    # WebSockets (Socket.IO)
+    handle /socket.io/* {
+        reverse_proxy api:4000
+    }
+
+    # AI Service Facial Biometrics & Crop Storage
+    handle /storage/* {
+        reverse_proxy ai-engine:8000
+    }
+
+    # AI Service Real-Time Endpoints & Live WebSockets
+    handle /api/v1/* {
+        reverse_proxy ai-engine:8000
+    }
+
+    # Fallback status
+    handle {
+        respond "SmartCampus AI Gateway Online" 200
+    }
+}

@@ -160,4 +160,83 @@ export class ReportsService {
       createdAt: new Date().toISOString(),
     };
   }
+
+  async getNewStudentsReport(
+    classroomId?: string,
+    section: string = 'A',
+    institutionId?: string,
+  ) {
+    const where: any = {
+      faceEnrolled: true,
+    };
+    if (section && section !== 'ALL') {
+      where.section = section;
+    }
+    if (institutionId) {
+      where.institutionId = institutionId;
+    }
+
+    const students = await this.prisma.student.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        department: { select: { name: true, code: true } },
+        attendanceRecords: {
+          orderBy: { markedAt: 'desc' },
+          take: 1,
+          include: {
+            session: {
+              select: { sessionId: true, subjectName: true, startedAt: true },
+            },
+          },
+        },
+        faceEmbeddings: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { thumbnailPath: true, confidence: true, createdAt: true },
+        },
+      },
+    });
+
+    return {
+      total: students.length,
+      section,
+      classroomId: classroomId || 'room-023',
+      students: students.map((s) => {
+        const latestAtt = s.attendanceRecords[0];
+        const latestEmb = s.faceEmbeddings[0];
+        const photo =
+          s.primaryFaceImagePath ||
+          s.profilePhoto ||
+          latestEmb?.thumbnailPath ||
+          null;
+        const usn = s.studentId || s.usn || s.rollNumber || 'UNKNOWN';
+        return {
+          id: s.id,
+          usn,
+          studentId: usn,
+          fullName: s.fullName,
+          name: s.fullName,
+          email: s.email,
+          semester: s.semester || 7,
+          section: s.section || section,
+          department: s.department?.name || 'Computer Science & Engineering',
+          faceEnrolled: s.faceEnrolled,
+          faceSamples: s.faceSamples || 1,
+          profilePhoto: photo,
+          confidence: latestAtt?.confidence || latestEmb?.confidence || 0.95,
+          enrolledAt: latestEmb?.createdAt || s.updatedAt || s.createdAt,
+          lastAttendanceTime:
+            latestAtt?.markedAt || s.lastAttendanceTime || null,
+          attendanceStatus:
+            latestAtt?.statusEnum || (s.faceEnrolled ? 'PRESENT' : 'ABSENT'),
+          verificationMethod: latestAtt?.method || 'FACE_RECOGNITION',
+          subjectName:
+            latestAtt?.session?.subjectName ||
+            '7th Sem - Machine Learning & AI (Section A)',
+          isNew: true,
+        };
+      }),
+    };
+  }
 }

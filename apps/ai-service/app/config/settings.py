@@ -40,8 +40,8 @@ class Settings(BaseSettings):
     target_embeddings_per_track: int = 3    # Target ArcFace embeddings per track
     embedding_frame_interval: int = 10      # Minimum frames between embedding candidate samples
     embedding_frame_interval_sec: float = 1.0 # Minimum 1.0 second between crop samples per track
-    quality_threshold: float = 0.60         # Minimum composite quality score (0.0 - 1.0)
-    min_track_quality: float = 0.60         # Minimum composite quality score (0.0 - 1.0)
+    quality_threshold: float = 0.35         # Minimum composite quality score (0.0 - 1.0)
+    min_track_quality: float = 0.30         # Minimum composite quality score (0.0 - 1.0)
     duplicate_embedding_threshold: float = 0.95 # Cosine similarity threshold for duplicate embedding rejection
     embedding_dedup_threshold: float = 0.95     # Cosine similarity threshold for duplicate embedding rejection
     arcface_batch_size: int = 8             # ArcFace batch inference size
@@ -70,15 +70,15 @@ class Settings(BaseSettings):
     detection_confidence_threshold: float = 0.70  # Reject false positive detections < 0.70
     # MediaPipe Face Landmarker & Pose Quality Stage
     enable_mediapipe_quality: bool = True
-    max_quality_attempts_per_track: int = 15  # Max crops evaluated by MediaPipe per track to prevent FPS spikes
+    max_quality_attempts_per_track: int = 100 # Max crops evaluated by MediaPipe per track to prevent FPS spikes
     enable_roi_recovery: bool = False         # Bypass redundant ROI re-detection when multi-scale SCRFD is active
-    max_yaw: float = 30.0    # Max head yaw angle in degrees
-    max_pitch: float = 25.0  # Max head pitch angle in degrees
-    max_roll: float = 25.0   # Max head roll angle in degrees
+    max_yaw: float = 40.0    # Max head yaw angle in degrees
+    max_pitch: float = 35.0  # Max head pitch angle in degrees
+    max_roll: float = 35.0   # Max head roll angle in degrees
     min_face_width: int = 16  # Min face crop width in pixels (16px captures far/back-row classroom faces)
     min_face_height: int = 16 # Min face crop height in pixels (16px captures far/back-row classroom faces)
     faiss_top_k: int = 3      # Top-K candidate search depth for recognition diagnostics
-    margin_ambiguity_threshold: float = 0.10 # Similarity margin below which identity is marked AMBIGUOUS
+    margin_ambiguity_threshold: float = 0.008 # Similarity margin below which identity is marked AMBIGUOUS
     min_face_area_ratio: float = 0.0001            # Minimum face area / frame area ratio
     max_face_aspect_ratio: float = 2.2            # Max aspect ratio (w/h or h/w)
     min_brightness: float = 20.0                   # Min average pixel intensity (0-255)
@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     max_faces_per_frame: int = 40
 
     # Face Recognition
-    recognition_confidence_threshold: float = 0.60
+    recognition_confidence_threshold: float = 0.46
     embedding_size: int = 512  # ArcFace embedding dimension
 
     # Track-Centric Clustering

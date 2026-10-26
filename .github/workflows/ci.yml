@@ -28,27 +28,27 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: |
-            api/package-lock.json
-            web/package-lock.json
+            apps/api/package-lock.json
+            apps/web/package-lock.json
 
       - name: Install API dependencies
-        working-directory: ./api
+        working-directory: ./apps/api
         run: npm ci
       - name: TypeCheck API
-        working-directory: ./api
+        working-directory: ./apps/api
         run: npx tsc --noEmit
       - name: Lint API
-        working-directory: ./api
+        working-directory: ./apps/api
         run: npm run lint
 
       - name: Install Web dependencies
-        working-directory: ./web
+        working-directory: ./apps/web
         run: npm ci
       - name: TypeCheck Web
-        working-directory: ./web
+        working-directory: ./apps/web
         run: npx tsc --noEmit
       - name: Lint Web
-        working-directory: ./web
+        working-directory: ./apps/web
         run: npm run lint
 
   unit-tests:
@@ -61,18 +61,18 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: api/package-lock.json
+          cache-dependency-path: apps/api/package-lock.json
 
       - name: Install dependencies
-        working-directory: ./api
+        working-directory: ./apps/api
         run: npm ci
       - name: Run tests
-        working-directory: ./api
+        working-directory: ./apps/api
         run: npm test
       - name: Upload coverage
         uses: codecov/codecov-action@v3
         with:
-          directory: ./api/coverage
+          directory: ./apps/api/coverage
 
   security-scan:
     name: Security Scan
@@ -96,7 +96,7 @@ jobs:
           sarif_file: 'trivy-results.sarif'
 
       - name: Run npm audit on API
-        working-directory: ./api
+        working-directory: ./apps/api
         run: npm audit --audit-level=high || true
 
   # ─── Main Branch — Staging Deploy ──────────────────────────────
@@ -121,7 +121,7 @@ jobs:
       - name: Build and push API image
         uses: docker/build-push-action@v5
         with:
-          context: ./api
+          context: ./apps/api
           push: true
           tags: ghcr.io/${{ github.repository }}/api:staging,ghcr.io/${{ github.repository }}/api:${{ github.sha }}
           cache-from: type=gha
@@ -130,7 +130,7 @@ jobs:
       - name: Build and push Web image
         uses: docker/build-push-action@v5
         with:
-          context: ./web
+          context: ./apps/web
           push: true
           tags: ghcr.io/${{ github.repository }}/web:staging,ghcr.io/${{ github.repository }}/web:${{ github.sha }}
           cache-from: type=gha

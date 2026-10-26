@@ -26,7 +26,7 @@ class StartAttendanceRequest(BaseModel):
 
 
 class StopAttendanceRequest(BaseModel):
-    camera_id: str = Field("webcam", description="Camera identifier to stop.")
+    camera_id: Optional[str] = Field(None, description="Camera identifier to stop (or omit to stop all).")
 
 
 @router.post("/start")
@@ -58,20 +58,15 @@ def start_attendance_loop(
 @router.post("/stop")
 @router.post("/session/stop")
 def stop_attendance_loop(
-    request: StopAttendanceRequest,
+    request: Optional[StopAttendanceRequest] = None,
     _: str = Depends(verify_internal_api_key),
 ):
-    """Stop the attendance loop on a camera feed."""
-    stopped = attendance_engine.stop_attendance_session(request.camera_id)
-    if not stopped:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No active attendance session running on camera '{request.camera_id}'."
-        )
-
+    """Stop the attendance loop on a camera feed or all feeds."""
+    cam_id = request.camera_id if request else None
+    attendance_engine.stop_attendance_session(cam_id)
     return {
         "status": "success",
-        "message": f"Real-time attendance loop stopped for camera '{request.camera_id}'."
+        "message": f"Real-time attendance loop stopped."
     }
 
 
@@ -148,10 +143,31 @@ def get_attendance_report(
 @router.get("/live-session-status")
 def get_live_session_status():
     """Retrieve real-time attendance recognition and behavior status for the running session."""
+    cam_id = next(iter(attendance_engine.active_sessions.keys()), "room-023")
+    active_sess = attendance_engine.active_sessions.get(cam_id, {})
+    tracker = active_sess.get("tracker")
+    tracks_info = []
+    if tracker:
+        t_objs = tracker.tracks.values() if isinstance(getattr(tracker, "tracks", None), dict) else getattr(tracker, "tracks", [])
+        for t in t_objs:
+            tracks_info.append({
+                "track_id": getattr(t, "track_id", str(t)),
+                "student_usn": getattr(t, "student_usn", None),
+                "student_name": getattr(t, "student_name", None),
+                "marked": getattr(t, "attendance_marked", False),
+                "conf": getattr(t, "recognition_confidence", 0.0),
+                "hits": len(getattr(t, "confidence_history", [])),
+                "bbox": [round(float(x), 1) for x in t.bbox] if hasattr(t, "bbox") else None,
+            })
     return {
         "status": "success",
+        "camera_id": cam_id,
         "recognized_students": attendance_engine.session_recognized_students,
         "total_recognized": len(attendance_engine.session_recognized_students),
+        "marked_students": list(active_sess.get("marked_students", set())),
+        "total_marked": len(active_sess.get("marked_students", set())),
+        "total_active_tracks": len(tracks_info),
+        "tracks": tracks_info,
         "behavior_states": attendance_engine.student_behavior_states,
     }
 

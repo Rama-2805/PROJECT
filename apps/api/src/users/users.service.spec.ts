@@ -82,6 +82,7 @@ describe('UsersService (SEC-04 Regression)', () => {
 
     const result = await service.create(
       {
+        institutionId: 'inst-1',
         email: 'newadmin@example.com',
         fullName: 'New Super Admin',
         password: 'Password123!',

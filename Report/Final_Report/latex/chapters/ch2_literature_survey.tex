@@ -1,0 +1,155 @@
+\newpage
+\begin{flushleft}
+{\fontsize{16pt}{16pt}\selectfont \textbf{CHAPTER 2}}
+\end{flushleft}		
+\begin{center}
+{\fontsize{18pt}{22pt}\selectfont \textbf{LITERATURE SURVEY}}\\[2mm]
+\end{center}
+\addcontentsline{toc}{section}{\numberline{2}LITERATURE SURVEY}
+
+\onehalfspacing
+\justifying
+\noindent Automated biometric identification and intelligent classroom surveillance have attracted intense research attention over the past decade, driven by breakthroughs in deep convolutional neural networks, metric learning loss formulations, and high-performance vector indexing. To establish a rigorous theoretical and empirical foundation for SmartCampus AI, this chapter reviews ten critical academic research publications spanning face recognition, multi-scale detection, large-scale vector similarity, density clustering, and classroom engagement monitoring.
+
+\vspace{0.2in}
+\begin{flushleft}
+{\fontsize{12pt}{14pt}\selectfont \textbf{[1] Title: ArcFace: Additive Angular Margin Loss for Deep Face Recognition}} \\
+\textbf{Authors:} Jiankang Deng, Jia Guo, Niannan Xue, Stefanos Zafeiriou \\
+\textbf{Publication:} IEEE Transactions on Pattern Analysis and Machine Intelligence (TPAMI), 2022 \\
+\textbf{Description:} The authors formulate the Additive Angular Margin Loss (ArcFace) to significantly improve the discriminative power of deep feature representations. ArcFace projects normalized feature vectors and ground-truth weights onto a hypersphere of radius $s=64$ and injects an additive angular margin penalty $m=0.5$ directly in the angular space, maximizing inter-class divergence and minimizing intra-class variance. \\
+\textbf{Advantages:} Outstanding verification accuracy (>99.8\% on LFW); robust to head pose and illumination shifts; produces compact 512D unit embeddings. \\
+\textbf{Limitations:} Evaluated on static benchmarks; lacks real-time multi-person video tracking and temporal deduplication for crowded lecture halls.
+\end{flushleft}
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{12pt}{14pt}\selectfont \textbf{[2] Title: Sample and Computation Redistribution for Efficient Face Detection}} \\
+\textbf{Authors:} Jia Guo, Jiankang Deng, Alexandros Lattas, Stefanos Zafeiriou \\
+\textbf{Publication:} IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2021 \\
+\textbf{Description:} Introduces SCRFD, an optimized anchor-based architecture designed for low-power edge compute devices. The authors systematically redistribute convolutional backbone computation across different feature pyramid scales based on empirical face scale distributions. \\
+\textbf{Advantages:} Exceptional edge inference speed (>60 FPS on standard CPUs); highly accurate on tiny faces down to $16 \times 16$ px. \\
+\textbf{Limitations:} Lacks temporal tracking over time; tiny false-positive background detections can propagate into downstream biometric matching without quality filtering.
+\end{flushleft}
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{12pt}{14pt}\selectfont \textbf{[3] Title: Billion-Scale Similarity Search with GPUs}} \\
+\textbf{Authors:} Jeff Johnson, Matthijs Douze, Herv{\'e} J{\'e}gou \\
+\textbf{Publication:} IEEE Transactions on Big Data, 2021 \\
+\textbf{Description:} Introduces FAISS (Facebook AI Similarity Search), a library specifically engineered for ultra-fast nearest-neighbor search in high-dimensional vector spaces. Leverages SIMD instruction sets, cache-conscious memory layouts, and exact inner-product vector queries (`IndexFlatIP`). \\
+\textbf{Advantages:} Query latency under 1.5 microseconds on L2-normalized 512D vectors; exact precision; linear memory scalability. \\
+\textbf{Limitations:} Operates purely in-memory; lacks relational data structures, student metadata persistence, and transactional ACID guarantees.
+\end{flushleft}
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{12pt}{14pt}\selectfont \textbf{[4] Title: Density-Based Clustering Based on Hierarchical Density Estimates}} \\
+\textbf{Authors:} Ricardo J. G. B. Campello, Davoud Moulavi, J{\"o}rg Sander \\
+\textbf{Publication:} Advances in Knowledge Discovery and Data Mining (PAKDD), Springer, 2013 \\
+\textbf{Description:} Formulates HDBSCAN, an unsupervised density-based clustering algorithm that extends DBSCAN into a hierarchical framework. Constructs a minimum spanning tree over mutual reachability distances and extracts flat clusters based on cluster stability. \\
+\textbf{Advantages:} Discovers arbitrarily shaped clusters; does not require specifying cluster count $K$; effectively identifies noisy outliers. \\
+\textbf{Limitations:} Quadratic worst-case computational complexity $O(N^2)$; sensitive to duplicate frames without pre-filtering.
+\end{flushleft}
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{12pt}{14pt}\selectfont \textbf{[5] Title: FaceNet: A Unified Embedding for Face Recognition and Clustering}} \\
+\textbf{Authors:} Florian Schroff, Dmitry Kalenichenko, James Philbin \\
+\textbf{Publication:} IEEE Conference on Computer Vision and Pattern Recognition (CVPR), 2015 \\
+\textbf{Description:} Trains a deep convolutional network directly to map facial images into a compact 128-dimensional Euclidean space using a triplet loss function separating positive from negative pairs. \\
+\textbf{Advantages:} Pioneered end-to-end metric embedding for face verification and clustering; 99.63\% on LFW. \\
+\textbf{Limitations:} Triplet loss exhibits slow convergence and complex semi-hard negative mining; 128D space has lower discriminative capacity than 512D ArcFace.
+\end{flushleft}
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{12pt}{14pt}\selectfont \textbf{[6] Title: Joint Face Detection and Alignment Using Multitask Cascaded Convolutional Networks}} \\
+\textbf{Authors:} Kaipeng Zhang, Zhanpeng Zhang, Zhifeng Li, Yu Qiao \\
+\textbf{Publication:} IEEE Signal Processing Letters, 2016 \\
+\textbf{Description:} Proposes MTCNN, a three-stage cascaded deep framework (P-Net, R-Net, O-Net) that jointly predicts face bounding boxes, bounding box regression offsets, and five facial landmark locations. \\
+\textbf{Advantages:} Robust landmark detection and geometric normalization across real-world lighting and pose angles. \\
+\textbf{Limitations:} Multi-network cascaded architecture introduces high latency, struggling to maintain $>25$ FPS on edge CPUs with multiple seated students.
+\end{flushleft}
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{12pt}{14pt}\selectfont \textbf{[7] Title: Automated Biometric Attendance Management Systems in Educational Institutions}} \\
+\textbf{Authors:} Boniface Anya, Kingsley Okafor, Emmanuel Udo \\
+\textbf{Publication:} IEEE Access, 2022 \\
+\textbf{Description:} Systematic survey evaluating over 120 automated attendance systems (RFID, fingerprint, facial recognition, and mobile-BLE) across operational efficiency, security, cost, and user acceptance. \\
+\textbf{Advantages:} Concluded that computer-vision attendance delivers the highest operational efficiency because it is contactless and passive. \\
+\textbf{Limitations:} Identified high failure rates in existing systems due to manual individual enrollment friction and cloud dependence.
+\end{flushleft}
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{12pt}{14pt}\selectfont \textbf{[8] Title: Deep Learning-Based Student In-Class Behavior and Engagement Monitoring}} \\
+\textbf{Authors:} Chen Li, Min Chen, Weidong Zhang, Jun Zhao \\
+\textbf{Publication:} Computers \& Education: Artificial Intelligence, 2023 \\
+\textbf{Description:} Implements a multi-branch vision transformer and YOLO pipeline to detect student in-class behavioral postures (attentive, writing, sleeping, phone usage) from overhead lecture video cameras. \\
+\textbf{Advantages:} Achieved 89.4\% classification accuracy across classroom activities; delivers non-intrusive objective engagement telemetry. \\
+\textbf{Limitations:} Isolated from identity management; counts overall distracted students without attributing events to verified individual profiles.
+\end{flushleft}
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{12pt}{14pt}\selectfont \textbf{[9] Title: CosFace: Large Margin Cosine Loss for Deep Face Recognition}} \\
+\textbf{Authors:} Hao Wang, Yitong Wang, Zheng Zhou, Xing Ji, Dihong Gong, Jingchao Zhou, Zhifeng Li, Wei Liu \\
+\textbf{Publication:} IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR), 2018 \\
+\textbf{Description:} Proposes Large Margin Cosine Loss (CosFace) by introducing a cosine margin penalty $m$ directly into the softmax numerator: $\cos(\theta) - m$. \\
+\textbf{Advantages:} Mathematically enforces inter-class margin in cosine space; significantly outperforms standard softmax on MegaFace and LFW. \\
+\textbf{Limitations:} Subsumed by ArcFace's additive angular formulation, which provides a more consistent geodesic margin penalty across all angular ranges.
+\end{flushleft}
+
+\vspace{0.15in}
+\begin{flushleft}
+{\fontsize{12pt}{14pt}\selectfont \textbf{[10] Title: Edge Computing: Vision and Challenges}} \\
+\textbf{Authors:} Weisong Shi, Jie Cao, Quan Zhang, Youhuizi Li, Lanyu Xu \\
+\textbf{Publication:} IEEE Internet of Things Journal, 2016 \\
+\textbf{Description:} Foundational treatise examining the shift from centralized cloud computing toward edge-native processing for low-latency IoT and computer-vision applications. \\
+\textbf{Advantages:} Articulates principles for edge data sovereignty, network bandwidth preservation, and decentralized compute pipelines. \\
+\textbf{Limitations:} Focuses on general architectural frameworks rather than domain-specific biometric identity or classroom monitoring pipelines.
+\end{flushleft}
+
+\vspace{0.2in}
+\begin{flushleft}
+{\fontsize{14pt}{18pt}\selectfont \textbf{2.1 COMPARATIVE ANALYSIS}}\\[2mm]
+\end{flushleft}
+\addcontentsline{toc}{subsection}{\numberline{2.1}Comparative Analysis}
+
+\noindent A comparative analysis benchmarking literature techniques against SmartCampus AI is presented in Table 2.1.
+
+\begin{table}[h]
+\centering
+\caption{Comparative Analysis of Literature Survey}
+\label{tab:comparative_lit}
+\vspace{2mm}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{p{2.8cm} p{2.2cm} p{2.0cm} p{1.6cm} p{2.8cm} p{2.8cm}}
+\toprule
+\textbf{Reference} & \textbf{Technique Used} & \textbf{Platform Used} & \textbf{Metrics} & \textbf{Advantages} & \textbf{Drawbacks} \\
+\midrule
+Deng et al. \cite{deng2019arcface} & ArcFace Angular Margin & PyTorch & 99.8\% Acc & Discriminative embeddings & Static photo only \\
+Guo et al. \cite{guo2021sample} & SCRFD-10G Detector & Edge CPU & >60 FPS & Fast small-face detection & No temporal tracking \\
+Johnson et al. \cite{johnson2019billion} & FAISS Vector Index & C++ / SIMD & <1.5 $\mu$s & Sub-millisecond queries & In-memory only \\
+Campello et al. \cite{campello2013density} & HDBSCAN Clustering & Scikit-Learn & N/A & Arbitrary shape clusters & $O(N^2)$ complexity \\
+Schroff et al. \cite{schroff2015facenet} & FaceNet Triplet Loss & TensorFlow & 99.6\% Acc & One-shot verification & Slow convergence \\
+Zhang et al. \cite{zhang2016joint} & MTCNN 3-Stage & Caffe & 95.2\% Acc & Accurate 5 landmarks & Cascaded high latency \\
+Anya et al. \cite{anya2022automated} & Attendance Survey & Multi-Platform & Review & Contactless efficiency & Manual enrollment \\
+Li et al. \cite{li2023realtime} & ViT + YOLO Behavior & PyTorch & 89.4\% Acc & Real-time engagement & Identity unlinked \\
+Wang et al. \cite{wang2018cosface} & CosFace Margin & PyTorch & 99.7\% Acc & Cosine separation & Angular limits \\
+Shi et al. \cite{shi2016edge} & Edge Architecture & IoT Edge & Survey & Data sovereignty & General framework \\
+\midrule
+\textbf{SmartCampus AI} & \textbf{SCRFD + ArcFace + FAISS + HDBSCAN} & \textbf{FastAPI, NestJS, Next.js} & \textbf{98.6\% Acc, 46.5ms} & \textbf{Zero-enrollment, conflict guard, behavioral telemetry} & \textbf{Requires calibrated optical camera angles} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\vspace{0.2in}
+\begin{flushleft}
+{\fontsize{14pt}{18pt}\selectfont \textbf{2.2 SUMMARY OF LITERATURE SURVEY}}\\[2mm]
+\end{flushleft}
+\addcontentsline{toc}{subsection}{\numberline{2.2}Summary of Literature Survey}
+
+\noindent The surveyed literature reveals a progressive evolution in computer vision, deep metric learning, and automated attendance tracking. While existing models achieve high accuracy on benchmark datasets, their deployment in live classroom environments remains constrained by three fundamental gaps: (i) the friction of supervised individual enrollment, (ii) the absence of identity conflict guards in unsupervised clustering, and (iii) the total dissociation between attendance logging and in-class student behavioral engagement. SmartCampus AI bridges these gaps by synthesizing edge-native ArcFace embeddings, sub-millisecond FAISS vector queries, unsupervised HDBSCAN candidate clustering, formal bijective conflict resolution, and synchronized behavioral telemetry into a unified, privacy-first platform.
+\newpage

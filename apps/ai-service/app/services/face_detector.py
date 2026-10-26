@@ -22,6 +22,8 @@ def check_and_download_models():
     import os
     candidate_roots = [
         os.getenv("INSIGHTFACE_ROOT"),
+        "apps/ai-service",
+        ".",
         str(Path.home() / ".insightface"),
         "/root/.insightface",
         "models",
@@ -93,11 +95,16 @@ class FaceDetector:
                 import os
                 model_root = os.getenv("INSIGHTFACE_ROOT")
                 if not model_root:
-                    if (Path.home() / ".insightface" / "models" / "buffalo_l").exists():
-                        model_root = str(Path.home() / ".insightface")
-                    elif Path("/root/.insightface/models/buffalo_l").exists():
-                        model_root = "/root/.insightface"
-                    else:
+                    for cr in [
+                        Path("apps/ai-service"),
+                        Path("."),
+                        Path.home() / ".insightface",
+                        Path("/root/.insightface"),
+                    ]:
+                        if (cr / "models" / "buffalo_l").exists():
+                            model_root = str(cr)
+                            break
+                    if not model_root:
                         model_root = "~/.insightface"
 
                 self._model = insightface.app.FaceAnalysis(

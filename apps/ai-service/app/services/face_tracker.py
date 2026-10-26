@@ -191,8 +191,8 @@ class TrackedFace:
         if len(self.selected_samples) >= max_samples:
             return None
 
-        # Return immediately if track has exceeded max quality evaluation attempts (max 15 attempts)
-        max_attempts = getattr(settings, "max_quality_attempts_per_track", 15)
+        # Return immediately if track has exceeded max quality evaluation attempts (e.g. 100 attempts)
+        max_attempts = getattr(settings, "max_quality_attempts_per_track", 100)
         if getattr(self, "quality_eval_attempts", 0) >= max_attempts:
             return None
         self.quality_eval_attempts = getattr(self, "quality_eval_attempts", 0) + 1

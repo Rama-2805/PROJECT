@@ -34,12 +34,17 @@ function resolveCropUrl(item: any): string | null {
   if (!item) return null;
   const raw = typeof item === "string" ? item : (item.imageUrl || item.imagePath || item.url || item.path || "");
   if (!raw || typeof raw !== "string") return null;
-  if (raw.startsWith("http://") || raw.startsWith("https://") || raw.startsWith("data:")) return raw;
-  if (raw.startsWith("/")) return raw;
+  if (raw.startsWith("data:")) return raw;
+  if (raw.includes("/storage/")) {
+    const sub = raw.split("/storage/")[1];
+    return `/storage/${sub}`;
+  }
   if (raw.includes("storage/")) {
     const sub = raw.split("storage/")[1];
     return `/storage/${sub}`;
   }
+  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+  if (raw.startsWith("/")) return raw;
   return `/storage/${raw}`;
 }
 
@@ -1855,19 +1860,45 @@ function EnrollModal({ cluster, activeSessionId, onClose, onEnrolled }: { cluste
 /* ═══════════════════════════════════════════════════════════════════
    CLUSTER DETAILS / GALLERY MODAL
 ═══════════════════════════════════════════════════════════════════ */
-function ClusterDetailsModal({ cluster, onClose, onDelete }: { cluster: Cluster; onClose: () => void; onDelete?: (c: Cluster) => void }) {
+function ClusterDetailsModal({
+  cluster,
+  onClose,
+  onDelete,
+  onRemoveCrop,
+}: {
+  cluster: Cluster;
+  onClose: () => void;
+  onDelete?: (c: Cluster) => void;
+  onRemoveCrop?: (cluster: Cluster, image: ClusterImage, index: number) => Promise<void> | void;
+}) {
+  const [currentCluster, setCurrentCluster] = useState<Cluster>(cluster);
   const [active, setActive] = useState(0);
-  const images = cluster.images.length > 0 ? cluster.images : (cluster.gallery || []).map((g, i) => ({
-    id: `${cluster.id}-g-${i}`,
-    frameNumber: i,
-    videoFileName: "classroom.mp4",
-    timestampSec: i * 2,
-    qualityScore: 0.88,
-    isBest: i === 0,
-    imageUrl: resolveCropUrl(g),
-  }));
-  const activeImg = images[active];
   const [imgFailed, setImgFailed] = useState(false);
+  const [deletingCrop, setDeletingCrop] = useState(false);
+
+  useEffect(() => {
+    setCurrentCluster(cluster);
+  }, [cluster]);
+
+  const rawImages = (currentCluster.images && currentCluster.images.length > 0)
+    ? currentCluster.images
+    : (currentCluster.gallery || []).map((g, i) => ({
+        id: `${currentCluster.id || currentCluster.clusterId}-g-${i}`,
+        frameNumber: i,
+        videoFileName: "classroom.mp4",
+        timestampSec: i * 2,
+        qualityScore: 0.88,
+        isBest: i === 0,
+        imageUrl: resolveCropUrl(g),
+      }));
+
+  const images: ClusterImage[] = rawImages.map((img, i) => ({
+    ...img,
+    imageUrl: resolveCropUrl(img.imageUrl),
+    isBest: Boolean(img.isBest) || (i === 0 && !rawImages.some(x => x.isBest)),
+  }));
+
+  const activeImg = images[active];
 
   const [prevActive, setPrevActive] = useState(active);
   if (prevActive !== active) {
@@ -1875,8 +1906,64 @@ function ClusterDetailsModal({ cluster, onClose, onDelete }: { cluster: Cluster;
     setImgFailed(false);
   }
 
-  const studentName = cluster.assignedStudentName || cluster.assignedStudent?.name;
-  const studentUsn = cluster.assignedUsn || cluster.assignedStudent?.usn;
+  const handleRemovePhoto = async (indexToRemove: number) => {
+    if (indexToRemove < 0 || indexToRemove >= images.length) return;
+    const targetImg = images[indexToRemove];
+    const cropLabel = `Crop #${indexToRemove + 1}`;
+    if (!confirm(`Are you sure you want to remove ${cropLabel} from this cluster?`)) {
+      return;
+    }
+
+    setDeletingCrop(true);
+    try {
+      const remainingImages = images.filter((_, idx) => idx !== indexToRemove);
+      const targetUrl = targetImg?.imageUrl || "";
+      const targetFname = typeof targetUrl === "string" ? targetUrl.split("/").pop()?.split("?")[0] || "" : "";
+      const remainingGallery = (currentCluster.gallery || []).filter((g: any, idx: number) => {
+        const gUrl = typeof g === "string" ? g : (g?.imageUrl || g?.imagePath || g?.url || "");
+        const gFname = typeof gUrl === "string" ? gUrl.split("/").pop()?.split("?")[0] || "" : "";
+        if (targetFname && gFname) {
+          return gFname !== targetFname;
+        }
+        return idx !== indexToRemove;
+      });
+
+      if (remainingImages.length > 0 && targetImg.isBest) {
+        remainingImages[0].isBest = true;
+      }
+
+      const newBestUrl = remainingImages[0]?.imageUrl || resolveCropUrl(remainingGallery[0]) || null;
+      const updated: Cluster = {
+        ...currentCluster,
+        images: remainingImages,
+        gallery: remainingGallery,
+        sampleCount: Math.max(0, (currentCluster.sampleCount || images.length) - 1),
+        bestImageUrl: newBestUrl,
+      };
+
+      setCurrentCluster(updated);
+
+      if (active >= remainingImages.length) {
+        setActive(Math.max(0, remainingImages.length - 1));
+      }
+
+      if (onRemoveCrop) {
+        await onRemoveCrop(updated, targetImg, indexToRemove);
+      }
+
+      if (remainingImages.length === 0 && onDelete) {
+        onDelete(updated);
+        onClose();
+      }
+    } catch (err: any) {
+      console.error("Failed to remove photo:", err);
+    } finally {
+      setDeletingCrop(false);
+    }
+  };
+
+  const studentName = currentCluster.assignedStudentName || currentCluster.assignedStudent?.name;
+  const studentUsn = currentCluster.assignedUsn || currentCluster.assignedStudent?.usn;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
@@ -1892,13 +1979,13 @@ function ClusterDetailsModal({ cluster, onClose, onDelete }: { cluster: Cluster;
 
         <div className="flex items-center justify-between px-6 py-4 border-b border-glass-border shrink-0">
           <div className="flex items-center gap-3">
-            <ClusterFace cluster={cluster} size={38} />
+            <ClusterFace cluster={currentCluster} size={38} />
             <div>
               <h2 className="text-sm font-bold text-text-primary">
-                {cluster.clusterId || `Cluster #${cluster.clusterNumber}`} — Identity Details &amp; Crops
+                {currentCluster.clusterId || `Cluster #${currentCluster.clusterNumber}`} — Identity Details &amp; Crops
               </h2>
               <p className="text-[11px] text-text-muted">
-                {images.length} quality crops · {cluster.sampleCount} detections · {Math.round((cluster.qualityAvg > 1 ? cluster.qualityAvg : cluster.qualityAvg * 100))}% avg quality
+                {images.length} quality crops · {currentCluster.sampleCount} detections · {Math.round((currentCluster.qualityAvg > 1 ? currentCluster.qualityAvg : currentCluster.qualityAvg * 100))}% avg quality
               </p>
             </div>
           </div>
@@ -1906,7 +1993,7 @@ function ClusterDetailsModal({ cluster, onClose, onDelete }: { cluster: Cluster;
             {onDelete && (
               <button
                 onClick={() => {
-                  onDelete(cluster);
+                  onDelete(currentCluster);
                   onClose();
                 }}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-semibold transition-all cursor-pointer"
@@ -1935,7 +2022,7 @@ function ClusterDetailsModal({ cluster, onClose, onDelete }: { cluster: Cluster;
                     className="w-full h-full object-cover"
                   />
                 ) : (
-                  <FaceAvatar id={`${cluster.clusterId || cluster.id}-${active}`} size={160} />
+                  <FaceAvatar id={`${currentCluster.clusterId || currentCluster.id}-${active}`} size={160} />
                 )}
                 {activeImg?.isBest && (
                   <div className="absolute top-2.5 right-2.5 flex items-center gap-1 bg-yellow-500/20 border border-yellow-500/40 rounded-full px-2 py-1">
@@ -1954,15 +2041,29 @@ function ClusterDetailsModal({ cluster, onClose, onDelete }: { cluster: Cluster;
 
             <div className="mt-8 grid grid-cols-3 gap-3 w-full max-w-md">
               {[
-                { label: "Sample #", value: `${active + 1} of ${images.length}` },
-                { label: "Track ID", value: `Track #${cluster.trackCount}` },
-                { label: "Consistency", value: `${Math.round(cluster.confidence * 100)}%` },
+                { label: "Sample #", value: images.length > 0 ? `${active + 1} of ${images.length}` : "0 of 0" },
+                { label: "Track ID", value: `Track #${currentCluster.trackCount}` },
+                { label: "Consistency", value: `${Math.round(currentCluster.confidence * 100)}%` },
               ].map(({ label, value }) => (
                 <div key={label} className="text-center p-2.5 rounded-xl bg-glass-light border border-glass-border">
                   <p className="text-xs font-semibold text-text-primary">{value}</p>
                   <p className="text-[9px] text-text-muted mt-0.5 uppercase tracking-wider">{label}</p>
                 </div>
               ))}
+            </div>
+
+            {/* Remove photo action for the current active crop */}
+            <div className="mt-5 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => handleRemovePhoto(active)}
+                disabled={deletingCrop || images.length === 0}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-semibold transition-all shadow-sm cursor-pointer disabled:opacity-50"
+                title={`Remove Crop #${active + 1} from this cluster`}
+              >
+                {deletingCrop ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                <span>Remove This Photo ({images.length > 0 ? `${active + 1} of ${images.length}` : 0})</span>
+              </button>
             </div>
 
             {studentName && (
@@ -1984,40 +2085,58 @@ function ClusterDetailsModal({ cluster, onClose, onDelete }: { cluster: Cluster;
                 <p className="text-xs text-text-muted text-center mt-4">No crops stored</p>
               )}
               {images.map((im, i) => (
-                <button
+                <div
                   key={im.id || i}
-                  onClick={() => setActive(i)}
                   className={cn(
-                    "w-full flex items-center gap-2.5 p-2 rounded-xl border transition-all text-left",
+                    "group/crop relative w-full flex items-center gap-1.5 p-2 rounded-xl border transition-all text-left",
                     active === i ? "bg-blue-500/15 border-blue-500/40 shadow-sm" : "bg-glass-light border-glass-border hover:bg-glass-medium"
                   )}
                 >
-                  <div className={cn(
-                    "w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border overflow-hidden",
-                    active === i ? "bg-blue-500/20 border-blue-500/30" : "bg-glass-light border-glass-border"
-                  )}>
-                    {im.imageUrl ? (
-                      <img src={im.imageUrl} alt="" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
-                    ) : (
-                      <ScanFace className={cn("w-4 h-4", active === i ? "text-blue-400" : "text-text-muted")} />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-text-primary truncate">Crop #{i + 1}</p>
-                    <p className="text-[9px] font-mono text-text-muted">
-                      {Math.round((im.qualityScore || 0.85) > 1 ? im.qualityScore : (im.qualityScore || 0.85) * 100)}% quality
-                    </p>
-                  </div>
-                  {im.isBest && <Star className="w-3.5 h-3.5 text-yellow-400 shrink-0" fill="currentColor" />}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setActive(i)}
+                    className="flex-1 flex items-center gap-2.5 min-w-0 cursor-pointer"
+                  >
+                    <div className={cn(
+                      "w-10 h-10 rounded-lg flex items-center justify-center shrink-0 border overflow-hidden",
+                      active === i ? "bg-blue-500/20 border-blue-500/30" : "bg-glass-light border-glass-border"
+                    )}>
+                      {im.imageUrl ? (
+                        <img src={im.imageUrl} alt="" className="w-full h-full object-cover" onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                      ) : (
+                        <ScanFace className={cn("w-4 h-4", active === i ? "text-blue-400" : "text-text-muted")} />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-text-primary truncate">Crop #{i + 1}</p>
+                      <p className="text-[9px] font-mono text-text-muted">
+                        {Math.round((im.qualityScore || 0.85) > 1 ? im.qualityScore : (im.qualityScore || 0.85) * 100)}% quality
+                      </p>
+                    </div>
+                    {im.isBest && <Star className="w-3.5 h-3.5 text-yellow-400 shrink-0" fill="currentColor" />}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemovePhoto(i);
+                    }}
+                    disabled={deletingCrop}
+                    title={`Remove Crop #${i + 1}`}
+                    className="opacity-70 group-hover/crop:opacity-100 p-1.5 rounded-lg text-text-muted hover:text-red-400 hover:bg-red-500/20 transition-all cursor-pointer shrink-0 disabled:opacity-40"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               ))}
             </div>
 
             <div className="p-4 border-t border-glass-border space-y-2 shrink-0 font-mono text-[10px]">
-              <div className="flex justify-between"><span className="text-text-muted">First Seen:</span><span className="text-text-primary">{cluster.firstSeenTime}</span></div>
-              <div className="flex justify-between"><span className="text-text-muted">Last Seen:</span><span className="text-text-primary">{cluster.lastSeenTime}</span></div>
-              <div className="flex justify-between"><span className="text-text-muted">Tracks:</span><span className="text-blue-400">{cluster.trackCount}</span></div>
-              <div className="flex justify-between"><span className="text-text-muted">Detections:</span><span className="text-emerald-400">{cluster.sampleCount}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">First Seen:</span><span className="text-text-primary">{currentCluster.firstSeenTime}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">Last Seen:</span><span className="text-text-primary">{currentCluster.lastSeenTime}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">Tracks:</span><span className="text-blue-400">{currentCluster.trackCount}</span></div>
+              <div className="flex justify-between"><span className="text-text-muted">Detections:</span><span className="text-emerald-400">{currentCluster.sampleCount}</span></div>
             </div>
           </div>
         </div>
@@ -2418,6 +2537,7 @@ export default function FaceEnrollmentPage() {
   const [processingSessionId, setProcessingSessionId] = useState<string | null>(null);
   const [selectedDetector, setSelectedDetector] = useState<string>("yolo26");
   const [showVideoMonitor, setShowVideoMonitor] = useState<boolean>(true);
+  const [finalizing, setFinalizing] = useState<boolean>(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   const pushToast = (msg: string) => {
@@ -2493,8 +2613,8 @@ export default function FaceEnrollmentPage() {
           const sName = dc.assignedStudentName || acMatch?.assignedStudentName || acMatch?.assignedStudent?.name || (dc.assignedStudent?.name);
           const sUsn = dc.assignedStudentUsn || dc.assignedUsn || acMatch?.assignedUsn || acMatch?.assignedStudent?.usn || (dc.assignedStudent?.usn);
           return {
-            ...(acMatch || {}),
             ...dc,
+            ...(acMatch || {}),
             clusterNumber: dc.clusterNumber ?? acMatch?.clusterNumber ?? 1,
             clusterId: dc.clusterId || acMatch?.clusterId || `cluster_${String(dc.clusterNumber).padStart(3, '0')}`,
             sessionId,
@@ -2508,8 +2628,15 @@ export default function FaceEnrollmentPage() {
               status: "CONFIRMED",
               source: "MANUAL",
             } : (acMatch?.assignedStudent || null),
-            status: sName ? "ASSIGNED" : (dc.status || "UNASSIGNED"),
-            identity_status: sName ? "CONFIRMED" : (dc.identity_status || "UNKNOWN"),
+            status: sName ? "ASSIGNED" : (acMatch?.status || dc.status || "UNASSIGNED"),
+            identity_status: sName ? "CONFIRMED" : (acMatch?.identity_status || dc.identity_status || "UNKNOWN"),
+            candidateMatch: acMatch?.candidateMatch || dc.candidateMatch,
+            bestImageUrl: acMatch?.bestImageUrl || dc.bestImageUrl,
+            bestImagePath: acMatch?.bestImagePath || dc.bestImagePath,
+            gallery: (acMatch?.gallery && acMatch.gallery.length > 0) ? acMatch.gallery : (dc.gallery || []),
+            trackCount: acMatch?.trackCount ?? dc.trackCount ?? 1,
+            sampleCount: acMatch?.sampleCount ?? dc.sampleCount ?? 1,
+            qualityAvg: acMatch?.qualityAvg ?? dc.qualityScore ?? dc.qualityAvg ?? 85,
           };
         });
 
@@ -2824,6 +2951,50 @@ export default function FaceEnrollmentPage() {
     }
   }, [activeId]);
 
+  const handleRemoveCrop = useCallback(async (updatedCluster: Cluster, removedImage: ClusterImage, removedIndex: number) => {
+    // 1. Immediately update cluster in state
+    setClusters(prev => prev.map(c => 
+      (c.id === updatedCluster.id || c.clusterId === updatedCluster.clusterId)
+        ? updatedCluster
+        : c
+    ));
+    if (detailsTarget && (detailsTarget.id === updatedCluster.id || detailsTarget.clusterId === updatedCluster.clusterId)) {
+      setDetailsTarget(updatedCluster);
+    }
+
+    const cid = updatedCluster.clusterId || updatedCluster.id;
+    const sId = updatedCluster.sessionId || activeId;
+
+    pushToast(`🗑️ Removed photo from Cluster #${updatedCluster.clusterNumber || cid}.`);
+
+    // 2. Persist to AI service
+    const imgUrl = (typeof removedImage === "string" ? removedImage : (removedImage?.imageUrl || (removedImage as any)?.imagePath || "")) || "";
+    const imgId = (typeof removedImage === "object" && removedImage?.id) ? removedImage.id : undefined;
+
+    if (sId && cid) {
+      try {
+        const url = `${AI_BASE}/api/v1/sessions/${sId}/clusters/${cid}/images?imageUrl=${encodeURIComponent(imgUrl)}&imageIndex=${removedIndex}`;
+        await fetch(url, { method: "DELETE" });
+      } catch (e) {
+        console.warn("Failed to delete crop from AI service:", e);
+      }
+    }
+
+    // 3. Persist to NestJS if recorded in DB
+    if (updatedCluster.id) {
+      try {
+        await authFetch(`${API_BASE}/enrollment/clusters/${updatedCluster.id}/images`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            imageId: imgId,
+            imageUrl: imgUrl,
+          }),
+        });
+      } catch {}
+    }
+  }, [activeId, detailsTarget]);
+
   const handleDeleteSession = useCallback(async (sessionId: string, sessionName: string) => {
     if (!confirm(`Are you sure you want to delete session "${sessionName}"? This action will remove all videos and detected identity clusters.`)) {
       return;
@@ -2842,18 +3013,43 @@ export default function FaceEnrollmentPage() {
   }, [activeId]);
 
   const handleFinalize = useCallback(async () => {
-    if (!activeId) return;
+    if (!activeId || finalizing) return;
+    setFinalizing(true);
     try {
+      pushToast("⏳ Finalising class & enrolling face data for all verified students...");
       const res = await authFetch(`${API_BASE}/enrollment/sessions/${activeId}/finalize`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to finalize session");
+      
       setSessions(prev => prev.map(s => s.id === activeId ? { ...s, status: "COMPLETED" } : s));
+      
+      // Update local state so all confirmed clusters show as Enrolled immediately
+      setClusters(prev => prev.map(c => {
+        if (c.sessionId !== activeId) return c;
+        const isAssigned = Boolean(
+          c.assignedStudentName || c.assignedUsn || c.assignedStudent ||
+          c.status === "ASSIGNED" || c.identity_status === "CONFIRMED"
+        );
+        if (isAssigned) {
+          return {
+            ...c,
+            isEnrolled: true,
+            enrolled: true,
+            status: "ASSIGNED",
+            identity_status: "CONFIRMED",
+          };
+        }
+        return c;
+      }));
+
       await loadClusters(activeId);
-      pushToast("🎉 Class Finalised! All verified clusters are now permanently locked.");
+      pushToast(`🎉 Class Finalised! Automatically enrolled face data for ${data.confirmedCount || "all"} verified students.`);
     } catch (err: any) {
       pushToast(`❌ Failed to finalize: ${err.message || "Unknown error"}`);
+    } finally {
+      setFinalizing(false);
     }
-  }, [activeId, loadClusters]);
+  }, [activeId, finalizing, loadClusters]);
 
   const handleAssigned = useCallback((clusterId: string, name: string) => {
     setClusters(prev => prev.map(c => c.id === clusterId ? {
@@ -3049,7 +3245,14 @@ export default function FaceEnrollmentPage() {
         {showCreate && <CreateSessionModal onClose={() => setShowCreate(false)} onCreated={handleCreated} />}
         {assignTarget && <AssignModal cluster={assignTarget} onClose={() => setAssignTarget(null)} onDone={handleAssigned} />}
         {enrollTarget && <EnrollModal cluster={enrollTarget} activeSessionId={activeId} onClose={() => setEnrollTarget(null)} onEnrolled={handleEnrolled} />}
-        {detailsTarget && <ClusterDetailsModal cluster={detailsTarget} onClose={() => setDetailsTarget(null)} onDelete={handleDeleteCluster} />}
+        {detailsTarget && (
+          <ClusterDetailsModal
+            cluster={detailsTarget}
+            onClose={() => setDetailsTarget(null)}
+            onDelete={handleDeleteCluster}
+            onRemoveCrop={handleRemoveCrop}
+          />
+        )}
       </AnimatePresence>
 
       {/* ═══ LEFT SIDEBAR ═══════════════════════════════════════════ */}
@@ -3177,11 +3380,12 @@ export default function FaceEnrollmentPage() {
                     ) : (
                       <button
                         onClick={handleFinalize}
-                        title="Lock verified clusters permanently to this class and students"
-                        className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.35)]"
+                        disabled={finalizing}
+                        title="Lock verified clusters permanently to this class and automatically enroll face biometric profiles"
+                        className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-xs font-semibold rounded-xl transition-all shadow-[0_0_20px_rgba(16,185,129,0.35)] cursor-pointer"
                       >
-                        <Shield className="w-4 h-4" />
-                        <span>Finalise Class</span>
+                        {finalizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
+                        <span>{finalizing ? "Enrolling & Finalising..." : "Finalise Class"}</span>
                       </button>
                     )
                   )}

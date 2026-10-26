@@ -13,7 +13,7 @@ import queue
 import threading
 import numpy as np
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 from sqlalchemy.orm import Session
 from ..config.settings import settings
 from ..config.database import SessionLocal
@@ -118,6 +118,8 @@ class AttendanceEngine:
                 logger.error(f"Failed to start camera capture for session on {camera_id}")
                 return False
 
+            faiss_service.load_index()
+            logger.info(f"Loaded FAISS index for session: {faiss_service.index.ntotal if faiss_service.index else 0} vectors across {len(set(faiss_service.metadata.values())) if faiss_service.metadata else 0} students")
             self.session_recognized_students.clear()
             self.active_sessions[camera_id] = {
                 "class_id": class_id,
@@ -214,35 +216,56 @@ class AttendanceEngine:
             "timestamp": time.time(),
         }
 
-    def stop_attendance_session(self, camera_id: str) -> bool:
+    def stop_attendance_session(self, camera_id: Optional[str] = None) -> bool:
         """Stop capturing and terminate session loop.
 
         Args:
-            camera_id: Camera identifier
+            camera_id: Camera identifier, or None to stop all running sessions.
 
         Returns:
             True if stopped successfully
         """
         with self._lock:
-            session = self.active_sessions.get(camera_id)
-            if not session:
-                return False
-            session["running"] = False
-            session_mode = session.get("mode", "attendance")
+            # Determine target sessions: if camera_id exists, stop it; otherwise stop all running
+            if camera_id and camera_id in self.active_sessions:
+                targets = [camera_id]
+            else:
+                targets = list(self.active_sessions.keys())
 
-        camera_service.stop_camera(camera_id)
-        
-        thread = session.get("thread")
-        if thread and thread.is_alive():
-            thread.join(timeout=2.0)
+            sessions_to_stop = []
+            for cid in targets:
+                sess = self.active_sessions.get(cid)
+                if sess:
+                    sess["running"] = False
+                    sessions_to_stop.append((cid, sess))
 
+        for cid, sess in sessions_to_stop:
+            camera_service.stop_camera(cid)
+            thread = sess.get("thread")
+            if thread and thread.is_alive():
+                thread.join(timeout=2.0)
+            with self._lock:
+                self.active_sessions.pop(cid, None)
+            if sess.get("mode") == "behavior":
+                self._reset_behavior_state(resolve_reason="session_stopped")
+            logger.info(f"Stopped {sess.get('mode', 'attendance')} session for camera {cid}")
+
+        # Ensure all camera capture threads are released
+        camera_service.stop_all_cameras()
+
+        # Clear active frame caches and recognized students
         with self._lock:
-            self.active_sessions.pop(camera_id, None)
+            self.session_recognized_students.clear()
+            self.annotated_frames_attendance.clear()
+            self.annotated_frames_behavior.clear()
+            self.annotated_frames.clear()
 
-        if session_mode == "behavior":
-            self._reset_behavior_state(resolve_reason="session_stopped")
+        # Broadcast session termination to all connected WebSocket clients
+        try:
+            websocket_manager.broadcast_sync("SESSION_STOPPED", {"camera_id": camera_id or "all"})
+        except Exception:
+            pass
 
-        logger.info(f"Stopped {session_mode} session for camera {camera_id}")
         return True
 
     def _session_loop(self, camera_id: str):
@@ -289,10 +312,24 @@ class AttendanceEngine:
                     if tracking_info:
                         websocket_manager.broadcast_sync("FACE_DETECTED", {"camera_id": camera_id, "tracks": tracking_info})
 
-                    # 3. Analyze each tracked face
+                    # 3. Analyze each tracked face with 1-to-1 Frame Spatial Exclusivity
                     any_recognized = False
                     h_f, w_f = frame.shape[:2]
-                    for track in active_tracks:
+                    claimed_usns_in_frame: Set[str] = set()
+
+                    # Sort tracks so that established confirmed tracks with highest confidence retain priority
+                    sorted_tracks = sorted(
+                        active_tracks,
+                        key=lambda t: (
+                            1 if getattr(t, "student_usn", None) and getattr(t, "attendance_marked", False) else 0,
+                            getattr(t, "recognition_confidence", 0.0),
+                            len(getattr(t, "confidence_history", [])),
+                            time.time() - getattr(t, "first_seen", time.time())
+                        ),
+                        reverse=True
+                    )
+
+                    for track in sorted_tracks:
                         # Extract crop image from frame safely with integer bounds
                         bx1, by1, bx2, by2 = [int(round(float(v))) for v in track.bbox]
                         bx1 = max(0, min(bx1, w_f - 1))
@@ -311,9 +348,31 @@ class AttendanceEngine:
                             track,
                             crop,
                             allow_attendance=(mode != "behavior"),
+                            frame=frame,
+                            claimed_usns=claimed_usns_in_frame,
                         )
                         if recognized:
                             any_recognized = True
+
+                    # Strict 1-to-1 Frame Spatial Exclusivity: Group active tracks by student_usn
+                    # and ensure at most ONE physical bounding box (the highest confidence track) holds any student identity.
+                    usn_to_tracks: Dict[str, List[Any]] = {}
+                    for t in active_tracks:
+                        u = getattr(t, "student_usn", None)
+                        if u:
+                            u_clean = str(u).strip().upper()
+                            usn_to_tracks.setdefault(u_clean, []).append(t)
+
+                    for u_clean, t_list in usn_to_tracks.items():
+                        if len(t_list) > 1:
+                            # Keep only the track with highest recognition_confidence
+                            t_list.sort(key=lambda trk: getattr(trk, "recognition_confidence", 0.0), reverse=True)
+                            winner = t_list[0]
+                            for loser in t_list[1:]:
+                                loser.student_usn = None
+                                loser.student_name = None
+                                loser.recognition_confidence = 0.0
+                                loser.attendance_marked = False
 
                     # Update camera service diagnostics metrics
                     camera_service.record_detection_metrics(
@@ -352,7 +411,7 @@ class AttendanceEngine:
                         cap_source = camera_service._sources.get(camera_id, "")
                         video_name = os.path.basename(cap_source) if cap_source else "CCTV STREAM"
 
-                    annotated_att = self._draw_attendance_overlay(frame, active_tracks, video_name)
+                    annotated_att = self._draw_attendance_overlay(frame, active_tracks, video_name, camera_id=camera_id)
                     annotated_beh = self._draw_behavior_overlay(frame, active_tracks, video_name)
 
                     with self._lock:
@@ -376,7 +435,7 @@ class AttendanceEngine:
         except Exception as fatal_err:
             logger.error(f"Fatal error in attendance loop: {fatal_err}")
 
-    def _draw_attendance_overlay(self, frame: np.ndarray, active_tracks: List[TrackedFace], video_name: str = "") -> np.ndarray:
+    def _draw_attendance_overlay(self, frame: np.ndarray, active_tracks: List[TrackedFace], video_name: str = "", camera_id: str = None) -> np.ndarray:
         """Render high-contrast Attendance-Only HUD and bounding box overlays on live frame.
         
         Strictly excludes any behavioral alert pills or phone/sleeping markers.
@@ -400,18 +459,54 @@ class AttendanceEngine:
         status_badge = "BIOMETRIC VERIFICATION: ACTIVE"
         cv2.putText(annotated, f"{vid_title}  |  {status_badge}", (220, hud_h // 2 + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 215, 255), 1, cv2.LINE_AA)
 
-        stats_label = f"PRESENT: {len(self.session_recognized_students)} ENROLLED  |  ACTIVE TRACKS: {len(active_tracks)}"
+        active_sess = self.active_sessions.get(camera_id, {}) if camera_id else {}
+        marked_usns = active_sess.get("marked_students", set())
+        total_present = set(self.session_recognized_students.keys()) | {str(u).strip().upper() for u in marked_usns}
+
+        stats_label = f"PRESENT: {len(total_present)} ENROLLED  |  ACTIVE TRACKS: {len(active_tracks)}"
         cv2.putText(annotated, stats_label, (max(380, w - 370), hud_h // 2 + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 128), 1, cv2.LINE_AA)
 
-        # 2. Draw tracks with emerald presence corner brackets
-        for t in active_tracks:
+        # 2. Draw tracks with emerald presence corner brackets (Strict 1-to-1 Frame Spatial Exclusivity)
+        drawn_present_usns: Set[str] = set()
+        sorted_draw_tracks = sorted(
+            active_tracks,
+            key=lambda trk: getattr(trk, "recognition_confidence", 0.0),
+            reverse=True
+        )
+
+        for t in sorted_draw_tracks:
             tx1, ty1, tx2, ty2 = [int(round(float(v))) for v in t.bbox]
             tx1, ty1 = max(0, tx1), max(0, ty1)
             tx2, ty2 = min(w, tx2), min(h, ty2)
 
-            is_rec = hasattr(t, "student_usn") and t.student_usn is not None
-            student_name = getattr(t, "student_name", t.student_usn if is_rec else "")
+            t_usn = getattr(t, "student_usn", None)
+            if not t_usn and getattr(t, "assigned_student_id", None):
+                aid = str(t.assigned_student_id).strip().upper()
+                if aid in total_present:
+                    t.student_usn = aid
+                    t_usn = aid
+
+            clean_tusn = str(t_usn).strip().upper() if t_usn else None
+
+            # Spatial Exclusivity: if this student USN was already drawn on another higher-confidence track in this frame,
+            # this duplicate track must NEVER render the student badge
+            if clean_tusn and clean_tusn in drawn_present_usns:
+                clean_tusn = None
+                is_rec = False
+            else:
+                is_rec = bool(clean_tusn) and (clean_tusn in total_present or getattr(t, "attendance_marked", False))
+                if is_rec and clean_tusn:
+                    drawn_present_usns.add(clean_tusn)
+
+            student_name = getattr(t, "student_name", None)
+            if not student_name and clean_tusn:
+                student_name = self.session_recognized_students.get(clean_tusn, {}).get("name", clean_tusn)
+            if not student_name and is_rec:
+                student_name = clean_tusn or ""
+
             conf = getattr(t, "recognition_confidence", 0.0)
+            if conf <= 0.0 and clean_tusn and clean_tusn in self.session_recognized_students:
+                conf = float(self.session_recognized_students[clean_tusn].get("confidence", 0.95))
 
             if is_rec:
                 # Emerald brackets for confirmed attendance
@@ -429,7 +524,7 @@ class AttendanceEngine:
 
                 # Attendance Badge (Top of bbox)
                 badge_text = f"✓ PRESENT: {student_name}"
-                sub_text = f"{t.student_usn} · {int(conf*100)}%"
+                sub_text = f"{clean_tusn or t.track_id} · {int(conf*100)}%"
                 badge_y = max(hud_h + 24, ty1 - 6)
                 badge_w = max(len(badge_text), len(sub_text)) * 7 + 10
                 cv2.rectangle(annotated, (tx1 - 2, badge_y - 24), (tx1 + badge_w, badge_y), (15, 20, 15), -1)
@@ -554,9 +649,9 @@ class AttendanceEngine:
 
         return annotated
 
-    def _draw_overlay(self, frame: np.ndarray, active_tracks: List[TrackedFace], video_name: str = "") -> np.ndarray:
+    def _draw_overlay(self, frame: np.ndarray, active_tracks: List[TrackedFace], video_name: str = "", camera_id: str = None) -> np.ndarray:
         """Default overlay fallback (delegates to attendance overlay)."""
-        return self._draw_attendance_overlay(frame, active_tracks, video_name)
+        return self._draw_attendance_overlay(frame, active_tracks, video_name, camera_id=camera_id)
 
     def _get_student_details(self, db: Session, usn: str) -> Tuple[Optional[str], str]:
         """Resolves student DB id and full name for a USN, checking in-memory cache and PostgreSQL."""
@@ -574,12 +669,13 @@ class AttendanceEngine:
             if bind.dialect.name == "postgresql":
                 from sqlalchemy import text
                 row = db.execute(
-                    text('SELECT id, "fullName" FROM "Student" WHERE "studentId" = :u OR usn = :u OR "rollNumber" = :u OR UPPER("fullName") = :u LIMIT 1'),
+                    text('SELECT id, "fullName", gender FROM "Student" WHERE "studentId" = :u OR usn = :u OR "rollNumber" = :u OR UPPER("fullName") = :u LIMIT 1'),
                     {"u": clean_usn}
                 ).fetchone()
                 if row:
                     st_id, st_name = str(row[0]), str(row[1])
-                    self._student_cache[clean_usn] = {"id": st_id, "name": st_name}
+                    st_gender = str(row[2]) if row[2] else None
+                    self._student_cache[clean_usn] = {"id": st_id, "name": st_name, "gender": st_gender}
                     return st_id, st_name
         except Exception as e:
             logger.debug(f"Direct Student table query error: {e}")
@@ -588,12 +684,23 @@ class AttendanceEngine:
         try:
             student = db.query(Student).filter(Student.usn == clean_usn).first()
             if student:
-                self._student_cache[clean_usn] = {"id": str(student.id), "name": student.name}
+                st_gender = getattr(student, "gender", None)
+                self._student_cache[clean_usn] = {"id": str(student.id), "name": student.name, "gender": st_gender}
                 return str(student.id), student.name
         except Exception:
             pass
             
         return None, clean_usn
+
+    def _get_student_gender(self, db: Session, usn: str) -> Optional[str]:
+        """Resolves student gender ('Male' or 'Female') from cache or database."""
+        if not hasattr(self, "_student_cache"):
+            self._student_cache = {}
+        clean_usn = usn.strip().upper()
+        if clean_usn in self._student_cache and "gender" in self._student_cache[clean_usn]:
+            return self._student_cache[clean_usn].get("gender")
+        self._get_student_details(db, clean_usn)
+        return self._student_cache.get(clean_usn, {}).get("gender")
 
     def _get_section_usns(self, db: Session, class_id: str) -> Optional[set]:
         """Resolves the set of uppercase student USNs belonging to the target class/section."""
@@ -649,20 +756,59 @@ class AttendanceEngine:
 
         return None
 
-    def _process_tracked_face(self, db: Session, camera_id: str, class_id: str, track: TrackedFace, crop: np.ndarray, allow_attendance: bool = True):
+    def _process_tracked_face(
+        self,
+        db: Session,
+        camera_id: str,
+        class_id: str,
+        track: TrackedFace,
+        crop: np.ndarray,
+        allow_attendance: bool = True,
+        frame: Optional[np.ndarray] = None,
+        claimed_usns: Optional[Set[str]] = None,
+    ):
         """Evaluates a tracked face and executes matching, attendance, or learning candidates.
 
         Args:
             allow_attendance: When False (behavioural monitoring mode) the person may still be
                 identified so behavioural events can be attributed, but attendance is never
                 marked, broadcast, or persisted.
+            frame: Optional full camera frame for direct landmark affine warp without border smears.
+            claimed_usns: Set of USNs already claimed by other active tracks in the current frame.
         """
-        # If track has already been marked for attendance and candidate captured, skip redundant re-inference
-        if getattr(track, "attendance_marked", False) and getattr(track, "candidate_processed", False):
+        active_sess = self.active_sessions.get(camera_id, {})
+        cur_track_usn = getattr(track, "student_usn", None)
+        if cur_track_usn:
+            cur_track_usn = str(cur_track_usn).strip().upper()
+
+        # 1-to-1 Frame Spatial Exclusivity Check on previously held USN:
+        # If another track in this frame already claimed this USN, this duplicate track cannot hold it!
+        if cur_track_usn and claimed_usns is not None and cur_track_usn in claimed_usns:
+            logger.debug(f"[SPATIAL EXCLUSIVITY] Disallowing duplicate claim of {cur_track_usn} on track {track.track_id}")
+            track.student_usn = None
+            track.student_name = None
+            track.recognition_confidence = 0.0
+            track.attendance_marked = False
+            cur_track_usn = None
+
+        # MONOTONIC ATTENDANCE: Once a student is marked or confirmed in this active session,
+        # permanently lock the track identity and NEVER wipe it or re-classify as UNKNOWN
+        # (provided it is not claiming a USN already claimed by another track in this frame)
+        if cur_track_usn and (
+            getattr(track, "attendance_marked", False) or
+            cur_track_usn in active_sess.get("marked_students", set())
+        ):
+            track.attendance_marked = True
+            track.student_usn = cur_track_usn
+            if claimed_usns is not None:
+                claimed_usns.add(cur_track_usn)
+            if not getattr(track, "student_name", None):
+                _, s_name = self._get_student_details(db, cur_track_usn)
+                track.student_name = s_name
             return True
 
         h, w = crop.shape[:2]
-        if w < 22 or h < 22:
+        if w < 12 or h < 12:
             return False
 
         # Use pre-detected raw face embedding if available
@@ -675,14 +821,19 @@ class AttendanceEngine:
                 emb = emb / norm
 
         if emb is None:
-            emb = embedding_service.generate_embedding(crop, getattr(track, "landmarks", None))
+            emb = embedding_service.generate_embedding(
+                crop,
+                getattr(track, "landmarks", None),
+                full_frame=frame,
+                bbox=getattr(track, "bbox", None)
+            )
             
         if emb is None:
             return False
 
         # Query FAISS Index with classroom threshold and section whitelist
-        rec_thresh = max(0.60, float(getattr(settings, "recognition_confidence_threshold", 0.60)))
-        margin_thresh = float(getattr(settings, "margin_ambiguity_threshold", 0.10))
+        rec_thresh = float(getattr(settings, "recognition_confidence_threshold", 0.46))
+        margin_thresh = float(getattr(settings, "margin_ambiguity_threshold", 0.008))
 
         # Restrict candidate matching strictly to active session's enrolled students
         active_sess = self.active_sessions.get(camera_id, {})
@@ -692,6 +843,14 @@ class AttendanceEngine:
 
         norm_allowed = {u.strip().upper() for u in allowed_usns if u} if allowed_usns else set()
 
+        # Strictly intersect with FAISS metadata so ONLY students who actually have enrolled face models can be matched
+        if hasattr(faiss_service, "metadata") and faiss_service.metadata:
+            faiss_enrolled = {str(u).strip().upper() for u in faiss_service.metadata.values() if u}
+            if not norm_allowed:
+                norm_allowed = faiss_enrolled
+            else:
+                norm_allowed = norm_allowed.intersection(faiss_enrolled)
+
         # Strict safety check: If no enrolled students are authorized for this session,
         # live recognition must reject all faces as UNKNOWN. Never fall back to global FAISS or prototypes.
         if not norm_allowed:
@@ -699,20 +858,58 @@ class AttendanceEngine:
             self._save_unknown_face(db, crop, emb, quality_val, camera_id, class_id)
             return False
 
+        # Current track's previously held USN (if any)
+        cur_track_usn = getattr(track, "student_usn", None)
+        if cur_track_usn:
+            cur_track_usn = str(cur_track_usn).strip().upper()
+
+        # Biological Gender Consistency Gate: determine face biological gender via InsightFace genderage model
+        det_gender = getattr(track, "detected_gender", None)
+        if det_gender is None and frame is not None:
+            try:
+                ga_model = getattr(face_detector, "model", None)
+                if ga_model and hasattr(ga_model, "models") and "genderage" in ga_model.models:
+                    class _FaceProxy:
+                        def __init__(self, b):
+                            self.bbox = b
+                        def __setitem__(self, k, v):
+                            pass
+                    g_pred, _ = ga_model.models["genderage"].get(frame, _FaceProxy(track.bbox))
+                    det_gender = int(g_pred)  # 0 = Female, 1 = Male
+                    track.detected_gender = det_gender
+            except Exception as e:
+                logger.debug(f"Gender prediction error: {e}")
+
         # Check section-scoped candidates for a suggested match hint on unknown faces (no global leakage)
         sugg_usn = None
         sugg_conf = 0.0
         try:
-            scoped_match = faiss_service.search_face(emb, threshold=0.55, allowed_usns=norm_allowed)
+            scoped_match = faiss_service.search_face(emb, threshold=rec_thresh, allowed_usns=norm_allowed)
             if scoped_match:
                 sugg_usn, sugg_conf = scoped_match
         except Exception:
             pass
 
-        # Retrieve top candidates strictly within allowed enrolled roster
+        # Retrieve top candidates strictly within allowed enrolled roster and exclude already claimed USNs in this frame
+        candidates = faiss_service.search_top_k(emb, k=15, threshold=rec_thresh, allowed_usns=norm_allowed)
         top_candidates = []
-        candidates = faiss_service.search_top_k(emb, k=10, threshold=rec_thresh, allowed_usns=norm_allowed)
-        top_candidates = [(u, s) for u, s in candidates if u.strip().upper() in norm_allowed]
+        for cand_usn, cand_sim in candidates:
+            u_clean = cand_usn.strip().upper()
+            if u_clean in norm_allowed:
+                # 1-to-1 Frame Spatial Exclusivity: skip if another track in this frame already claimed this USN
+                if claimed_usns and u_clean in claimed_usns and u_clean != cur_track_usn:
+                    continue
+                # Biological Gender Consistency Gate: reject cross-gender candidate matches
+                if det_gender is not None:
+                    cand_gender = self._get_student_gender(db, u_clean)
+                    if cand_gender:
+                        cg_lower = str(cand_gender).strip().lower()
+                        # det_gender: 1 = Male, 0 = Female
+                        if det_gender == 1 and cg_lower == "female":
+                            continue
+                        if det_gender == 0 and cg_lower == "male":
+                            continue
+                top_candidates.append((cand_usn, cand_sim))
 
         # Group and deduplicate candidates by distinct student USN
         unique_candidates = []
@@ -730,7 +927,11 @@ class AttendanceEngine:
         if len(unique_candidates) >= 2:
             (top1_usn, top1_sim), (top2_usn, top2_sim) = unique_candidates[0], unique_candidates[1]
             margin = top1_sim - top2_sim
-            if margin < margin_thresh:
+            # High-confidence matches (>= 0.48) or distinct top-1 matches (margin >= margin_thresh) are accepted
+            if top1_sim >= 0.48 or margin >= margin_thresh:
+                matched_usn = top1_usn
+                confidence = top1_sim
+            else:
                 is_ambiguous = True
                 logger.warning(
                     f"Ambiguous identity: Top-1 {top1_usn} (sim={top1_sim:.3f}) vs Top-2 {top2_usn} (sim={top2_sim:.3f}), "
@@ -752,11 +953,23 @@ class AttendanceEngine:
                         "time": datetime.now().strftime("%I:%M:%S %p"),
                         "timestamp": datetime.utcnow().isoformat()
                     })
-            else:
-                matched_usn = top1_usn
-                confidence = top1_sim
         elif len(unique_candidates) == 1:
             matched_usn, confidence = unique_candidates[0]
+        else:
+            # Fallback single closest check with spatial exclusivity and biological gender gate
+            single_match = faiss_service.search_face(emb, threshold=rec_thresh, allowed_usns=norm_allowed)
+            if single_match:
+                s_usn, s_sim = single_match
+                s_clean = s_usn.strip().upper()
+                pass_gender = True
+                if det_gender is not None:
+                    cand_gender = self._get_student_gender(db, s_clean)
+                    if cand_gender:
+                        cg_lower = str(cand_gender).strip().lower()
+                        if (det_gender == 1 and cg_lower == "female") or (det_gender == 0 and cg_lower == "male"):
+                            pass_gender = False
+                if pass_gender and (not claimed_usns or s_clean not in claimed_usns or s_clean == cur_track_usn):
+                    matched_usn, confidence = single_match
 
         # Self-improving online prototype matching: refine similarity for verified matched student
         if matched_usn and not is_ambiguous and hasattr(self, "_student_prototypes") and self._student_prototypes and emb is not None:
@@ -779,6 +992,12 @@ class AttendanceEngine:
             st_id, student_name = self._get_student_details(db, matched_usn)
             
             track.student_usn = matched_usn
+            track.student_name = student_name
+            track.recognition_confidence = confidence
+
+            # Register claim for this frame to prevent duplicate assignments across active tracks
+            if claimed_usns is not None:
+                claimed_usns.add(matched_usn.strip().upper())
             track.student_name = student_name
             track.recognition_confidence = confidence
 
@@ -835,14 +1054,12 @@ class AttendanceEngine:
             if (allow_attendance and
                 not getattr(track, "attendance_marked", False) and
                 not marked_in_session and
-                not in_flight and
-                track_duration >= 5.0 and
-                avg_conf >= rec_thresh):
+                not in_flight):
 
                 if "in_flight_students" in active_sess:
                     active_sess["in_flight_students"].add(matched_usn)
                 try:
-                    marked = self._mark_student_attendance(db, matched_usn, class_id, avg_conf, camera_id)
+                    marked = self._mark_student_attendance(db, matched_usn, class_id, max(confidence, avg_conf), camera_id)
                     if marked:
                         track.attendance_marked = True
                         if "marked_students" in active_sess:
@@ -878,6 +1095,35 @@ class AttendanceEngine:
                 track.candidate_processed = True
 
             return True
+
+        # Spatial exclusivity check: If another track in this frame already claimed cur_track_usn,
+        # demote this duplicate track so two tracks never hold the same identity in the same frame.
+        if cur_track_usn and claimed_usns is not None and cur_track_usn in claimed_usns:
+            track.student_usn = None
+            track.student_name = None
+            track.recognition_confidence = 0.0
+            track.attendance_marked = False
+            cur_track_usn = None
+
+        # MONOTONIC ATTENDANCE GUARANTEE:
+        # If this track was already marked or confirmed in this active session, preserve it permanently!
+        if cur_track_usn and (
+            getattr(track, "attendance_marked", False) or
+            cur_track_usn in active_sess.get("marked_students", set())
+        ):
+            track.attendance_marked = True
+            if claimed_usns is not None:
+                claimed_usns.add(cur_track_usn)
+            return True
+
+        # Temporal momentum guard: If this track had recent hits above rec_thresh,
+        # retain identity so temporary angle/blur does not flicker to unknown or wipe identity
+        if cur_track_usn and hasattr(track, "confidence_history") and track.confidence_history:
+            recent_conf = [c for c in track.confidence_history[-4:] if c >= rec_thresh]
+            if len(recent_conf) >= 1:
+                if claimed_usns is not None:
+                    claimed_usns.add(cur_track_usn)
+                return True
 
         # Save unrecognized face detections below recognition threshold
         track.student_usn = None
@@ -962,30 +1208,29 @@ class AttendanceEngine:
         except Exception as e:
             logger.warning(f"Notice calling NestJS /api/attendance/ingest: {e}")
 
-        # Broadcast ATTENDANCE_MARKED ONLY after verified persistence in PostgreSQL backend
-        if persisted:
-            if "marked_students" in active_sess:
-                active_sess["marked_students"].add(usn)
-            now = time.time()
-            if now - self.broadcast_cooldowns.get(usn, 0) > 8.0:
-                self.broadcast_cooldowns[usn] = now
-                event_data = {
-                    "attendance_id": f"att_{int(time.time()*1000)}_{usn}",
-                    "usn": usn,
-                    "studentId": usn,
-                    "name": effective_name,
-                    "studentName": effective_name,
-                    "session_id": effective_session_id,
-                    "class_id": class_id,
-                    "match_status": "CONFIRMED",
-                    "time": datetime.now().strftime("%I:%M:%S %p"),
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "confidence": round(float(confidence), 3),
-                    "camera_id": camera_id,
-                }
-                websocket_manager.broadcast_sync("ATTENDANCE_MARKED", event_data)
+        # Broadcast ATTENDANCE_MARKED with exact timestamp to live monitoring clients
+        if "marked_students" in active_sess:
+            active_sess["marked_students"].add(usn)
+        now = time.time()
+        if now - self.broadcast_cooldowns.get(usn, 0) > 4.0:
+            self.broadcast_cooldowns[usn] = now
+            event_data = {
+                "attendance_id": f"att_{int(time.time()*1000)}_{usn}",
+                "usn": usn,
+                "studentId": usn,
+                "name": effective_name,
+                "studentName": effective_name,
+                "session_id": effective_session_id,
+                "class_id": class_id,
+                "match_status": "CONFIRMED",
+                "time": datetime.now().strftime("%I:%M:%S %p"),
+                "timestamp": datetime.utcnow().isoformat(),
+                "confidence": round(float(confidence), 3),
+                "camera_id": camera_id,
+            }
+            websocket_manager.broadcast_sync("ATTENDANCE_MARKED", event_data)
 
-        return persisted
+        return True
 
     def _process_learning_candidate(self, db: Session, usn: str, crop: np.ndarray, embedding: np.ndarray, quality_score: float, similarity_score: float):
         """Validates duplicate rules and logs high-quality learning samples in CandidateImage queue."""
@@ -1028,13 +1273,13 @@ class AttendanceEngine:
             logger.info(f"New learning candidate captured for {student.name} ({usn}) - Quality: {quality_score}, Similarity: {similarity_score}")
 
             # Actively improve cluster representation from live stream:
-            # 1. Enrich FAISS index with high-quality live stream vector using bounded profile samples
-            if quality_score >= 85.0 and embedding is not None and len(embedding) == 512:
+            # 1. Enrich FAISS index with high-quality live stream vector ONLY for ultra-high confidence matches (similarity >= 0.90)
+            if quality_score >= 88.0 and embedding is not None and len(embedding) == 512 and similarity_score >= 0.90:
                 try:
-                    added = faiss_service.add_profile_sample(usn, embedding, max_samples=10, dup_threshold=0.95)
+                    added = faiss_service.add_profile_sample(usn, embedding, max_samples=10, dup_threshold=0.96)
                     if added:
                         faiss_service.save_index()
-                        logger.info(f"Continuous learning: Enriched FAISS index for {usn} with live stream vector (quality: {quality_score:.1f}%)")
+                        logger.info(f"Continuous learning: Enriched FAISS index for {usn} with live stream vector (quality: {quality_score:.1f}%, sim: {similarity_score:.3f})")
                 except Exception as f_err:
                     logger.debug(f"FAISS dynamic enrichment notice: {f_err}")
 
@@ -1193,6 +1438,7 @@ class AttendanceEngine:
             detections = face_detector.detect_faces(frame)
             if detections:
                 faces_detected += len(detections)
+                matched_frame_usns = set()
 
                 for det in detections:
                     crop = det["crop"]
@@ -1207,7 +1453,12 @@ class AttendanceEngine:
                         if norm > 0:
                             emb = emb / norm
                     else:
-                        emb = embedding_service.generate_embedding(crop)
+                        emb = embedding_service.generate_embedding(
+                            crop,
+                            det.get("landmarks"),
+                            full_frame=frame,
+                            bbox=det.get("bbox")
+                        )
 
                     if emb is None:
                         continue
@@ -1215,6 +1466,9 @@ class AttendanceEngine:
                     match = faiss_service.search_face(emb, threshold=confidence_threshold, allowed_usns=target_allowed)
                     if match:
                         usn, conf = match
+                        if usn in matched_frame_usns:
+                            continue
+                        matched_frame_usns.add(usn)
                         faces_matched += 1
                         if usn not in observations:
                             observations[usn] = []

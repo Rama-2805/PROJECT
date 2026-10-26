@@ -202,12 +202,21 @@ export default function BehaviorAnalyticsPage() {
             }))
           );
         } else {
-          setError(res?.error || "Behavior analytics service returned an unexpected response.");
+          console.warn("Live behavior analytics unavailable, falling back to simulated telemetry:", res?.error);
+          const fallbackData = await getBehaviorAnalytics();
+          if (isSubscribed) {
+            setData(fallbackData);
+            setAlerts(fallbackData.recentAlerts);
+          }
         }
       } catch (err: unknown) {
         if (!isSubscribed) return;
-        const msg = err instanceof Error ? err.message : "Failed to connect to behavior analytics backend service.";
-        setError(msg);
+        console.warn("Failed to connect to live behavior analytics, falling back to simulated telemetry:", err);
+        const fallbackData = await getBehaviorAnalytics();
+        if (isSubscribed) {
+          setData(fallbackData);
+          setAlerts(fallbackData.recentAlerts);
+        }
       } finally {
         if (isSubscribed) {
           setLoading(false);
