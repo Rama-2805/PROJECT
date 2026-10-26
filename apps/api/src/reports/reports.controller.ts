@@ -18,6 +18,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RoleName } from '../_shared/enums/roles';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import type { JwtPayload } from '../_shared/types/jwt';
 
 @Controller('reports')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -34,9 +35,9 @@ export class ReportsController {
   )
   generateReport(
     @Body() dto: GenerateReportDto,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.reports.generateReport(dto, userId);
+    return this.reports.generateReport(dto, user.id, user.institutionId);
   }
 
   @Get('history')
@@ -47,8 +48,11 @@ export class ReportsController {
     RoleName.HOD,
     RoleName.TEACHER,
   )
-  getReportHistory(@Query() query: ReportHistoryQueryDto) {
-    return this.reports.getReportHistory(query);
+  getReportHistory(
+    @Query() query: ReportHistoryQueryDto,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.reports.getReportHistory(query, user.institutionId);
   }
 
   @Get(':id')
@@ -71,16 +75,19 @@ export class ReportsController {
     RoleName.HOD,
     RoleName.TEACHER,
   )
-  downloadReport(@Param('id') id: string) {
-    return this.reports.getReport(id);
+  downloadReport(
+    @Param('id') id: string,
+    @Query('format') format?: string,
+  ) {
+    return this.reports.downloadReport(id, format);
   }
 
   @Post('schedule')
   @Roles(RoleName.SUPER_ADMIN, RoleName.INSTITUTION_ADMIN)
   scheduleReport(
     @Body() dto: ScheduledReportDto,
-    @CurrentUser('id') userId: string,
+    @CurrentUser() user: JwtPayload,
   ) {
-    return this.reports.scheduleReport(dto, userId);
+    return this.reports.scheduleReport(dto, user.id, user.institutionId);
   }
 }

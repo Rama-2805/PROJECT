@@ -594,11 +594,19 @@ export class DashboardService {
         a.title.toLowerCase().includes('sleep') ||
         (a.description && a.description.toLowerCase().includes('sleep'));
       const studentInfo = !isSleeping && a.studentId ? studentMap.get(a.studentId) : null;
+      let alertStudentName = studentInfo?.fullName;
+      if (!alertStudentName) {
+        if (isSleeping || a.title.toLowerCase().includes('sleep') || a.title.includes('Track')) {
+          alertStudentName = a.title;
+        } else {
+          alertStudentName = 'UNKNOWN';
+        }
+      }
 
       return {
         id: a.id,
         student_id: isSleeping ? null : (a.studentId || null),
-        student_name: isSleeping ? a.title : (studentInfo?.fullName || a.title || 'Student'),
+        student_name: alertStudentName,
         behavior_type: isSleeping ? 'SLEEPING' : (a.title.includes('Phone') ? 'PHONE_USAGE' : 'DISTRACTED'),
         severity: a.severity,
         confidence: a.confidence,
@@ -608,14 +616,16 @@ export class DashboardService {
     });
 
     const top_events = recentEventsRaw.map((e) => {
-      const studentInfo = e.studentId ? studentMap.get(e.studentId) : null;
+      const studentInfo = e.studentId && !e.studentId.startsWith('TRK-') && e.studentId !== 'Anonymous'
+        ? studentMap.get(e.studentId)
+        : null;
       return {
         id: e.id,
         studentId: e.studentId || 'Anonymous',
-        studentName: studentInfo?.fullName || e.studentId || 'Student',
-        behaviorType: e.behaviorType,
-        confidence: e.confidence,
-        duration: e.duration,
+        studentName: studentInfo?.fullName || 'UNKNOWN',
+        behaviorType: e.behaviorType || 'UNKNOWN',
+        confidence: e.confidence || 0.9,
+        duration: e.duration || 0,
         timestamp: e.createdAt.toISOString(),
         classroomId: e.classroomId || '',
       };

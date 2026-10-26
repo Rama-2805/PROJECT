@@ -37,8 +37,17 @@ const normalizeBehaviorType = (type?: string): BehaviorType => {
 };
 
 function AlertCard({ alert, onAcknowledge }: { alert: BehaviorAlert; onAcknowledge: (id: string) => void }) {
-  const isUnk = !alert.studentName || alert.studentName === "UNKNOWN" || alert.studentName.startsWith("UNKNOWN");
-  const displayName = isUnk ? "UNKNOWN" : alert.studentName;
+  const isUnk =
+    !alert.studentId ||
+    alert.studentId === "unknown" ||
+    alert.studentId === "Anonymous" ||
+    !alert.studentName ||
+    alert.studentName === "UNKNOWN" ||
+    alert.studentName === "Student" ||
+    alert.studentName.startsWith("UNKNOWN") ||
+    alert.studentName.includes("Unidentified") ||
+    alert.studentName.includes("Detected");
+  const displayName = isUnk ? (alert.studentName?.includes("Track") ? alert.studentName : "UNKNOWN") : alert.studentName;
 
   return (
     <motion.div
@@ -133,13 +142,35 @@ export default function BehaviorAnalyticsPage() {
         if (!isSubscribed) return;
         if (res && res.success && res.data) {
           const apiData = res.data;
+
+          const aggregatedDist: Record<string, number> = {};
+          for (const d of apiData.behavior_distribution || []) {
+            const norm = normalizeBehaviorType(d.type);
+            aggregatedDist[norm] = (aggregatedDist[norm] || 0) + (d.count || 0);
+          }
+          const behaviorDistribution = Object.entries(aggregatedDist).map(([type, count]) => ({
+            type: type as BehaviorType,
+            count,
+          }));
+
+          const rawEvents = apiData.top_events || [];
+          const topEvents = rawEvents.map((e: any) => ({
+            ...e,
+            behaviorType: normalizeBehaviorType(e.behaviorType),
+            studentName: !e.studentName || e.studentName === "Student" || e.studentName === "Anonymous" || e.studentName.includes("Track")
+              ? "UNKNOWN"
+              : e.studentName,
+          }));
+
           setData({
-            overview: apiData.overview,
+            overview: apiData.overview || {
+              averageEngagement: 0,
+              phoneEvents: 0,
+              attentionLevel: 0,
+              highRiskStudents: 0,
+            },
             engagementTrend: apiData.engagement_trend || [],
-            behaviorDistribution: (apiData.behavior_distribution || []).map((d) => ({
-              type: normalizeBehaviorType(d.type),
-              count: d.count,
-            })),
+            behaviorDistribution,
             classroomComparison: apiData.classroom_comparison || [],
             studentRanking: apiData.student_ranking || [],
             attentionHeatmap: apiData.attention_heatmap || [],
@@ -154,7 +185,7 @@ export default function BehaviorAnalyticsPage() {
               acknowledgedBy: a.acknowledged_by,
               createdAt: a.created_at,
             })),
-            topEvents: apiData.top_events || [],
+            topEvents,
             studentTimeline: apiData.student_timeline || [],
           });
           setAlerts(
@@ -316,7 +347,7 @@ export default function BehaviorAnalyticsPage() {
                 ) : (
                   <div className="flex items-end justify-between gap-1 h-48 pt-4 min-w-[400px]">
                     {data.engagementTrend.map((point, i) => (
-                      <div key={point.time} className="flex flex-col items-center gap-1 flex-1">
+                      <div key={`${point.time}-${i}`} className="flex flex-col items-center gap-1 flex-1">
                         <span className="text-[8px] text-text-muted">{point.score}%</span>
                         <div
                           className="w-full rounded-t-sm bg-gradient-to-t from-ai-cyan to-ai-blue transition-all hover:opacity-80"
@@ -339,11 +370,11 @@ export default function BehaviorAnalyticsPage() {
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {data.behaviorDistribution.map((b) => {
+                  {data.behaviorDistribution.map((b, i) => {
                     const total = data.behaviorDistribution.reduce((s, d) => s + d.count, 0);
                     const pct = total > 0 ? Math.round((b.count / total) * 100) : 0;
                     return (
-                      <div key={b.type} className="flex items-center gap-3">
+                      <div key={`${b.type}-${i}`} className="flex items-center gap-3">
                         <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: BEHAVIOR_COLORS[b.type] || "#6B7280" }} />
                         <span className="text-[10px] text-text-muted w-24 truncate">{b.type.replace(/_/g, " ")}</span>
                         <div className="flex-1 h-2 rounded-full bg-glass-light overflow-hidden">
@@ -377,7 +408,7 @@ export default function BehaviorAnalyticsPage() {
                 <div className="space-y-1.5">
                   {data.studentRanking.map((s, i) => (
                     <motion.div
-                      key={s.studentId}
+                      key={s.studentId ? `${s.studentId}-${i}` : `rank-${i}`}
                       className="flex items-center gap-3 p-2 rounded-lg hover:bg-glass-light/30 transition-colors"
                       initial={{ opacity: 0, x: -8 }}
                       animate={{ opacity: 1, x: 0 }}
@@ -425,8 +456,8 @@ export default function BehaviorAnalyticsPage() {
               </div>
               <div className="space-y-2">
                 <AnimatePresence mode="popLayout">
-                  {alerts.filter((a) => a.status === "ACTIVE").slice(0, 5).map((alert) => (
-                    <AlertCard key={alert.id} alert={alert} onAcknowledge={handleAcknowledge} />
+                  {alerts.filter((a) => a.status === "ACTIVE").slice(0, 5).map((alert, idx) => (
+                    <AlertCard key={alert.id ? `${alert.id}-${idx}` : `alert-${idx}`} alert={alert} onAcknowledge={handleAcknowledge} />
                   ))}
                 </AnimatePresence>
                 {alerts.filter((a) => a.status === "ACTIVE").length === 0 && (
@@ -458,9 +489,9 @@ export default function BehaviorAnalyticsPage() {
                       </td>
                     </tr>
                   ) : (
-                    data.topEvents.slice(0, 8).map((event) => (
-                      <tr key={event.id} className="text-xs text-text-primary hover:bg-glass-light/20 transition-colors">
-                        <td className="py-2 pr-4">{event.studentName}</td>
+                    data.topEvents.slice(0, 8).map((event, idx) => (
+                      <tr key={event.id ? `${event.id}-${idx}` : `event-${idx}`} className="text-xs text-text-primary hover:bg-glass-light/20 transition-colors">
+                        <td className="py-2 pr-4">{event.studentName || "UNKNOWN"}</td>
                         <td className="py-2 pr-4">
                           <span className={cn(
                             "inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium",
@@ -477,7 +508,7 @@ export default function BehaviorAnalyticsPage() {
                               "bg-indigo-400": event.behaviorType === "SLEEPING",
                               "bg-warning": event.behaviorType === "DISTRACTED",
                             })} />
-                            {event.behaviorType.replace(/_/g, " ")}
+                            {(event.behaviorType || "UNKNOWN").replace(/_/g, " ")}
                           </span>
                         </td>
                         <td className="py-2 pr-4 tabular-nums">{(event.confidence * 100).toFixed(0)}%</td>
@@ -501,8 +532,8 @@ export default function BehaviorAnalyticsPage() {
             <GlassCard>
               <h3 className="text-sm font-semibold text-text-primary mb-4">Classroom Engagement Comparison</h3>
               <div className="space-y-3">
-                {data.classroomComparison.map((c) => (
-                  <div key={c.name} className="flex items-center gap-3">
+                {data.classroomComparison.map((c, i) => (
+                  <div key={`${c.name}-${i}`} className="flex items-center gap-3">
                     <span className="text-[10px] text-text-muted w-24 truncate">{c.name}</span>
                     <div className="flex-1 h-3 rounded-full bg-glass-light overflow-hidden">
                       <div
@@ -537,8 +568,8 @@ export default function BehaviorAnalyticsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-glass-border">
-                    {data.attentionHeatmap.map((row) => (
-                      <tr key={row.period} className="text-[10px]">
+                    {data.attentionHeatmap.map((row, i) => (
+                      <tr key={`${row.period}-${i}`} className="text-[10px]">
                         <td className="py-2 pr-3 text-text-muted">{row.period}</td>
                         {["monday", "tuesday", "wednesday", "thursday", "friday"].map((day) => {
                           const val = row[day as keyof typeof row] as number;
@@ -571,11 +602,11 @@ export default function BehaviorAnalyticsPage() {
             <GlassCard>
               <h3 className="text-sm font-semibold text-text-primary mb-4">Behavior Breakdown</h3>
               <div className="space-y-4">
-                {data.behaviorDistribution.map((b) => {
+                {data.behaviorDistribution.map((b, i) => {
                   const total = data.behaviorDistribution.reduce((s, d) => s + d.count, 0);
                   const pct = total > 0 ? Math.round((b.count / total) * 100) : 0;
                   return (
-                    <div key={b.type}>
+                    <div key={`${b.type}-${i}`}>
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
                           <span className="h-2 w-2 rounded-full" style={{ backgroundColor: BEHAVIOR_COLORS[b.type] || "#6B7280" }} />
@@ -670,8 +701,8 @@ export default function BehaviorAnalyticsPage() {
             </div>
             <div className="space-y-2">
               <AnimatePresence mode="popLayout">
-                {alerts.map((alert) => (
-                  <AlertCard key={alert.id} alert={alert} onAcknowledge={handleAcknowledge} />
+                {alerts.map((alert, idx) => (
+                  <AlertCard key={alert.id ? `${alert.id}-${idx}` : `alert-${idx}`} alert={alert} onAcknowledge={handleAcknowledge} />
                 ))}
               </AnimatePresence>
               {alerts.length === 0 && (
